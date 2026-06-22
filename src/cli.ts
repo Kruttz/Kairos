@@ -218,7 +218,7 @@ async function handleDelete(positional: string[], flags: Record<string, string |
 }
 
 async function handleSyncTemplates(flags: Record<string, string | boolean>): Promise<void> {
-  const max = typeof flags['max'] === 'string' ? parseInt(flags['max'], 10) : 200
+  const max = typeof flags['max'] === 'string' ? parseInt(flags['max'], 10) : 500
   const library = new FileLibrary()
   const logger = {
     debug: () => {},

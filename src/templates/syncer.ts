@@ -33,7 +33,7 @@ export class TemplateSyncer {
   }
 
   async sync(options?: SyncOptions): Promise<SyncProgress> {
-    const maxTemplates = options?.maxTemplates ?? 200
+    const maxTemplates = options?.maxTemplates ?? 500
 
     await this.library.initialize()
 
