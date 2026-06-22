@@ -9,6 +9,7 @@ import type {
   WorkflowMetadataInput,
   LibraryFilters,
   SearchOptions,
+  OutcomeData,
 } from './types.js'
 import { generateUUID } from '../utils/uuid.js'
 import { scoreToMode } from '../utils/thresholds.js'
@@ -124,9 +125,18 @@ export class FileLibrary implements IWorkflowLibrary {
       .sort((a, b) => b.score - a.score)
       .slice(0, limit)
 
-    return scored.map((m) => {
+    const results = scored.map((m) => {
       return { workflow: m.workflow, score: m.score, mode: scoreToMode(m.score) }
     })
+
+    if (results.length > 0) {
+      for (const r of results) {
+        r.workflow.timesRetrieved = (r.workflow.timesRetrieved ?? 0) + 1
+      }
+      this.persist()
+    }
+
+    return results
   }
 
   async save(workflow: N8nWorkflow, metadata: WorkflowMetadataInput): Promise<string> {
@@ -167,6 +177,33 @@ export class FileLibrary implements IWorkflowLibrary {
       w.lastDeployedAt = new Date().toISOString()
       await this.persist()
     }
+  }
+
+  async recordOutcome(id: string, outcome: OutcomeData): Promise<void> {
+    const w = this.workflows.find((w) => w.id === id)
+    if (!w) return
+
+    if (outcome.mode === 'direct') {
+      w.timesUsedAsDirect = (w.timesUsedAsDirect ?? 0) + 1
+    } else {
+      w.timesUsedAsReference = (w.timesUsedAsReference ?? 0) + 1
+    }
+
+    const stats = w.outcomeStats ?? { totalUses: 0, totalAttempts: 0, firstTryPasses: 0, failedRules: {} }
+    stats.totalUses++
+    stats.totalAttempts += outcome.attempts
+    if (outcome.firstTryPass) stats.firstTryPasses++
+    for (const rule of outcome.failedRules) {
+      const key = String(rule)
+      stats.failedRules[key] = (stats.failedRules[key] ?? 0) + 1
+    }
+    w.outcomeStats = stats
+
+    await this.persist()
+  }
+
+  async drain(): Promise<void> {
+    await this.writeQueue
   }
 
   async get(id: string): Promise<StoredWorkflow | null> {

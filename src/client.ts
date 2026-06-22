@@ -293,8 +293,31 @@ export class Kairos {
     if (topMatch) metadata.topMatchScore = topMatch.score
     if (designResult.credentialsNeeded.length > 0) metadata.credentialsNeeded = designResult.credentialsNeeded
 
+    const firstTryPass = designResult.attemptMetadata.length > 0
+      && designResult.attemptMetadata[0]!.validationPassed
+    const failedRules = Array.from(new Set(
+      designResult.attemptMetadata
+        .filter((m) => !m.validationPassed)
+        .flatMap((m) => m.issues.map((i) => i.rule)),
+    ))
+
     this.saveQueue = this.saveQueue
-      .then(() => this.library.save(workflow, metadata))
+      .then(async () => {
+        const savedId = await this.library.save(workflow, metadata)
+
+        for (const match of matches) {
+          if (match.mode === 'direct' || match.mode === 'reference') {
+            await this.library.recordOutcome(match.workflow.id, {
+              attempts: designResult.attempts,
+              firstTryPass,
+              failedRules,
+              mode: match.mode,
+            })
+          }
+        }
+
+        return savedId
+      })
       .catch((err: unknown) => {
         this.logger.warn('Failed to save workflow to library (non-fatal)', { err: String(err) })
         return null

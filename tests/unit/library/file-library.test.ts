@@ -113,6 +113,55 @@ describe('FileLibrary', () => {
     expect(['direct', 'reference', 'scratch']).toContain(matches[0]!.mode)
   })
 
+  it('recordOutcome tracks usage stats on source workflows', async () => {
+    const id = await lib.save(makeWorkflow('Source'), { description: 'slack notification' })
+
+    await lib.recordOutcome(id, {
+      attempts: 2,
+      firstTryPass: false,
+      failedRules: [12, 14],
+      mode: 'direct',
+    })
+
+    const stored = await lib.get(id)
+    expect(stored!.timesUsedAsDirect).toBe(1)
+    expect(stored!.timesUsedAsReference).toBeUndefined()
+    expect(stored!.outcomeStats).toEqual({
+      totalUses: 1,
+      totalAttempts: 2,
+      firstTryPasses: 0,
+      failedRules: { '12': 1, '14': 1 },
+    })
+
+    await lib.recordOutcome(id, {
+      attempts: 1,
+      firstTryPass: true,
+      failedRules: [],
+      mode: 'reference',
+    })
+
+    const updated = await lib.get(id)
+    expect(updated!.timesUsedAsDirect).toBe(1)
+    expect(updated!.timesUsedAsReference).toBe(1)
+    expect(updated!.outcomeStats!.totalUses).toBe(2)
+    expect(updated!.outcomeStats!.totalAttempts).toBe(3)
+    expect(updated!.outcomeStats!.firstTryPasses).toBe(1)
+  })
+
+  it('search increments timesRetrieved on returned matches', async () => {
+    await lib.save(makeWorkflow('Slack Bot'), {
+      description: 'send slack message on webhook',
+    })
+
+    await lib.search('send slack notification')
+    await lib.search('slack message webhook')
+    await lib.drain()
+
+    const all = await lib.list()
+    const slackBot = all.find((w) => w.workflow.name === 'Slack Bot')
+    expect(slackBot!.timesRetrieved).toBe(2)
+  })
+
   it('handles concurrent saves via write queue', async () => {
     const saves = Array.from({ length: 5 }, (_, i) =>
       lib.save(makeWorkflow(`Concurrent ${i}`), { description: `workflow ${i}` }),

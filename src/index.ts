@@ -7,7 +7,7 @@ export type { IProvider } from './providers/types.js'
 
 export { NullLibrary } from './library/null-library.js'
 export { FileLibrary } from './library/file-library.js'
-export type { IWorkflowLibrary, WorkflowMatch, StoredWorkflow, FailurePattern, WorkflowMetadataInput, SourceKind, TrustLevel } from './library/types.js'
+export type { IWorkflowLibrary, WorkflowMatch, StoredWorkflow, FailurePattern, WorkflowMetadataInput, SourceKind, TrustLevel, OutcomeData, OutcomeStats } from './library/types.js'
 
 export { N8nValidator } from './validation/validator.js'
 export { NodeRegistry, DEFAULT_REGISTRY } from './validation/registry.js'

@@ -26,6 +26,20 @@ export interface WorkflowMetadataInput {
   trustLevel?: TrustLevel
 }
 
+export interface OutcomeData {
+  attempts: number
+  firstTryPass: boolean
+  failedRules: number[]
+  mode: 'direct' | 'reference'
+}
+
+export interface OutcomeStats {
+  totalUses: number
+  totalAttempts: number
+  firstTryPasses: number
+  failedRules: Record<string, number>
+}
+
 export interface StoredWorkflow {
   id: string
   workflow: N8nWorkflow
@@ -45,6 +59,10 @@ export interface StoredWorkflow {
   sourceId?: string
   sourceUrl?: string
   trustLevel?: TrustLevel
+  timesRetrieved?: number
+  timesUsedAsDirect?: number
+  timesUsedAsReference?: number
+  outcomeStats?: OutcomeStats
 }
 
 export interface WorkflowMatch {
@@ -68,6 +86,7 @@ export interface IWorkflowLibrary {
   search(description: string, options?: SearchOptions): Promise<WorkflowMatch[]>
   save(workflow: N8nWorkflow, metadata: WorkflowMetadataInput): Promise<string>
   recordDeployment(id: string): Promise<void>
+  recordOutcome(id: string, outcome: OutcomeData): Promise<void>
   get(id: string): Promise<StoredWorkflow | null>
   list(filters?: LibraryFilters): Promise<StoredWorkflow[]>
 }
