@@ -8,6 +8,7 @@ const HELP = `
 Kairos SDK — LLM-powered n8n workflow generation
 
 Usage:
+  kairos init                         First-time setup wizard
   kairos build <description> [options]
   kairos list
   kairos get <id>
@@ -22,12 +23,12 @@ Build options:
   --activate      Activate the workflow after deployment
 
 Sync options:
-  --max <count>   Maximum templates to fetch (default: 200)
+  --max <count>   Maximum templates to fetch (default: 500)
 
 Environment variables:
   ANTHROPIC_API_KEY  Anthropic API key (required)
-  N8N_BASE_URL       n8n instance URL (required)
-  N8N_API_KEY        n8n API key (required)
+  N8N_BASE_URL       n8n instance URL (required for deploy, optional for --dry-run)
+  N8N_API_KEY        n8n API key (required for deploy, optional for --dry-run)
   KAIROS_MODEL       Claude model override (default: claude-sonnet-4-6)
   KAIROS_TELEMETRY   Set to "true" or a directory path to enable telemetry logging
 `
@@ -248,6 +249,102 @@ async function handleSyncTemplates(flags: Record<string, string | boolean>): Pro
   console.error(`  Paid:       ${result.skippedPaid} (skipped)`)
 }
 
+async function handleInit(): Promise<void> {
+  const { writeFile, readFile, mkdir } = await import('node:fs/promises')
+  const { join } = await import('node:path')
+  const { homedir } = await import('node:os')
+  const readline = await import('node:readline')
+
+  const rl = readline.createInterface({ input: process.stdin, output: process.stderr })
+  const ask = (q: string): Promise<string> => new Promise((resolve) => rl.question(q, resolve))
+
+  console.error('')
+  console.error('  Kairos SDK — Setup Wizard')
+  console.error('  ─────────────────────────')
+  console.error('')
+
+  const envPath = join(process.cwd(), '.env')
+  let existingEnv = ''
+  try {
+    existingEnv = await readFile(envPath, 'utf-8')
+  } catch {}
+
+  const has = (key: string) => existingEnv.includes(key) || !!process.env[key]
+
+  const lines: string[] = []
+
+  if (!has('ANTHROPIC_API_KEY')) {
+    const key = await ask('  Anthropic API key (from console.anthropic.com): ')
+    if (key.trim()) lines.push(`ANTHROPIC_API_KEY=${key.trim()}`)
+  } else {
+    console.error('  Anthropic API key: already set')
+  }
+
+  if (!has('N8N_BASE_URL')) {
+    const url = await ask('  n8n instance URL (e.g. https://your-name.app.n8n.cloud): ')
+    if (url.trim()) lines.push(`N8N_BASE_URL=${url.trim().replace(/\/$/, '')}`)
+  } else {
+    console.error('  n8n base URL: already set')
+  }
+
+  if (!has('N8N_API_KEY')) {
+    const key = await ask('  n8n API key: ')
+    if (key.trim()) lines.push(`N8N_API_KEY=${key.trim()}`)
+  } else {
+    console.error('  n8n API key: already set')
+  }
+
+  rl.close()
+
+  if (lines.length > 0) {
+    const newContent = existingEnv
+      ? existingEnv.trimEnd() + '\n' + lines.join('\n') + '\n'
+      : lines.join('\n') + '\n'
+    await writeFile(envPath, newContent, 'utf-8')
+    console.error(`\n  Saved to ${envPath}`)
+  } else {
+    console.error('\n  All credentials already configured.')
+  }
+
+  console.error('')
+  console.error('  Seeding template library...')
+
+  const library = new FileLibrary()
+  const logger = {
+    debug: () => {},
+    info: () => {},
+    warn: () => {},
+    error: () => {},
+  }
+  const syncer = new TemplateSyncer(library, logger)
+
+  await library.initialize()
+  const existing = await library.list()
+
+  if (existing.length >= 50) {
+    console.error(`  Library already has ${existing.length} entries — skipping sync.`)
+  } else {
+    const result = await syncer.sync({
+      maxTemplates: 500,
+      onProgress: (p) => {
+        if (p.processed % 100 === 0 && p.processed > 0) {
+          process.stderr.write(`  ${p.processed}/${p.total} processed, ${p.saved} saved...\r`)
+        }
+      },
+    })
+    console.error(`  Synced ${result.saved} templates (${result.blocked} blocked, ${result.skippedDuplicate} duplicates)`)
+  }
+
+  const kairosDir = join(homedir(), '.kairos')
+  await mkdir(join(kairosDir, 'telemetry'), { recursive: true })
+
+  console.error('')
+  console.error('  Setup complete! Try:')
+  console.error('')
+  console.error('    kairos build "Send a Slack message when a webhook fires" --dry-run')
+  console.error('')
+}
+
 async function main(): Promise<void> {
   const { command, positional, flags } = parseArgs(process.argv)
 
@@ -257,6 +354,9 @@ async function main(): Promise<void> {
   }
 
   switch (command) {
+    case 'init':
+      await handleInit()
+      break
     case 'build':
       await handleBuild(positional, flags)
       break
