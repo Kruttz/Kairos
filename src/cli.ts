@@ -2,6 +2,7 @@
 
 import { Kairos } from './client.js'
 import { FileLibrary } from './library/file-library.js'
+import { TemplateSyncer } from './templates/syncer.js'
 
 const HELP = `
 Kairos SDK — LLM-powered n8n workflow generation
@@ -13,11 +14,15 @@ Usage:
   kairos activate <id>
   kairos deactivate <id>
   kairos delete <id> --confirm
+  kairos sync-templates [options]
 
 Build options:
   --dry-run       Generate and validate without deploying
   --name <name>   Override the generated workflow name
   --activate      Activate the workflow after deployment
+
+Sync options:
+  --max <count>   Maximum templates to fetch (default: 200)
 
 Environment variables:
   ANTHROPIC_API_KEY  Anthropic API key (required)
@@ -196,6 +201,37 @@ async function handleDelete(positional: string[], flags: Record<string, string |
   console.log(`Deleted workflow ${id}`)
 }
 
+async function handleSyncTemplates(flags: Record<string, string | boolean>): Promise<void> {
+  const max = typeof flags['max'] === 'string' ? parseInt(flags['max'], 10) : 200
+  const library = new FileLibrary()
+  const logger = {
+    debug: () => {},
+    info: (msg: string, meta?: Record<string, unknown>) => console.error(meta ? `${msg} ${JSON.stringify(meta)}` : msg),
+    warn: (msg: string, meta?: Record<string, unknown>) => console.error(meta ? `[warn] ${msg} ${JSON.stringify(meta)}` : `[warn] ${msg}`),
+    error: (msg: string, meta?: Record<string, unknown>) => console.error(meta ? `[error] ${msg} ${JSON.stringify(meta)}` : `[error] ${msg}`),
+  }
+  const syncer = new TemplateSyncer(library, logger)
+
+  console.error(`Syncing up to ${max} templates from n8n community library...`)
+
+  const result = await syncer.sync({
+    maxTemplates: max,
+    onProgress: (p) => {
+      if (p.processed % 25 === 0 && p.processed > 0) {
+        console.error(`  Progress: ${p.processed}/${p.total} processed, ${p.saved} saved`)
+      }
+    },
+  })
+
+  console.error('')
+  console.error(`Sync complete:`)
+  console.error(`  Saved:      ${result.saved}`)
+  console.error(`  Blocked:    ${result.blocked} (validation errors or unsafe content)`)
+  console.error(`  Review:     ${result.reviewed} (saved but flagged for review)`)
+  console.error(`  Duplicates: ${result.skippedDuplicate} (already in library)`)
+  console.error(`  Paid:       ${result.skippedPaid} (skipped)`)
+}
+
 async function main(): Promise<void> {
   const { command, positional, flags } = parseArgs(process.argv)
 
@@ -222,6 +258,9 @@ async function main(): Promise<void> {
       break
     case 'delete':
       await handleDelete(positional, flags)
+      break
+    case 'sync-templates':
+      await handleSyncTemplates(flags)
       break
     default:
       console.error(`Unknown command: ${command}`)

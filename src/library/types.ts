@@ -7,6 +7,9 @@ export interface FailurePattern {
   occurrences: number
 }
 
+export type SourceKind = 'organic' | 'n8n-template' | 'imported'
+export type TrustLevel = 'safe' | 'review' | 'blocked'
+
 export interface WorkflowMetadataInput {
   description: string
   tags?: string[]
@@ -17,6 +20,10 @@ export interface WorkflowMetadataInput {
   topMatchScore?: number
   generationAttempts?: number
   credentialsNeeded?: CredentialRequirement[]
+  sourceKind?: SourceKind
+  sourceId?: string
+  sourceUrl?: string
+  trustLevel?: TrustLevel
 }
 
 export interface StoredWorkflow {
@@ -34,6 +41,10 @@ export interface StoredWorkflow {
   topMatchScore?: number
   generationAttempts?: number
   credentialsNeeded?: CredentialRequirement[]
+  sourceKind?: SourceKind
+  sourceId?: string
+  sourceUrl?: string
+  trustLevel?: TrustLevel
 }
 
 export interface WorkflowMatch {

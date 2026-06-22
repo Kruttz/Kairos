@@ -91,16 +91,17 @@ export class FileLibrary implements IWorkflowLibrary {
   }
 
   async search(description: string, options?: SearchOptions): Promise<WorkflowMatch[]> {
-    if (this.workflows.length === 0) return []
+    const searchable = this.workflows.filter((w) => w.trustLevel !== 'blocked')
+    if (searchable.length === 0) return []
 
     const limit = options?.limit ?? 3
     const queryTokens = tokenize(description)
     if (queryTokens.length === 0) return []
 
-    const docTokenArrays = this.workflows.map((w) => tokenize(buildSearchCorpus(w)))
+    const docTokenArrays = searchable.map((w) => tokenize(buildSearchCorpus(w)))
     const docTokenSets = docTokenArrays.map((tokens) => new Set(tokens))
 
-    const docCount = this.workflows.length
+    const docCount = searchable.length
     const idf = new Map<string, number>()
     const allTokens = new Set(queryTokens)
     for (const token of allTokens) {
@@ -111,7 +112,7 @@ export class FileLibrary implements IWorkflowLibrary {
     const maxPossibleScore = queryTokens.reduce((sum, qt) => sum + (idf.get(qt) ?? 0), 0)
     const ceiling = maxPossibleScore > 0 ? maxPossibleScore : 1
 
-    const scored = this.workflows
+    const scored = searchable
       .map((w, i) => {
         const raw = computeTfIdf(queryTokens, docTokenArrays[i]!, idf)
         const normalized = Math.min(raw / ceiling, 1)
@@ -145,6 +146,10 @@ export class FileLibrary implements IWorkflowLibrary {
       ...(metadata.topMatchScore != null ? { topMatchScore: metadata.topMatchScore } : {}),
       ...(metadata.generationAttempts != null ? { generationAttempts: metadata.generationAttempts } : {}),
       ...(metadata.credentialsNeeded?.length ? { credentialsNeeded: metadata.credentialsNeeded } : {}),
+      ...(metadata.sourceKind ? { sourceKind: metadata.sourceKind } : {}),
+      ...(metadata.sourceId ? { sourceId: metadata.sourceId } : {}),
+      ...(metadata.sourceUrl ? { sourceUrl: metadata.sourceUrl } : {}),
+      ...(metadata.trustLevel ? { trustLevel: metadata.trustLevel } : {}),
     }
     this.workflows.push(stored)
     if (this.workflows.length > MAX_LIBRARY_SIZE) {
