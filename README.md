@@ -76,16 +76,17 @@ console.log(deployed.workflowId) // now live in n8n
 
 Tested against 20 workflow prompts of varying complexity (simple triggers, multi-step conditional logic, AI agents with memory). Results measure **structural validation pass rate** — whether the generated workflow passes all 22 validator rules, not end-to-end execution correctness.
 
-| Metric | Result |
-|---|---|
-| **Passed structural validation** | **20/20 (100%)** |
-| First-try pass | 11/20 (55%) |
-| Needed correction loop | 9/20 (45%) |
-| Failures | 0 |
-| Avg generation time | 30.6s |
-| Avg attempts per workflow | 1.45 |
+### Before vs After: Template-Seeded Library
 
-Without the validator and correction loop, 45% of generated workflows would have shipped with structural errors. The correction loop catches and fixes these before deployment.
+| Metric | Baseline (no library) | With library (105 templates) | Delta |
+|---|---|---|---|
+| **First-try pass rate** | 55% (11/20) | **100% (20/20)** | **+45pp** |
+| Avg attempts | 1.45 | **1.00** | -0.45 |
+| Correction loop usage | 45% | **0%** | -45pp |
+| Avg generation time | 30.6s | **20.7s** | -32% |
+| Failures | 0 | 0 | — |
+
+The baseline run used Claude with the 22-rule validator and correction loop but no library. The seeded run used the same validator plus a library of 105 workflows (16 organic + 89 ingested from the n8n community). Template seeding eliminated the correction loop entirely and cut generation time by a third.
 
 > **Note:** These results confirm that generated workflows are structurally valid and deployable to n8n. They do not verify runtime execution correctness, credential configuration, or whether the workflow output matches user intent.
 
@@ -106,7 +107,7 @@ Without the validator and correction loop, 45% of generated workflows would have
 
 ## Validator Rules
 
-The 22-rule validator is the core of what makes Kairos reliable. Without it, Claude generates structurally invalid workflows ~45% of the time. Each rule targets a specific class of error:
+The 22-rule validator is the core of what makes Kairos reliable. In baseline testing (no library), Claude needed the correction loop 45% of the time. Each rule targets a specific class of error:
 
 | Rule | Severity | What it checks |
 |------|----------|----------------|

@@ -4,12 +4,16 @@
  *
  * Usage:
  *   ANTHROPIC_API_KEY=... N8N_API_KEY=... N8N_BASE_URL=... \
- *     npx tsx scripts/benchmark.ts [--count 20] [--output results.json]
+ *     npx tsx scripts/benchmark.ts [--count 20] [--output results.json] [--no-library] [--compare baseline.json]
+ *
+ * Flags:
+ *   --no-library   Run without library (NullLibrary) for baseline measurement
+ *   --compare      Compare results against a previous run's JSON file
  *
  * All runs are dry-run (no deployment). Telemetry is written to ~/.kairos/telemetry/
  */
 
-import { Kairos } from '../src/index.js'
+import { Kairos, FileLibrary } from '../src/index.js'
 
 const PROMPTS = [
   // --- Simple (single trigger + 1-2 nodes) ---
@@ -125,7 +129,20 @@ interface BenchmarkResult {
   failedRules?: number[]
 }
 
-async function runBenchmark(count: number, outputPath?: string): Promise<void> {
+interface BenchmarkSummary {
+  total: number
+  successes: number
+  failures: number
+  firstTry: number
+  neededCorrection: number
+  avgDurationMs: number
+  avgAttempts: number
+  firstTryRate: number
+  correctionRate: number
+  libraryUsed: boolean
+}
+
+async function runBenchmark(count: number, outputPath?: string, useLibrary = true, comparePath?: string): Promise<void> {
   const ANTHROPIC_API_KEY = process.env['ANTHROPIC_API_KEY']
   const N8N_API_KEY = process.env['N8N_API_KEY']
   const N8N_BASE_URL = process.env['N8N_BASE_URL'] ?? 'https://your-instance.app.n8n.cloud'
@@ -140,6 +157,7 @@ async function runBenchmark(count: number, outputPath?: string): Promise<void> {
     n8nBaseUrl: N8N_BASE_URL,
     n8nApiKey: N8N_API_KEY,
     telemetry: true,
+    ...(useLibrary ? { library: new FileLibrary() } : {}),
   })
 
   const prompts = PROMPTS.slice(0, count)
@@ -189,7 +207,7 @@ async function runBenchmark(count: number, outputPath?: string): Promise<void> {
   }
 
   console.log('\n' + '═'.repeat(60))
-  console.log('RESULTS SUMMARY')
+  console.log(`RESULTS SUMMARY ${useLibrary ? '(with library)' : '(no library — baseline)'}`)
   console.log('═'.repeat(60))
 
   const successes = results.filter((r) => r.success)
@@ -197,14 +215,28 @@ async function runBenchmark(count: number, outputPath?: string): Promise<void> {
   const firstTry = successes.filter((r) => r.attempts === 1)
   const neededCorrection = successes.filter((r) => r.attempts > 1)
   const avgDuration = results.reduce((s, r) => s + r.durationMs, 0) / results.length
+  const avgAttempts = successes.length > 0 ? successes.reduce((s, r) => s + r.attempts, 0) / successes.length : 0
 
-  console.log(`Total prompts:       ${results.length}`)
-  console.log(`Success rate:        ${successes.length}/${results.length} (${((successes.length / results.length) * 100).toFixed(1)}%)`)
-  console.log(`First-try success:   ${firstTry.length}/${successes.length}`)
-  console.log(`Needed correction:   ${neededCorrection.length}/${successes.length}`)
-  console.log(`Failures:            ${failures.length}`)
-  console.log(`Avg duration:        ${(avgDuration / 1000).toFixed(1)}s`)
-  console.log(`Avg attempts:        ${(successes.reduce((s, r) => s + r.attempts, 0) / successes.length).toFixed(2)}`)
+  const summary: BenchmarkSummary = {
+    total: results.length,
+    successes: successes.length,
+    failures: failures.length,
+    firstTry: firstTry.length,
+    neededCorrection: neededCorrection.length,
+    avgDurationMs: avgDuration,
+    avgAttempts,
+    firstTryRate: successes.length > 0 ? firstTry.length / successes.length : 0,
+    correctionRate: successes.length > 0 ? neededCorrection.length / successes.length : 0,
+    libraryUsed: useLibrary,
+  }
+
+  console.log(`Total prompts:       ${summary.total}`)
+  console.log(`Success rate:        ${summary.successes}/${summary.total} (${((summary.successes / summary.total) * 100).toFixed(1)}%)`)
+  console.log(`First-try pass:      ${summary.firstTry}/${summary.successes} (${(summary.firstTryRate * 100).toFixed(1)}%)`)
+  console.log(`Needed correction:   ${summary.neededCorrection}/${summary.successes} (${(summary.correctionRate * 100).toFixed(1)}%)`)
+  console.log(`Failures:            ${summary.failures}`)
+  console.log(`Avg duration:        ${(summary.avgDurationMs / 1000).toFixed(1)}s`)
+  console.log(`Avg attempts:        ${summary.avgAttempts.toFixed(2)}`)
 
   if (failures.length > 0) {
     console.log('\nFailed rules distribution:')
@@ -221,9 +253,36 @@ async function runBenchmark(count: number, outputPath?: string): Promise<void> {
     }
   }
 
+  if (comparePath) {
+    try {
+      const { readFile } = await import('node:fs/promises')
+      const raw = await readFile(comparePath, 'utf-8')
+      const baseline = JSON.parse(raw) as { summary: BenchmarkSummary }
+      const b = baseline.summary
+
+      console.log('\n' + '═'.repeat(60))
+      console.log('COMPARISON vs BASELINE')
+      console.log('═'.repeat(60))
+
+      const delta = (curr: number, prev: number) => {
+        const diff = curr - prev
+        return diff >= 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1)
+      }
+
+      console.log(`                     Baseline    Seeded     Delta`)
+      console.log(`First-try rate:      ${(b.firstTryRate * 100).toFixed(1)}%       ${(summary.firstTryRate * 100).toFixed(1)}%      ${delta(summary.firstTryRate * 100, b.firstTryRate * 100)}pp`)
+      console.log(`Avg attempts:        ${b.avgAttempts.toFixed(2)}        ${summary.avgAttempts.toFixed(2)}       ${delta(summary.avgAttempts, b.avgAttempts)}`)
+      console.log(`Correction rate:     ${(b.correctionRate * 100).toFixed(1)}%       ${(summary.correctionRate * 100).toFixed(1)}%      ${delta(summary.correctionRate * 100, b.correctionRate * 100)}pp`)
+      console.log(`Avg duration:        ${(b.avgDurationMs / 1000).toFixed(1)}s       ${(summary.avgDurationMs / 1000).toFixed(1)}s      ${delta(summary.avgDurationMs / 1000, b.avgDurationMs / 1000)}s`)
+      console.log(`Failures:            ${b.failures}           ${summary.failures}          ${delta(summary.failures, b.failures)}`)
+    } catch {
+      console.log(`\nCould not load comparison file: ${comparePath}`)
+    }
+  }
+
   if (outputPath) {
     const { writeFile } = await import('node:fs/promises')
-    await writeFile(outputPath, JSON.stringify({ results, summary: { total: results.length, successes: successes.length, failures: failures.length, firstTry: firstTry.length, neededCorrection: neededCorrection.length, avgDurationMs: avgDuration } }, null, 2))
+    await writeFile(outputPath, JSON.stringify({ results, summary }, null, 2))
     console.log(`\nFull results written to ${outputPath}`)
   }
 }
@@ -232,8 +291,11 @@ const countArg = process.argv.indexOf('--count')
 const count = countArg !== -1 ? parseInt(process.argv[countArg + 1] ?? '20', 10) : 20
 const outputArg = process.argv.indexOf('--output')
 const output = outputArg !== -1 ? process.argv[outputArg + 1] : undefined
+const noLibrary = process.argv.includes('--no-library')
+const compareArg = process.argv.indexOf('--compare')
+const compare = compareArg !== -1 ? process.argv[compareArg + 1] : undefined
 
-runBenchmark(count, output).catch((err) => {
+runBenchmark(count, output, !noLibrary, compare).catch((err) => {
   console.error('Benchmark failed:', err)
   process.exit(1)
 })
