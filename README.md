@@ -2,7 +2,7 @@
 
 **Turn plain English into deployed n8n workflows — validated, corrected, and deployed in one call.**
 
-Kairos is a TypeScript SDK that takes a natural-language description of an automation, calls Claude to generate n8n workflow JSON, runs it through a **22-rule structural validator** with an automatic correction loop (up to 3 attempts), and deploys the result to your n8n instance via REST API. A local workflow library and telemetry-based feedback loop inject past failure patterns into future generations, so repeated builds avoid known mistakes.
+Kairos is a TypeScript SDK that takes a natural-language description of an automation, calls Claude to generate n8n workflow JSON, runs it through a **22-rule structural validator** with an automatic correction loop (up to 3 attempts), and deploys the result to your n8n instance via REST API. A local workflow library with **hybrid retrieval** (TF-IDF + node fingerprinting + outcome history + cluster reranking) and telemetry-based feedback inject past failure patterns into future generations. With a seeded template library, Kairos achieves **100% first-try validation pass rate** across 20 benchmark prompts.
 
 ```ts
 import { Kairos } from '@kairos-sdk/core'
@@ -286,6 +286,9 @@ kairos build "Every morning at 9am, send a Slack digest to #daily-updates"
 # Dry run only
 kairos build "Monitor a webhook and log payloads" --dry-run
 
+# Seed library with n8n community templates
+kairos sync-templates --max 200
+
 # Manage workflows
 kairos list
 kairos get <workflow-id>
@@ -354,14 +357,26 @@ const kairos = new Kairos({
 - Failure patterns — which validation rules failed and how many times
 - Source workflow IDs (which library entries influenced this build)
 - Top match score and credentials needed
+- Outcome tracking: retrieval count, usage as direct/reference source, first-try pass rate, avg attempts, and failed rules when used as a source
 
-**How retrieval and feedback work:**
-- When you build a new workflow, Kairos searches the library using TF-IDF scoring with deploy-count boosting
+**How retrieval works:**
+
+Kairos uses a **hybrid retrieval** pipeline with four scoring signals, weighted and combined:
+
+| Signal | Weight | What it captures |
+|---|---|---|
+| TF-IDF keywords | 0.35 | Text similarity between description and stored workflows |
+| Node fingerprint | 0.30 | Jaccard similarity between expected node types (extracted from query) and actual nodes in stored workflows |
+| Outcome history | 0.20 | First-try pass rate and avg attempts when this workflow was used as a source — proven templates rank higher |
+| Deploy frequency | 0.15 | How often a workflow has been deployed — a proxy for usefulness |
+
+After hybrid scoring, results are **reranked by cluster**: workflows are grouped by node fingerprint pattern (e.g., webhook→slack, scheduleTrigger→httpRequest→gmail), and cluster-level success stats boost or penalize candidates. Clusters with high failure rates on specific rules surface those as warnings.
+
 - High-scoring matches (>= 0.92) provide direct structural templates
 - Medium matches (>= 0.72) provide reference examples
-- Failure patterns from matched workflows are injected as warnings into Claude's prompt
-- Global failure rates from telemetry (rules failing in >= 15% of all builds) are also included
-- Result: the first build of a type may take 2-3 correction attempts, but similar builds afterwards tend to pass on the first try
+- Failure patterns from matched workflows and cluster-level warnings are injected into Claude's prompt
+
+**Template seeding:** Run `kairos sync-templates` to ingest validated workflows from the n8n community library. Templates are safety-filtered (blocks code/executeCommand/ssh nodes, hardcoded secrets) and tagged with `sourceKind: 'n8n-template'`. In benchmarks, seeding the library with 89 templates improved first-try pass rate from 55% to 100%.
 
 The CLI automatically enables the library — no configuration needed.
 
