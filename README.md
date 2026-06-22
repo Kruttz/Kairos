@@ -1,8 +1,8 @@
 # @kairos-sdk/core
 
-**Turn plain English into deployed n8n workflows.**
+**Turn plain English into deployed n8n workflows — and get better at it every time.**
 
-Kairos is a TypeScript SDK that takes a natural-language description of an automation, calls Claude to generate valid n8n workflow JSON, runs it through a 19-rule validator with an automatic correction loop, and deploys it to your n8n instance via REST API — all in a single `build()` call.
+Kairos is a TypeScript SDK that takes a natural-language description of an automation, calls Claude to generate valid n8n workflow JSON, runs it through a 19-rule validator with an automatic correction loop, and deploys it to your n8n instance via REST API — all in a single `build()` call. Every build feeds back into a learning loop: failure patterns are recorded, successful workflows are stored in a local library, and future builds use this history to avoid past mistakes and generate higher-quality workflows.
 
 ```ts
 import { Kairos } from '@kairos-sdk/core'
@@ -91,11 +91,14 @@ Without the validator and correction loop, 45% of generated workflows would have
 
 ## How It Works
 
-1. **Generate** — Kairos sends your description to Claude with a detailed system prompt and forces a `generate_workflow` tool call, producing structured n8n workflow JSON.
-2. **Validate** — The workflow is checked against 19 rules covering node structure, connection integrity, forbidden fields, trigger presence, AI connection direction, and more.
-3. **Correct** — If validation fails, Kairos automatically sends the issues back to Claude and retries (up to 3 attempts, with tighter temperature on the final try).
-4. **Strip** — Forbidden server-assigned fields (`id`, `createdAt`, `updatedAt`, etc.) are stripped before deployment.
-5. **Deploy** — The validated workflow is posted to your n8n instance via REST API.
+1. **Search** — Kairos searches its local workflow library for similar past builds. Matching workflows and their failure patterns are pulled into context.
+2. **Warn** — Known failure patterns (from both library matches and global telemetry rates) are injected into the system prompt so Claude avoids repeating past mistakes.
+3. **Generate** — Your description is sent to Claude with a detailed system prompt and forces a `generate_workflow` tool call, producing structured n8n workflow JSON.
+4. **Validate** — The workflow is checked against 19 rules covering node structure, connection integrity, forbidden fields, trigger presence, AI connection direction, and more.
+5. **Correct** — If validation fails, Kairos automatically sends the issues back to Claude and retries (up to 3 attempts, with tighter temperature on the final try).
+6. **Strip** — Forbidden server-assigned fields (`id`, `createdAt`, `updatedAt`, etc.) are stripped before deployment.
+7. **Deploy** — The validated workflow is posted to your n8n instance via REST API.
+8. **Learn** — The workflow, its metadata (generation mode, attempt count, failure patterns, credentials needed), and telemetry events are saved locally. Future builds benefit from this accumulated knowledge.
 
 ---
 
@@ -111,7 +114,7 @@ Without the validator and correction loop, 45% of generated workflows would have
 | `model` | `string` | | Claude model to use (default: `claude-sonnet-4-6`) |
 | `logger` | `ILogger` | | Custom logger (default: silent) |
 | `telemetry` | `boolean \| string` | | Enable JSONL telemetry logging (`true` for default dir, or a path) |
-| `library` | `IWorkflowLibrary` | | Workflow library for RAG (default: `NullLibrary`) |
+| `library` | `IWorkflowLibrary` | | Workflow library for learning loop (default: `NullLibrary`, CLI uses `FileLibrary`) |
 
 ---
 
@@ -285,13 +288,15 @@ telemetry: '/path/to/telemetry/dir'
 
 Each event includes timestamp, session ID, token counts, validation issues, and duration — useful for benchmarking and analyzing the correction loop.
 
+Kairos also reads telemetry data to compute **per-rule failure rates** across all builds. Rules that fail frequently (>= 15% of builds) are automatically surfaced as warnings in the generation prompt, helping Claude avoid systemic issues. Failure rates use distinct session counting to avoid inflation from retry loops, and results are cached for 5 minutes.
+
 For CLI usage, set `KAIROS_TELEMETRY=true` in your environment.
 
 ---
 
-## Workflow Library (RAG)
+## Workflow Library & Learning Loop
 
-Kairos includes a file-based workflow library that stores successful generations and uses them as few-shot examples for future builds:
+Kairos includes a file-based workflow library that stores every generation and learns from its mistakes:
 
 ```ts
 import { Kairos, FileLibrary } from '@kairos-sdk/core'
@@ -301,10 +306,27 @@ const kairos = new Kairos({
   n8nBaseUrl: '...',
   n8nApiKey: '...',
   library: new FileLibrary(), // stores in ~/.kairos/library/
+  telemetry: true,            // enables failure rate tracking
 })
 ```
 
-Every successful `build()` is saved automatically. Over time, the library improves generation quality by providing relevant examples to Claude — a self-improving few-shot learning system.
+**What gets stored per workflow:**
+- The full workflow JSON and description
+- Generation mode (`direct`, `reference`, or `scratch` based on library match quality)
+- Number of generation attempts needed
+- Failure patterns — which validation rules failed and how many times
+- Source workflow IDs (which library entries influenced this build)
+- Top match score and credentials needed
+
+**How it improves over time:**
+- When you build a new workflow, Kairos searches the library using TF-IDF scoring
+- High-scoring matches (>= 0.92) provide direct structural templates
+- Medium matches (>= 0.72) provide reference examples
+- Failure patterns from matched workflows are injected as warnings into Claude's prompt
+- Global failure rates from telemetry (rules failing in >= 15% of all builds) are also included
+- Result: the first build of a type may take 2-3 attempts, but similar builds afterwards pass on the first try
+
+The CLI automatically enables the library — no configuration needed.
 
 ---
 

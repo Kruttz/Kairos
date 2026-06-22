@@ -1,9 +1,22 @@
 import type { N8nWorkflow } from '../types/workflow.js'
+import type { CredentialRequirement } from '../types/result.js'
+
+export interface FailurePattern {
+  rule: number
+  message: string
+  occurrences: number
+}
 
 export interface WorkflowMetadataInput {
   description: string
   tags?: string[]
   platform?: string
+  failurePatterns?: Array<{ rule: number; message: string }>
+  sourceWorkflowIds?: string[]
+  generationMode?: 'direct' | 'reference' | 'scratch'
+  topMatchScore?: number
+  generationAttempts?: number
+  credentialsNeeded?: CredentialRequirement[]
 }
 
 export interface StoredWorkflow {
@@ -15,6 +28,12 @@ export interface StoredWorkflow {
   deployCount: number
   createdAt: string
   lastDeployedAt?: string
+  failurePatterns?: FailurePattern[]
+  sourceWorkflowIds?: string[]
+  generationMode?: 'direct' | 'reference' | 'scratch'
+  topMatchScore?: number
+  generationAttempts?: number
+  credentialsNeeded?: CredentialRequirement[]
 }
 
 export interface WorkflowMatch {

@@ -1,6 +1,28 @@
 import { describe, it, expect } from 'vitest'
 import { PromptBuilder } from '../../../src/generation/prompt-builder.js'
 import { SYSTEM_PROMPT_V1 } from '../../../src/generation/prompts/v1.js'
+import type { WorkflowMatch } from '../../../src/library/types.js'
+
+function makeMatch(score: number, storedOverrides?: Record<string, unknown>): WorkflowMatch {
+  return {
+    workflow: {
+      id: 'test-id',
+      workflow: {
+        name: 'Test',
+        nodes: [{ parameters: {}, name: 'Start', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 0] }],
+        connections: {},
+      },
+      description: 'test workflow',
+      tags: [],
+      platform: 'n8n',
+      deployCount: 1,
+      createdAt: new Date().toISOString(),
+      ...storedOverrides,
+    },
+    score,
+    mode: score >= 0.92 ? 'direct' : score >= 0.72 ? 'reference' : 'scratch',
+  }
+}
 
 describe('PromptBuilder', () => {
   const builder = new PromptBuilder()
@@ -44,5 +66,37 @@ describe('PromptBuilder', () => {
     expect(SYSTEM_PROMPT_V1).toContain('ai_languageModel')
     expect(SYSTEM_PROMPT_V1).toContain('SUB-NODE is the SOURCE')
     expect(SYSTEM_PROMPT_V1).toContain('executionOrder')
+  })
+
+  it('includes failure warnings from matched workflow patterns', () => {
+    const match = makeMatch(0.8, {
+      failurePatterns: [
+        { rule: 12, message: 'Forbidden field "id"', occurrences: 3 },
+      ],
+    })
+    const prompt = builder.build({ description: 'test' }, [match])
+    const warningBlock = prompt.system.find((b) => b.text.includes('Known Failure Patterns'))
+    expect(warningBlock).toBeDefined()
+    expect(warningBlock!.text).toContain('Rule 12')
+    expect(warningBlock!.text).toContain('3x')
+  })
+
+  it('includes global high-frequency failure rates', () => {
+    const rates = [
+      { rule: 5, failureCount: 8, totalBuilds: 10, rate: 0.8, commonMessage: 'Missing executionOrder' },
+      { rule: 1, failureCount: 1, totalBuilds: 10, rate: 0.1, commonMessage: 'Low freq' },
+    ]
+    const prompt = builder.build({ description: 'test' }, [], rates)
+    const warningBlock = prompt.system.find((b) => b.text.includes('Known Failure Patterns'))
+    expect(warningBlock).toBeDefined()
+    expect(warningBlock!.text).toContain('Rule 5')
+    expect(warningBlock!.text).toContain('80%')
+    expect(warningBlock!.text).not.toContain('Rule 1')
+  })
+
+  it('omits failure warnings block when no patterns exist', () => {
+    const prompt = builder.build({ description: 'test' }, [])
+    const warningBlock = prompt.system.find((b) => b.text.includes('Known Failure Patterns'))
+    expect(warningBlock).toBeUndefined()
   })
 })

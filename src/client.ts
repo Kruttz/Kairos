@@ -2,16 +2,19 @@ import Anthropic from '@anthropic-ai/sdk'
 import type { N8nWorkflow, Tag } from './types/workflow.js'
 import type { BuildResult, WorkflowListItem, ExecutionSummary, ExecutionDetail } from './types/result.js'
 import type { ClientOptions, BuildOptions, DeleteOptions, ExecutionFilter } from './types/options.js'
-import type { IWorkflowLibrary } from './library/types.js'
+import type { IWorkflowLibrary, WorkflowMatch, WorkflowMetadataInput } from './library/types.js'
 import { NullLibrary } from './library/null-library.js'
 import { N8nApiClient } from './providers/n8n/api-client.js'
 import { N8nFieldStripper } from './providers/n8n/stripper.js'
 import { N8nProvider } from './providers/n8n/provider.js'
 import { N8nValidator } from './validation/validator.js'
 import { WorkflowDesigner } from './generation/designer.js'
+import type { DesignResult } from './generation/types.js'
 import { TelemetryCollector } from './telemetry/collector.js'
+import { TelemetryReader } from './telemetry/reader.js'
 import { nullLogger } from './utils/logger.js'
 import type { ILogger } from './utils/logger.js'
+import { scoreToMode } from './utils/thresholds.js'
 
 const DEFAULT_MODEL = 'claude-sonnet-4-6'
 
@@ -22,7 +25,9 @@ export class Kairos {
   private readonly library: IWorkflowLibrary
   private readonly logger: ILogger
   private readonly telemetry: TelemetryCollector | null
+  private readonly telemetryReader: TelemetryReader | null
   private readonly model: string
+  private saveQueue: Promise<void> = Promise.resolve()
 
   constructor(options: ClientOptions) {
     const logger = options.logger ?? nullLogger
@@ -40,10 +45,13 @@ export class Kairos {
 
     if (options.telemetry === true) {
       this.telemetry = new TelemetryCollector()
+      this.telemetryReader = new TelemetryReader()
     } else if (typeof options.telemetry === 'string') {
       this.telemetry = new TelemetryCollector(options.telemetry)
+      this.telemetryReader = new TelemetryReader(options.telemetry)
     } else {
       this.telemetry = null
+      this.telemetryReader = null
     }
   }
 
@@ -60,9 +68,12 @@ export class Kairos {
     await this.library.initialize()
     const matches = await this.library.search(description)
 
+    const globalFailureRates = await this.telemetryReader?.getFailureRates() ?? []
+
     const designResult = await this.designer.design(
       { description, ...(options?.name ? { name: options.name } : {}) },
       matches,
+      globalFailureRates,
     )
 
     for (const meta of designResult.attemptMetadata) {
@@ -83,16 +94,9 @@ export class Kairos {
       ? { ...designResult.workflow, name: options.name }
       : designResult.workflow
 
-    if (options?.dryRun) {
-      const result: BuildResult = {
-        workflowId: null,
-        name: workflow.name,
-        credentialsNeeded: designResult.credentialsNeeded,
-        activationRequired: true,
-        generationAttempts: designResult.attempts,
-        dryRun: true,
-      }
+    this.saveToLibrary(workflow, description, designResult, matches)
 
+    if (options?.dryRun) {
       const totalTokensInput = designResult.attemptMetadata.reduce((s, m) => s + m.tokensInput, 0)
       const totalTokensOutput = designResult.attemptMetadata.reduce((s, m) => s + m.tokensOutput, 0)
 
@@ -109,26 +113,20 @@ export class Kairos {
         credentialsNeeded: designResult.credentialsNeeded.length,
       })
 
-      return result
+      return {
+        workflowId: null,
+        name: workflow.name,
+        credentialsNeeded: designResult.credentialsNeeded,
+        activationRequired: true,
+        generationAttempts: designResult.attempts,
+        dryRun: true,
+      }
     }
 
     const deployed = await this.provider.deploy(workflow)
 
-    this.library.save(workflow, { description }).catch((err: unknown) => {
-      this.logger.warn('Failed to save workflow to library (non-fatal)', { err: String(err) })
-    })
-
     if (options?.activate) {
       await this.provider.activate(deployed.workflowId)
-    }
-
-    const result: BuildResult = {
-      workflowId: deployed.workflowId,
-      name: deployed.name,
-      credentialsNeeded: designResult.credentialsNeeded,
-      activationRequired: !options?.activate,
-      generationAttempts: designResult.attempts,
-      dryRun: false,
     }
 
     const totalTokensInput = designResult.attemptMetadata.reduce((s, m) => s + m.tokensInput, 0)
@@ -147,15 +145,27 @@ export class Kairos {
       credentialsNeeded: designResult.credentialsNeeded.length,
     })
 
-    return result
+    return {
+      workflowId: deployed.workflowId,
+      name: deployed.name,
+      credentialsNeeded: designResult.credentialsNeeded,
+      activationRequired: !options?.activate,
+      generationAttempts: designResult.attempts,
+      dryRun: false,
+    }
   }
 
   async update(id: string, description: string): Promise<BuildResult> {
     this.logger.info('Kairos.update', { id, description })
 
+    await this.library.initialize()
     const matches = await this.library.search(description)
-    const designResult = await this.designer.design({ description }, matches)
+    const globalFailureRates = await this.telemetryReader?.getFailureRates() ?? []
+
+    const designResult = await this.designer.design({ description }, matches, globalFailureRates)
     const deployed = await this.provider.update(id, designResult.workflow)
+
+    this.saveToLibrary(designResult.workflow, description, designResult, matches)
 
     return {
       workflowId: deployed.workflowId,
@@ -165,6 +175,37 @@ export class Kairos {
       generationAttempts: designResult.attempts,
       dryRun: false,
     }
+  }
+
+  private saveToLibrary(
+    workflow: N8nWorkflow,
+    description: string,
+    designResult: DesignResult,
+    matches: WorkflowMatch[],
+  ): void {
+    const failedAttempts = designResult.attemptMetadata.filter((m) => !m.validationPassed)
+    const failurePatterns = failedAttempts.flatMap((m) =>
+      m.issues.map((i) => ({ rule: i.rule, message: i.message })),
+    )
+    const topMatch = matches[0]
+    const generationMode = topMatch ? scoreToMode(topMatch.score) : 'scratch' as const
+
+    const metadata: WorkflowMetadataInput = {
+      description,
+      generationMode,
+      generationAttempts: designResult.attempts,
+    }
+    if (failurePatterns.length > 0) metadata.failurePatterns = failurePatterns
+    if (matches.length > 0) metadata.sourceWorkflowIds = matches.map((m) => m.workflow.id)
+    if (topMatch) metadata.topMatchScore = topMatch.score
+    if (designResult.credentialsNeeded.length > 0) metadata.credentialsNeeded = designResult.credentialsNeeded
+
+    this.saveQueue = this.saveQueue
+      .then(() => this.library.save(workflow, metadata))
+      .then(() => {})
+      .catch((err: unknown) => {
+        this.logger.warn('Failed to save workflow to library (non-fatal)', { err: String(err) })
+      })
   }
 
   async get(id: string): Promise<N8nWorkflow> {

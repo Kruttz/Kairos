@@ -1,11 +1,13 @@
 import type { WorkflowMatch } from '../library/types.js'
+import type { RuleFailureRate } from '../telemetry/reader.js'
 import type { DesignRequest, BuiltPrompt, SystemPromptBlock } from './types.js'
 import { SYSTEM_PROMPT_V1 } from './prompts/v1.js'
+import { scoreToMode } from '../utils/thresholds.js'
 
 export class PromptBuilder {
-  build(request: DesignRequest, matches: WorkflowMatch[]): BuiltPrompt {
+  build(request: DesignRequest, matches: WorkflowMatch[], globalFailureRates: RuleFailureRate[] = []): BuiltPrompt {
     const mode = this.resolveMode(matches)
-    const system = this.buildSystem(matches, mode)
+    const system = this.buildSystem(matches, mode, globalFailureRates)
     const userMessage = this.buildUserMessage(request, matches, mode)
     return { system, userMessage, mode, matches }
   }
@@ -29,12 +31,10 @@ Fix ALL of the above issues in your new response. Do not repeat any of these mis
     if (matches.length === 0) return 'scratch'
     const top = matches[0]
     if (!top) return 'scratch'
-    if (top.score >= 0.92) return 'direct'
-    if (top.score >= 0.72) return 'reference'
-    return 'scratch'
+    return scoreToMode(top.score)
   }
 
-  private buildSystem(matches: WorkflowMatch[], mode: 'direct' | 'reference' | 'scratch'): SystemPromptBlock[] {
+  private buildSystem(matches: WorkflowMatch[], mode: 'direct' | 'reference' | 'scratch', globalFailureRates: RuleFailureRate[] = []): SystemPromptBlock[] {
     const blocks: SystemPromptBlock[] = [
       {
         type: 'text',
@@ -68,7 +68,34 @@ Fix ALL of the above issues in your new response. Do not repeat any of these mis
       })
     }
 
+    const warnings = this.buildFailureWarnings(matches, globalFailureRates)
+    if (warnings) {
+      blocks.push({ type: 'text', text: warnings })
+    }
+
     return blocks
+  }
+
+  private buildFailureWarnings(matches: WorkflowMatch[], globalFailureRates: RuleFailureRate[]): string | null {
+    const lines: string[] = []
+
+    for (const match of matches) {
+      const patterns = match.workflow.failurePatterns
+      if (!patterns?.length) continue
+      for (const fp of patterns) {
+        lines.push(`- Rule ${fp.rule}: "${fp.message}" (seen ${fp.occurrences}x in similar workflows)`)
+      }
+    }
+
+    const highFreqRules = globalFailureRates.filter((r) => r.rate >= 0.15)
+    for (const rule of highFreqRules) {
+      lines.push(`- Rule ${rule.rule}: "${rule.commonMessage}" (fails in ${Math.round(rule.rate * 100)}% of all builds)`)
+    }
+
+    if (lines.length === 0) return null
+
+    const unique = [...new Set(lines)]
+    return `## Known Failure Patterns — AVOID THESE\n\nPrevious builds frequently failed the following validation rules. Ensure your output does NOT repeat these mistakes:\n${unique.join('\n')}`
   }
 
   private buildUserMessage(request: DesignRequest, _matches: WorkflowMatch[], _mode: string): string {

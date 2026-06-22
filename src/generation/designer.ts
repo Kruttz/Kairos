@@ -10,6 +10,7 @@ import type { ValidationIssue } from '../errors/validation-error.js'
 import { N8nValidator } from '../validation/validator.js'
 import { PromptBuilder } from './prompt-builder.js'
 import type { AttemptMetadata } from '../telemetry/types.js'
+import type { RuleFailureRate } from '../telemetry/reader.js'
 import type { DesignRequest, DesignResult, SystemPromptBlock } from './types.js'
 
 const MAX_ATTEMPTS = 3
@@ -74,7 +75,7 @@ export class WorkflowDesigner {
     this.promptBuilder = new PromptBuilder()
   }
 
-  async design(request: DesignRequest, matches: WorkflowMatch[]): Promise<DesignResult> {
+  async design(request: DesignRequest, matches: WorkflowMatch[], globalFailureRates: RuleFailureRate[] = []): Promise<DesignResult> {
     const allIssues: ValidationIssue[] = []
     const attemptMetadata: AttemptMetadata[] = []
     let attempts = 0
@@ -82,7 +83,7 @@ export class WorkflowDesigner {
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       attempts = attempt
       const temperature = attempt === MAX_ATTEMPTS ? FINAL_TEMPERATURE : BASE_TEMPERATURE
-      const built = this.promptBuilder.build(request, matches)
+      const built = this.promptBuilder.build(request, matches, globalFailureRates)
 
       let userMessage: string
       if (attempt === 1) {

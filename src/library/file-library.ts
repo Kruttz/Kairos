@@ -11,6 +11,7 @@ import type {
   SearchOptions,
 } from './types.js'
 import { generateUUID } from '../utils/uuid.js'
+import { scoreToMode } from '../utils/thresholds.js'
 
 function tokenize(text: string): string[] {
   return text
@@ -39,6 +40,7 @@ export class FileLibrary implements IWorkflowLibrary {
   private readonly dir: string
   private workflows: StoredWorkflow[] = []
   private initialized = false
+  private writeQueue: Promise<void> = Promise.resolve()
 
   constructor(dir?: string) {
     this.dir = dir ?? join(homedir(), '.kairos', 'library')
@@ -89,12 +91,13 @@ export class FileLibrary implements IWorkflowLibrary {
     return scored.map((m) => ({
       workflow: m.workflow,
       score: m.score,
-      mode: m.score > 0.5 ? 'direct' as const : 'reference' as const,
+      mode: scoreToMode(m.score),
     }))
   }
 
   async save(workflow: N8nWorkflow, metadata: WorkflowMetadataInput): Promise<string> {
     const id = generateUUID()
+    const failurePatterns = this.deduplicateFailurePatterns(metadata.failurePatterns)
     const stored: StoredWorkflow = {
       id,
       workflow,
@@ -103,6 +106,12 @@ export class FileLibrary implements IWorkflowLibrary {
       platform: metadata.platform ?? 'n8n',
       deployCount: 1,
       createdAt: new Date().toISOString(),
+      ...(failurePatterns?.length ? { failurePatterns } : {}),
+      ...(metadata.sourceWorkflowIds?.length ? { sourceWorkflowIds: metadata.sourceWorkflowIds } : {}),
+      ...(metadata.generationMode ? { generationMode: metadata.generationMode } : {}),
+      ...(metadata.topMatchScore != null ? { topMatchScore: metadata.topMatchScore } : {}),
+      ...(metadata.generationAttempts != null ? { generationAttempts: metadata.generationAttempts } : {}),
+      ...(metadata.credentialsNeeded?.length ? { credentialsNeeded: metadata.credentialsNeeded } : {}),
     }
     this.workflows.push(stored)
     await this.persist()
@@ -133,8 +142,27 @@ export class FileLibrary implements IWorkflowLibrary {
     return result
   }
 
-  private async persist(): Promise<void> {
-    const indexPath = join(this.dir, 'index.json')
-    await writeFile(indexPath, JSON.stringify(this.workflows, null, 2), 'utf-8')
+  private deduplicateFailurePatterns(
+    patterns?: Array<{ rule: number; message: string }>,
+  ): StoredWorkflow['failurePatterns'] | undefined {
+    if (!patterns?.length) return undefined
+    const map = new Map<number, { rule: number; message: string; occurrences: number }>()
+    for (const fp of patterns) {
+      const existing = map.get(fp.rule)
+      if (existing) {
+        existing.occurrences++
+      } else {
+        map.set(fp.rule, { rule: fp.rule, message: fp.message, occurrences: 1 })
+      }
+    }
+    return [...map.values()]
+  }
+
+  private persist(): Promise<void> {
+    this.writeQueue = this.writeQueue.then(async () => {
+      const indexPath = join(this.dir, 'index.json')
+      await writeFile(indexPath, JSON.stringify(this.workflows, null, 2), 'utf-8')
+    })
+    return this.writeQueue
   }
 }

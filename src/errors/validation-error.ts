@@ -1,11 +1,7 @@
 import { KairosError } from './base.js'
+import type { ValidationIssue } from '../validation/types.js'
 
-export interface ValidationIssue {
-  rule: number
-  severity: 'error' | 'warn'
-  message: string
-  nodeId?: string
-}
+export type { ValidationIssue }
 
 export class ValidationError extends KairosError {
   constructor(

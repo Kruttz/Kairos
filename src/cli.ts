@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { Kairos } from './client.js'
+import { FileLibrary } from './library/file-library.js'
 
 const HELP = `
 Kairos SDK — LLM-powered n8n workflow generation
@@ -75,6 +76,7 @@ function createClient(): Kairos {
     n8nApiKey: getEnvOrExit('N8N_API_KEY'),
     ...(process.env['KAIROS_MODEL'] ? { model: process.env['KAIROS_MODEL'] } : {}),
     ...(telemetry !== undefined ? { telemetry } : {}),
+    library: new FileLibrary(),
     logger: {
       debug: () => {},
       info: () => {},
