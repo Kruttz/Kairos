@@ -1,5 +1,9 @@
 # @kairos-sdk/core
 
+[![CI](https://github.com/Kruttz/kairos-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/Kruttz/kairos-sdk/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/@kairos-sdk/core)](https://www.npmjs.com/package/@kairos-sdk/core)
+[![npm downloads](https://img.shields.io/npm/dw/@kairos-sdk/core)](https://www.npmjs.com/package/@kairos-sdk/core)
+
 **Turn plain English into deployed n8n workflows — validated, corrected, and deployed in one call.**
 
 Kairos is a TypeScript SDK that takes a natural-language description of an automation, calls Claude to generate n8n workflow JSON, runs it through a **23-rule structural validator** with an automatic correction loop (up to 3 attempts), and deploys the result to your n8n instance via REST API. A local workflow library with **hybrid retrieval** (TF-IDF + node fingerprinting + outcome history + cluster reranking) and telemetry-based feedback inject past failure patterns into future generations. With a seeded template library, Kairos achieves **100% first-try validation pass rate** across 20 benchmark prompts.
