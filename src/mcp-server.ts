@@ -19,6 +19,12 @@ import { PromptBuilder } from './generation/prompt-builder.js'
 import { TelemetryReader } from './telemetry/reader.js'
 import { nullLogger } from './utils/logger.js'
 import type { N8nWorkflow } from './types/workflow.js'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8')) as { version: string }
 
 const library = new FileLibrary()
 const validator = new N8nValidator()
@@ -33,6 +39,11 @@ function getTelemetryReader(): TelemetryReader | null {
   }
 }
 
+function isAllowed(action: 'deploy' | 'activate' | 'delete'): boolean {
+  const key = `KAIROS_MCP_ALLOW_${action.toUpperCase()}`
+  return process.env[key] === 'true'
+}
+
 function getApiClient(): N8nApiClient {
   const baseUrl = process.env['N8N_BASE_URL']
   const apiKey = process.env['N8N_API_KEY']
@@ -44,7 +55,7 @@ function getApiClient(): N8nApiClient {
 
 const server = new McpServer({
   name: 'kairos',
-  version: '0.3.0',
+  version: pkg.version,
 })
 
 // ── Core generation tools (no API key needed) ──────────────────────────────
@@ -156,6 +167,16 @@ server.tool(
     activate: z.boolean().default(false).describe('Activate the workflow immediately after deployment'),
   },
   async ({ workflow: workflowStr, activate }) => {
+    if (!isAllowed('deploy')) {
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({ error: 'Deploy is disabled. Set KAIROS_MCP_ALLOW_DEPLOY=true to enable.' }),
+        }],
+        isError: true,
+      }
+    }
+
     let parsed: N8nWorkflow
     try {
       parsed = JSON.parse(workflowStr) as N8nWorkflow
@@ -187,6 +208,20 @@ server.tool(
     const response = await client.createWorkflow(stripped)
 
     if (activate) {
+      if (!isAllowed('activate')) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              workflowId: response.id,
+              name: response.name,
+              activated: false,
+              warning: 'Workflow deployed but activation is disabled. Set KAIROS_MCP_ALLOW_ACTIVATE=true to enable.',
+              url: `${process.env['N8N_BASE_URL']}/workflow/${response.id}`,
+            }, null, 2),
+          }],
+        }
+      }
       await client.activateWorkflow(response.id)
     }
 
@@ -288,6 +323,16 @@ server.tool(
     workflow_id: z.string().describe('The n8n workflow ID to activate'),
   },
   async ({ workflow_id }) => {
+    if (!isAllowed('activate')) {
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({ error: 'Activate is disabled. Set KAIROS_MCP_ALLOW_ACTIVATE=true to enable.' }),
+        }],
+        isError: true,
+      }
+    }
+
     const client = getApiClient()
     await client.activateWorkflow(workflow_id)
 
@@ -326,6 +371,16 @@ server.tool(
     workflow_id: z.string().describe('The n8n workflow ID to delete'),
   },
   async ({ workflow_id }) => {
+    if (!isAllowed('delete')) {
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({ error: 'Delete is disabled. Set KAIROS_MCP_ALLOW_DELETE=true to enable.' }),
+        }],
+        isError: true,
+      }
+    }
+
     const client = getApiClient()
     await client.deleteWorkflow(workflow_id)
 
