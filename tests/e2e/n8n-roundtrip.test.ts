@@ -29,7 +29,7 @@ describe.skipIf(!canRun)('n8n e2e roundtrip', () => {
 
   afterAll(cleanup)
 
-  it('fixture passes the 22-rule validator', async () => {
+  it('fixture passes the 23-rule validator', async () => {
     const raw = await readFile(FIXTURE_PATH, 'utf-8')
     const workflow: N8nWorkflow = JSON.parse(raw) as N8nWorkflow
 

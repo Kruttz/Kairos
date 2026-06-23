@@ -131,9 +131,9 @@ npm install @kairos-sdk/core @anthropic-ai/sdk
 ## Requirements
 
 - Node.js 18+
-- **SDK only:** An [Anthropic API key](https://console.anthropic.com) — the SDK calls Claude internally
+- **SDK:** An [Anthropic API key](https://console.anthropic.com) — the SDK calls Claude internally
 - **MCP:** No Anthropic key needed — your host LLM does the generation
-- An n8n instance with API access enabled (Cloud or self-hosted) — only needed for deployment, not for generation/validation
+- An n8n instance with API access enabled (Cloud or self-hosted) — required for both SDK and MCP (Kairos syncs your instance's node types for accurate generation)
 
 ---
 

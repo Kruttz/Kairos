@@ -120,6 +120,7 @@ server.tool(
           topMatchScore: matches[0]?.score ?? null,
           nodeCatalog: syncResult ? 'synced' : 'static',
           nodeCount: syncResult?.nodeCount ?? null,
+          ...(syncResult ? {} : { syncWarning: 'Could not sync node types from your n8n instance. Using static fallback catalog — generated workflows may not match your exact n8n setup.' }),
           systemPrompt: systemText,
           userMessage: built.userMessage,
           outputFormat: {
