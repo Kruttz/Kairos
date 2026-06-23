@@ -1,13 +1,14 @@
 {
   "name": "@kairos-sdk/core",
   "version": "0.2.1",
-  "description": "LLM-powered n8n workflow generation and deployment SDK",
+  "description": "LLM-powered n8n workflow generation — use as an SDK or MCP server",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "kairos": "dist/cli.js"
+    "kairos": "dist/cli.js",
+    "kairos-mcp": "dist/mcp-server.js"
   },
   "exports": {
     ".": {
@@ -42,7 +43,9 @@
     "llm",
     "workflow-generation",
     "kairos",
-    "no-code"
+    "no-code",
+    "mcp",
+    "model-context-protocol"
   ],
   "repository": {
     "type": "git",
@@ -57,7 +60,15 @@
   "peerDependencies": {
     "@anthropic-ai/sdk": ">=0.30.0"
   },
-  "dependencies": {},
+  "peerDependenciesMeta": {
+    "@anthropic-ai/sdk": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  },
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.36.0",
     "@types/node": "^20.0.0",

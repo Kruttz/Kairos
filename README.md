@@ -8,7 +8,7 @@
 
 ![Kairos SDK Demo](demo.gif)
 
-Kairos is a TypeScript SDK that takes a natural-language description of an automation, calls Claude to generate n8n workflow JSON, runs it through a **23-rule structural validator** with an automatic correction loop (up to 3 attempts), and deploys the result to your n8n instance via REST API. A local workflow library with **hybrid retrieval** (TF-IDF + node fingerprinting + outcome history + cluster reranking) and telemetry-based feedback inject past failure patterns into future generations. With a seeded template library, Kairos achieves **100% first-try structural validation pass rate** across 20 benchmark prompts (meaning the generated JSON is structurally valid on the first attempt — runtime behavior depends on your credentials and node configuration).
+Kairos turns plain-English workflow descriptions into validated, deployable n8n workflow JSON. Use it as an **MCP server** (connect to Claude Code, Claude Desktop, or any MCP host — your LLM generates, Kairos validates and deploys, no extra API keys needed) or as a **TypeScript SDK** for programmatic control (calls Claude internally with a specialized prompt). Either way, workflows pass through a **23-rule structural validator** with automatic correction, and a local workflow library with **hybrid retrieval** (TF-IDF + node fingerprinting + outcome history + cluster reranking) injects past failure patterns into future generations. With a seeded template library, Kairos achieves **100% first-try structural validation pass rate** across 20 benchmark prompts (meaning the generated JSON is structurally valid on the first attempt — runtime behavior depends on your credentials and node configuration).
 
 ```ts
 import { Kairos } from '@kairos-sdk/core'
@@ -29,7 +29,95 @@ console.log(result.credentialsNeeded) // what the user still needs to configure
 
 ---
 
-## Installation
+## Use as MCP Server (no code required)
+
+Connect Kairos to any MCP-compatible host — Claude Code, Claude Desktop, ChatGPT, Cursor, or any agent that supports the Model Context Protocol. **No API keys needed for generation** — your host LLM generates the workflow using Kairos's specialized context, then Kairos validates and deploys it. No double-LLM calls, no wasted tokens.
+
+### Setup
+
+```bash
+npm install -g @kairos-sdk/core
+```
+
+### Claude Code
+
+Add to your Claude Code MCP config (`~/.claude/claude_code_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "kairos": {
+      "command": "kairos-mcp",
+      "env": {
+        "N8N_BASE_URL": "https://your-instance.app.n8n.cloud",
+        "N8N_API_KEY": "your-n8n-key"
+      }
+    }
+  }
+}
+```
+
+`N8N_BASE_URL` and `N8N_API_KEY` are only needed for deploy/list/activate operations. For generation and validation, no environment variables are required at all.
+
+### Claude Desktop
+
+Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+
+```json
+{
+  "mcpServers": {
+    "kairos": {
+      "command": "kairos-mcp",
+      "env": {
+        "N8N_BASE_URL": "https://your-instance.app.n8n.cloud",
+        "N8N_API_KEY": "your-n8n-key"
+      }
+    }
+  }
+}
+```
+
+Then just ask your agent: *"Build me a workflow that monitors a webhook and sends a Slack notification"* — it will call `kairos_prompt` for context, generate the workflow itself, validate it with `kairos_validate`, and deploy with `kairos_deploy`.
+
+### How the MCP flow works
+
+The MCP server does **not** call an LLM internally. Instead, it gives your host LLM the specialized knowledge and guardrails to generate n8n workflows itself:
+
+1. **Host LLM calls `kairos_prompt`** — gets the n8n system prompt, node catalog, library matches, and failure patterns
+2. **Host LLM generates the workflow JSON** using that context (no separate API call)
+3. **Host LLM calls `kairos_validate`** — checks the JSON against 23 structural rules
+4. If invalid, the host LLM fixes the issues and validates again
+5. **Host LLM calls `kairos_deploy`** — sends the validated workflow to n8n
+
+This means Kairos works with **any LLM** — Claude, GPT, Gemini, Llama, or anything else connected as an MCP host. Zero Anthropic API key needed.
+
+### Available MCP Tools
+
+#### Generation tools (no API keys needed)
+
+| Tool | Description |
+|------|-------------|
+| `kairos_prompt` | Returns the specialized system prompt, node catalog, library matches, and failure patterns for a given description |
+| `kairos_validate` | Validates workflow JSON against 23 structural rules — returns errors and warnings |
+| `kairos_search` | Searches the local workflow library for similar past builds |
+
+#### Deployment tools (need `N8N_BASE_URL` + `N8N_API_KEY`)
+
+| Tool | Description |
+|------|-------------|
+| `kairos_deploy` | Deploys validated workflow JSON to n8n (re-validates before deploying) |
+| `kairos_list` | List all deployed workflows |
+| `kairos_get` | Get full workflow JSON by ID |
+| `kairos_activate` | Activate a workflow |
+| `kairos_deactivate` | Deactivate a workflow |
+| `kairos_delete` | Delete a workflow |
+| `kairos_executions` | List recent executions with status |
+
+---
+
+## Use as SDK
+
+### Installation
 
 ```bash
 npm install @kairos-sdk/core @anthropic-ai/sdk
@@ -42,8 +130,9 @@ npm install @kairos-sdk/core @anthropic-ai/sdk
 ## Requirements
 
 - Node.js 18+
-- An [Anthropic API key](https://console.anthropic.com)
-- An n8n instance with API access enabled (Cloud or self-hosted)
+- **SDK only:** An [Anthropic API key](https://console.anthropic.com) — the SDK calls Claude internally
+- **MCP:** No Anthropic key needed — your host LLM does the generation
+- An n8n instance with API access enabled (Cloud or self-hosted) — only needed for deployment, not for generation/validation
 
 ---
 
@@ -100,14 +189,25 @@ The baseline run used Claude with the 22-rule validator and correction loop but 
 
 ## How It Works
 
+### SDK flow (calls Claude internally)
+
 1. **Search** — Kairos searches its local workflow library for similar past builds. Matching workflows and their failure patterns are pulled into context.
 2. **Warn** — Known failure patterns (from library matches and global telemetry rates) are injected into the system prompt so Claude avoids repeating known mistakes.
 3. **Generate** — Your description is sent to Claude with a detailed system prompt, forcing a `generate_workflow` tool call that produces structured n8n workflow JSON.
-4. **Validate** — The workflow is checked against **22 structural rules** covering node IDs, types, versions, names, positions, connections, forbidden fields, trigger presence, AI connection direction, cycle detection, webhook pairing, and required parameters.
+4. **Validate** — The workflow is checked against **23 structural rules** covering node IDs, types, versions, names, positions, connections, forbidden fields, trigger presence, AI connection direction, cycle detection, webhook pairing, and required parameters.
 5. **Correct** — If validation fails, the specific rule violations are sent back to Claude for correction (up to 3 attempts, with tighter temperature on the final try).
 6. **Strip** — Forbidden server-assigned fields (`id`, `createdAt`, `updatedAt`, etc.) are stripped before deployment.
 7. **Deploy** — The validated workflow is posted to your n8n instance via REST API.
 8. **Record** — The workflow, its metadata (generation mode, attempt count, failure patterns, credentials needed), and telemetry events are saved locally. Future builds use this history to avoid past mistakes.
+
+### MCP flow (your LLM generates)
+
+1. **Prompt** — Your LLM calls `kairos_prompt`, which searches the library and returns the specialized system prompt, node catalog, library matches, and failure patterns.
+2. **Generate** — Your LLM generates the workflow JSON itself using that context. No separate API call.
+3. **Validate** — Your LLM calls `kairos_validate`, which checks the JSON against the same 23 structural rules.
+4. **Correct** — If validation fails, your LLM fixes the issues and calls `kairos_validate` again.
+5. **Deploy** — Your LLM calls `kairos_deploy`, which strips forbidden fields and posts the workflow to n8n.
+6. **Record** — The deployed workflow is saved to the local library for future retrieval.
 
 ---
 
