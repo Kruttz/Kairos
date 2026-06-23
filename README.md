@@ -27,11 +27,21 @@ console.log(result.workflowId)      // deployed workflow ID
 console.log(result.credentialsNeeded) // what the user still needs to configure
 ```
 
+### What Kairos does and does not do
+
+| Kairos does | Kairos does not guarantee (yet) |
+|---|---|
+| Generates valid n8n workflow JSON | Perfect business logic |
+| Validates structure before deploy (23 rules) | Correct credentials |
+| Syncs node types from your live instance | Runtime success for every API |
+| Learns from prior successful builds | That every workflow matches intent perfectly |
+| Works through MCP, SDK, or CLI | Full replacement for human review |
+
 ---
 
 ## Use as MCP Server (no code required)
 
-Connect Kairos to any MCP-compatible host — Claude Code, Claude Desktop, ChatGPT, Cursor, or any agent that supports the Model Context Protocol. Your host LLM generates the workflow using Kairos's specialized context, then Kairos validates and deploys it. No Anthropic API key needed — no double-LLM calls, no wasted tokens. Kairos auto-syncs your n8n instance's node types so the catalog always matches your exact setup.
+Connect Kairos to any MCP-compatible host — Claude Code, Claude Desktop, Cursor, or any agent that supports the Model Context Protocol. Your host LLM generates the workflow using Kairos's specialized context, then Kairos validates and deploys it. No Anthropic API key needed — no double-LLM calls, no wasted tokens. Kairos auto-syncs your n8n instance's node types so the catalog always matches your exact setup.
 
 ### Setup
 
@@ -182,7 +192,7 @@ Tested against 20 workflow prompts of varying complexity (simple triggers, multi
 | Avg generation time | 30.6s | **20.7s** | -32% |
 | Failures | 0 | 0 | — |
 
-The baseline run used Claude with the 22-rule validator and correction loop but no library. The seeded run used the same validator plus a library of 105 workflows (16 organic + 89 ingested from the n8n community). Template seeding eliminated the correction loop entirely and cut generation time by a third.
+The baseline run used Claude with the 23-rule validator and correction loop but no library. The seeded run used the same validator plus a library of 105 workflows (16 organic + 89 ingested from the n8n community). The broader local development library now contains 286+ generated/ingested workflows. Template seeding eliminated the correction loop entirely and cut generation time by a third.
 
 > **Note:** These results confirm that generated workflows are structurally valid and deployable to n8n. They do not verify runtime execution correctness, credential configuration, or whether the workflow output matches user intent.
 
@@ -214,7 +224,7 @@ The baseline run used Claude with the 22-rule validator and correction loop but 
 
 ## Validator Rules
 
-The 22-rule validator is the core of what makes Kairos reliable. In baseline testing (no library), Claude needed the correction loop 45% of the time. Each rule targets a specific class of error:
+The 23-rule validator is the core of what makes Kairos reliable. In baseline testing (no library), Claude needed the correction loop 45% of the time. Each rule targets a specific class of error:
 
 | Rule | Severity | What it checks |
 |------|----------|----------------|
@@ -376,7 +386,7 @@ try {
 |---|---|
 | `GenerationError` | Anthropic API call failed |
 | `ResponseParseError` | Claude responded but produced no usable tool call |
-| `ValidationError` | Workflow failed 22-rule validation after max retries |
+| `ValidationError` | Workflow failed 23-rule validation after max retries |
 | `ProviderError` | Network/auth failure talking to n8n |
 | `ApiError` | n8n returned a 4xx or 5xx (carries `.statusCode`) |
 | `GuardError` | Input validation failed (empty description) or `delete()` called without `{ confirm: true }` |
