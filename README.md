@@ -8,7 +8,7 @@
 
 ![Kairos SDK Demo](demo.gif)
 
-Kairos turns plain-English workflow descriptions into validated, deployable n8n workflow JSON. Use it as an **MCP server** (connect to Claude Code, Claude Desktop, or any MCP host — your LLM generates, Kairos validates and deploys, no extra API keys needed) or as a **TypeScript SDK** for programmatic control (calls Claude internally with a specialized prompt). Either way, workflows pass through a **23-rule structural validator** with automatic correction, and a local workflow library with **hybrid retrieval** (TF-IDF + node fingerprinting + outcome history + cluster reranking) injects past failure patterns into future generations. With a seeded template library, Kairos achieves **100% first-try structural validation pass rate** across 20 benchmark prompts (meaning the generated JSON is structurally valid on the first attempt — runtime behavior depends on your credentials and node configuration).
+Kairos turns plain-English workflow descriptions into validated, deployable n8n workflow JSON. Use it as an **MCP server** (connect to Claude Code, Claude Desktop, or any MCP host — your LLM generates, Kairos validates and deploys, no Anthropic API key needed) or as a **TypeScript SDK** for programmatic control (calls Claude internally with a specialized prompt). Either way, workflows pass through a **23-rule structural validator** with automatic correction, and a local workflow library with **hybrid retrieval** (TF-IDF + node fingerprinting + outcome history + cluster reranking) injects past failure patterns into future generations. With a seeded template library, Kairos achieves **100% first-try structural validation pass rate** across 20 benchmark prompts (meaning the generated JSON is structurally valid on the first attempt — runtime behavior depends on your credentials and node configuration).
 
 ```ts
 import { Kairos } from '@kairos-sdk/core'
@@ -31,7 +31,7 @@ console.log(result.credentialsNeeded) // what the user still needs to configure
 
 ## Use as MCP Server (no code required)
 
-Connect Kairos to any MCP-compatible host — Claude Code, Claude Desktop, ChatGPT, Cursor, or any agent that supports the Model Context Protocol. **No API keys needed for generation** — your host LLM generates the workflow using Kairos's specialized context, then Kairos validates and deploys it. No double-LLM calls, no wasted tokens.
+Connect Kairos to any MCP-compatible host — Claude Code, Claude Desktop, ChatGPT, Cursor, or any agent that supports the Model Context Protocol. Your host LLM generates the workflow using Kairos's specialized context, then Kairos validates and deploys it. No Anthropic API key needed — no double-LLM calls, no wasted tokens. Kairos auto-syncs your n8n instance's node types so the catalog always matches your exact setup.
 
 ### Setup
 
@@ -57,7 +57,7 @@ Add to your Claude Code MCP config (`~/.claude/claude_code_config.json`):
 }
 ```
 
-`N8N_BASE_URL` and `N8N_API_KEY` are only needed for deploy/list/activate operations. For generation and validation, no environment variables are required at all.
+`N8N_BASE_URL` and `N8N_API_KEY` are required for all MCP operations. Kairos syncs your instance's node types to generate accurate workflows that match your exact n8n setup.
 
 ### Claude Desktop
 
@@ -93,15 +93,16 @@ This means Kairos works with **any LLM** — Claude, GPT, Gemini, Llama, or anyt
 
 ### Available MCP Tools
 
-#### Generation tools (no API keys needed)
+#### Generation tools
 
 | Tool | Description |
 |------|-------------|
 | `kairos_prompt` | Returns the specialized system prompt, node catalog, library matches, and failure patterns for a given description |
 | `kairos_validate` | Validates workflow JSON against 23 structural rules — returns errors and warnings |
 | `kairos_search` | Searches the local workflow library for similar past builds |
+| `kairos_sync` | Manually refresh the node catalog from your n8n instance (auto-runs on first `kairos_prompt` call) |
 
-#### Deployment tools (need `N8N_BASE_URL` + `N8N_API_KEY`)
+#### Deployment tools
 
 | Tool | Description |
 |------|-------------|

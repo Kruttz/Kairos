@@ -52,6 +52,19 @@ export interface N8nTagListResponse {
   nextCursor: string | null
 }
 
+export interface N8nNodeTypeInfo {
+  name: string
+  displayName: string
+  version: number | number[]
+  description?: string
+  group?: string[]
+  credentials?: Array<{ name: string; required?: boolean }>
+}
+
+export interface N8nNodeTypeListResponse {
+  data: N8nNodeTypeInfo[]
+}
+
 export const FORBIDDEN_ON_CREATE = [
   'id',
   'createdAt',

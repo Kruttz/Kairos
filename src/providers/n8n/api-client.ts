@@ -12,6 +12,8 @@ import type {
   N8nExecutionListResponse,
   N8nTagResponse,
   N8nTagListResponse,
+  N8nNodeTypeInfo,
+  N8nNodeTypeListResponse,
 } from './types.js'
 
 const EXECUTION_LIMIT_CAP = 100
@@ -177,6 +179,15 @@ export class N8nApiClient {
       .filter((t) => !tagIds.includes(t.id))
       .map((t) => ({ id: t.id }))
     await this.request<void>('PUT', `/workflows/${workflowId}/tags`, remaining)
+  }
+
+  async getNodeTypes(): Promise<N8nNodeTypeInfo[]> {
+    try {
+      const response = await this.request<N8nNodeTypeListResponse>('GET', '/node-types')
+      return response.data ?? response as unknown as N8nNodeTypeInfo[]
+    } catch {
+      return []
+    }
   }
 
   private mapExecution(e: N8nExecutionResponse): ExecutionSummary {

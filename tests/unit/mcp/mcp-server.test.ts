@@ -87,10 +87,11 @@ describe('Kairos MCP Server', () => {
     expect(names).toContain('kairos_deactivate')
     expect(names).toContain('kairos_delete')
     expect(names).toContain('kairos_executions')
-    expect(names).toHaveLength(10)
+    expect(names).toContain('kairos_sync')
+    expect(names).toHaveLength(11)
   })
 
-  it('kairos_prompt returns context without API key', async () => {
+  it('kairos_prompt requires n8n credentials', async () => {
     client.send({
       jsonrpc: '2.0', id: 2, method: 'tools/call',
       params: {
@@ -99,14 +100,11 @@ describe('Kairos MCP Server', () => {
       },
     })
     const resp = await client.waitForResponse(2)
-    const result = resp['result'] as { content: Array<{ text: string }> }
+    const result = resp['result'] as { content: Array<{ text: string }>; isError?: boolean }
     const content = JSON.parse(result.content[0].text)
 
-    expect(content.systemPrompt).toBeDefined()
-    expect(content.systemPrompt.length).toBeGreaterThan(1000)
-    expect(content.userMessage).toContain('Slack')
-    expect(content.mode).toBeDefined()
-    expect(content.outputFormat).toBeDefined()
+    expect(result.isError).toBe(true)
+    expect(content.error).toContain('N8N_BASE_URL')
   })
 
   it('kairos_validate passes a valid workflow', async () => {

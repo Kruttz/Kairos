@@ -17,6 +17,7 @@ import { N8nFieldStripper } from './providers/n8n/stripper.js'
 import { N8nApiClient } from './providers/n8n/api-client.js'
 import { PromptBuilder } from './generation/prompt-builder.js'
 import { TelemetryReader } from './telemetry/reader.js'
+import { NodeSyncer, type SyncResult } from './validation/node-syncer.js'
 import { nullLogger } from './utils/logger.js'
 import type { N8nWorkflow } from './types/workflow.js'
 import { readFileSync } from 'node:fs'
@@ -27,7 +28,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8')) as { version: string }
 
 const library = new FileLibrary()
-const validator = new N8nValidator()
+let validator = new N8nValidator()
+const nodeSyncer = new NodeSyncer()
+let lastSync: SyncResult | null = null
 const stripper = new N8nFieldStripper()
 const promptBuilder = new PromptBuilder()
 
@@ -53,6 +56,23 @@ function getApiClient(): N8nApiClient {
   return new N8nApiClient(baseUrl, apiKey, nullLogger)
 }
 
+async function autoSync(): Promise<SyncResult | null> {
+  if (lastSync) return lastSync
+  const baseUrl = process.env['N8N_BASE_URL']
+  const apiKey = process.env['N8N_API_KEY']
+  if (!baseUrl || !apiKey) return null
+  try {
+    const client = new N8nApiClient(baseUrl, apiKey, nullLogger)
+    const nodeTypes = await client.getNodeTypes()
+    if (nodeTypes.length === 0) return null
+    lastSync = nodeSyncer.sync(nodeTypes)
+    validator = new N8nValidator(lastSync.registry)
+    return lastSync
+  } catch {
+    return null
+  }
+}
+
 const server = new McpServer({
   name: 'kairos',
   version: pkg.version,
@@ -68,13 +88,26 @@ server.tool(
     name: z.string().optional().describe('Optional workflow name override'),
   },
   async ({ description, name }) => {
+    const baseUrl = process.env['N8N_BASE_URL']
+    const apiKey = process.env['N8N_API_KEY']
+    if (!baseUrl || !apiKey) {
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({ error: 'N8N_BASE_URL and N8N_API_KEY are required. Kairos needs to sync your n8n instance\'s node types to generate accurate workflows.' }),
+        }],
+        isError: true,
+      }
+    }
+
     await library.initialize()
+    const syncResult = await autoSync()
     const matches = await library.search(description)
     const telemetryReader = getTelemetryReader()
     const failureRates = await telemetryReader?.getFailureRates() ?? []
 
     const request = { description, ...(name ? { name } : {}) }
-    const built = promptBuilder.build(request, matches, failureRates)
+    const built = promptBuilder.build(request, matches, failureRates, syncResult?.catalogText)
 
     const systemText = built.system.map(block => block.text).join('\n\n---\n\n')
 
@@ -85,6 +118,8 @@ server.tool(
           mode: built.mode,
           matchCount: matches.length,
           topMatchScore: matches[0]?.score ?? null,
+          nodeCatalog: syncResult ? 'synced' : 'static',
+          nodeCount: syncResult?.nodeCount ?? null,
           systemPrompt: systemText,
           userMessage: built.userMessage,
           outputFormat: {
@@ -273,6 +308,49 @@ server.tool(
           null,
           2,
         ),
+      }],
+    }
+  },
+)
+
+server.tool(
+  'kairos_sync',
+  'Sync the node catalog from your live n8n instance. Fetches all installed node types and versions so Kairos knows exactly what your n8n supports. Automatically called by kairos_prompt when n8n credentials are set, but you can call this manually to force a refresh.',
+  {},
+  async () => {
+    const baseUrl = process.env['N8N_BASE_URL']
+    const apiKey = process.env['N8N_API_KEY']
+    if (!baseUrl || !apiKey) {
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({ error: 'N8N_BASE_URL and N8N_API_KEY are required for sync.' }),
+        }],
+        isError: true,
+      }
+    }
+
+    lastSync = null
+    const result = await autoSync()
+    if (!result) {
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({ error: 'Failed to fetch node types from n8n. Check your credentials and that your instance is running.' }),
+        }],
+        isError: true,
+      }
+    }
+
+    return {
+      content: [{
+        type: 'text' as const,
+        text: JSON.stringify({
+          synced: true,
+          nodeCount: result.nodeCount,
+          newNodes: result.newNodes,
+          message: `Synced ${result.nodeCount} node types from your n8n instance (${result.newNodes} not in default catalog).`,
+        }, null, 2),
       }],
     }
   },

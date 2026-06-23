@@ -28,9 +28,9 @@ const RULE_REMEDIES: Record<number, string> = {
 }
 
 export class PromptBuilder {
-  build(request: DesignRequest, matches: WorkflowMatch[], globalFailureRates: RuleFailureRate[] = []): BuiltPrompt {
+  build(request: DesignRequest, matches: WorkflowMatch[], globalFailureRates: RuleFailureRate[] = [], dynamicCatalog?: string): BuiltPrompt {
     const mode = this.resolveMode(matches)
-    const system = this.buildSystem(matches, mode, globalFailureRates)
+    const system = this.buildSystem(matches, mode, globalFailureRates, dynamicCatalog)
     const userMessage = this.buildUserMessage(request, matches, mode)
     return { system, userMessage, mode, matches }
   }
@@ -57,11 +57,19 @@ Fix ALL of the above issues in your new response. Do not repeat any of these mis
     return scoreToMode(top.score)
   }
 
-  private buildSystem(matches: WorkflowMatch[], mode: 'direct' | 'reference' | 'scratch', globalFailureRates: RuleFailureRate[] = []): SystemPromptBlock[] {
+  private buildSystem(matches: WorkflowMatch[], mode: 'direct' | 'reference' | 'scratch', globalFailureRates: RuleFailureRate[] = [], dynamicCatalog?: string): SystemPromptBlock[] {
+    let basePrompt = SYSTEM_PROMPT_V1
+    if (dynamicCatalog) {
+      basePrompt = basePrompt.replace(
+        /## NODE CATALOG — exact type strings and safe typeVersions[\s\S]*?(?=## PRE-DELIVERY SELF-CHECK)/,
+        dynamicCatalog + '\n\n',
+      )
+    }
+
     const blocks: SystemPromptBlock[] = [
       {
         type: 'text',
-        text: SYSTEM_PROMPT_V1,
+        text: basePrompt,
         cache_control: { type: 'ephemeral' },
       },
     ]
