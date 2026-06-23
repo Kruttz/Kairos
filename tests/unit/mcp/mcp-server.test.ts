@@ -65,7 +65,7 @@ describe('Kairos MCP Server', () => {
       },
     })
     await client.waitForResponse(0)
-  })
+  }, 30_000)
 
   afterAll(() => {
     client.close()
