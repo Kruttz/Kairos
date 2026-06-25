@@ -160,6 +160,7 @@ Fix ALL of the above issues in your new response. Do not repeat any of these mis
       connection_wiring: 'CONNECTION WIRING',
       node_generation: 'NODE GENERATION',
       workflow_structure: 'WORKFLOW STRUCTURE',
+      expression_syntax: 'EXPRESSION SYNTAX',
     }
 
     const byStage = new Map<string, Pattern[]>()

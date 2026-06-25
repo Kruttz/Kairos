@@ -8,7 +8,7 @@
 
 ![Kairos SDK Demo](demo.gif)
 
-Kairos turns plain-English workflow descriptions into validated, deployable n8n workflow JSON. Use it as an **MCP server** (connect to Claude Code, Claude Desktop, or any MCP host — your LLM generates, Kairos validates and deploys, no Anthropic API key needed) or as a **TypeScript SDK** for programmatic control (calls Claude internally with a specialized prompt). Either way, workflows pass through a **23-rule structural validator** with automatic correction, and a local workflow library with **hybrid retrieval** (TF-IDF + node fingerprinting + outcome history + cluster reranking) injects past failure patterns into future generations. With a seeded template library, Kairos achieves **100% first-try structural validation pass rate** across 20 benchmark prompts (meaning the generated JSON is structurally valid on the first attempt — runtime behavior depends on your credentials and node configuration).
+Kairos turns plain-English workflow descriptions into validated, deployable n8n workflow JSON. Use it as an **MCP server** (connect to Claude Code, Claude Desktop, or any MCP host — your LLM generates, Kairos validates and deploys, no Anthropic API key needed) or as a **TypeScript SDK** for programmatic control (calls Claude internally with a specialized prompt). Either way, workflows pass through a **26-rule structural validator** with automatic correction, and a local workflow library with **hybrid retrieval** (TF-IDF + node fingerprinting + outcome history + cluster reranking) injects past failure patterns into future generations. With a seeded template library, Kairos achieves **100% first-try structural validation pass rate** across 20 benchmark prompts (meaning the generated JSON is structurally valid on the first attempt — runtime behavior depends on your credentials and node configuration).
 
 ```ts
 import { Kairos } from '@kairos-sdk/core'
@@ -95,7 +95,7 @@ The MCP server does **not** call an LLM internally. Instead, it gives your host 
 
 1. **Host LLM calls `kairos_prompt`** — gets the n8n system prompt, node catalog, library matches, and failure patterns
 2. **Host LLM generates the workflow JSON** using that context (no separate API call)
-3. **Host LLM calls `kairos_validate`** — checks the JSON against 23 structural rules
+3. **Host LLM calls `kairos_validate`** — checks the JSON against 26 structural rules
 4. If invalid, the host LLM fixes the issues and validates again
 5. **Host LLM calls `kairos_deploy`** — sends the validated workflow to n8n
 
@@ -108,7 +108,7 @@ This means Kairos works with **any LLM** — Claude, GPT, Gemini, Llama, or anyt
 | Tool | Description |
 |------|-------------|
 | `kairos_prompt` | Returns the specialized system prompt, node catalog, library matches, and failure patterns for a given description |
-| `kairos_validate` | Validates workflow JSON against 23 structural rules — returns errors and warnings |
+| `kairos_validate` | Validates workflow JSON against 26 structural rules — returns errors and warnings |
 | `kairos_search` | Searches the local workflow library for similar past builds |
 | `kairos_sync` | Manually refresh the node catalog from your n8n instance (auto-runs on first `kairos_prompt` call) |
 
@@ -180,7 +180,7 @@ console.log(deployed.workflowId) // now live in n8n
 
 ## Benchmark Results
 
-Tested against 20 workflow prompts of varying complexity (simple triggers, multi-step conditional logic, AI agents with memory). Results measure **structural validation pass rate** — whether the generated workflow passes all 23 validator rules, not end-to-end execution correctness.
+Tested against 20 workflow prompts of varying complexity (simple triggers, multi-step conditional logic, AI agents with memory). Results measure **structural validation pass rate** — whether the generated workflow passes all 26 validator rules, not end-to-end execution correctness.
 
 ### Before vs After: Template-Seeded Library
 
@@ -192,7 +192,7 @@ Tested against 20 workflow prompts of varying complexity (simple triggers, multi
 | Avg generation time | 30.6s | **20.7s** | -32% |
 | Failures | 0 | 0 | — |
 
-The baseline run used Claude with the 23-rule validator and correction loop but no library. The seeded run used the same validator plus a library of 105 workflows (16 organic + 89 ingested from the n8n community). The broader local development library now contains 286+ generated/ingested workflows. Template seeding eliminated the correction loop entirely and cut generation time by a third.
+The baseline run used Claude with the 26-rule validator and correction loop but no library. The seeded run used the same validator plus a library of 105 workflows (16 organic + 89 ingested from the n8n community). The broader local development library now contains 286+ generated/ingested workflows. Template seeding eliminated the correction loop entirely and cut generation time by a third.
 
 > **Note:** These results confirm that generated workflows are structurally valid and deployable to n8n. They do not verify runtime execution correctness, credential configuration, or whether the workflow output matches user intent.
 
@@ -205,7 +205,7 @@ The baseline run used Claude with the 23-rule validator and correction loop but 
 1. **Search** — Kairos searches its local workflow library for similar past builds. Matching workflows and their failure patterns are pulled into context.
 2. **Warn** — Known failure patterns (from library matches and global telemetry rates) are injected into the system prompt so Claude avoids repeating known mistakes.
 3. **Generate** — Your description is sent to Claude with a detailed system prompt, forcing a `generate_workflow` tool call that produces structured n8n workflow JSON.
-4. **Validate** — The workflow is checked against **23 structural rules** covering node IDs, types, versions, names, positions, connections, forbidden fields, trigger presence, AI connection direction, cycle detection, webhook pairing, and required parameters.
+4. **Validate** — The workflow is checked against **26 structural rules** covering node IDs, types, versions, names, positions, connections, forbidden fields, trigger presence, AI connection direction, cycle detection, webhook pairing, and required parameters.
 5. **Correct** — If validation fails, the specific rule violations are sent back to Claude for correction (up to 3 attempts, with tighter temperature on the final try).
 6. **Strip** — Forbidden server-assigned fields (`id`, `createdAt`, `updatedAt`, etc.) are stripped before deployment.
 7. **Deploy** — The validated workflow is posted to your n8n instance via REST API.
@@ -215,7 +215,7 @@ The baseline run used Claude with the 23-rule validator and correction loop but 
 
 1. **Prompt** — Your LLM calls `kairos_prompt`, which searches the library and returns the specialized system prompt, node catalog, library matches, and failure patterns.
 2. **Generate** — Your LLM generates the workflow JSON itself using that context. No separate API call.
-3. **Validate** — Your LLM calls `kairos_validate`, which checks the JSON against the same 23 structural rules.
+3. **Validate** — Your LLM calls `kairos_validate`, which checks the JSON against the same 26 structural rules.
 4. **Correct** — If validation fails, your LLM fixes the issues and calls `kairos_validate` again.
 5. **Deploy** — Your LLM calls `kairos_deploy`, which strips forbidden fields and posts the workflow to n8n.
 6. **Record** — The deployed workflow is saved to the local library for future retrieval.
@@ -224,7 +224,7 @@ The baseline run used Claude with the 23-rule validator and correction loop but 
 
 ## Validator Rules
 
-The 23-rule validator is the core of what makes Kairos reliable. In baseline testing (no library), Claude needed the correction loop 45% of the time. Each rule targets a specific class of error:
+The 26-rule validator is the core of what makes Kairos reliable. In baseline testing (no library), Claude needed the correction loop 45% of the time. Each rule targets a specific class of error:
 
 | Rule | Severity | What it checks |
 |------|----------|----------------|
@@ -251,6 +251,9 @@ The 23-rule validator is the core of what makes Kairos reliable. In baseline tes
 | 21 | warn | Webhook with responseMode="responseNode" has respondToWebhook |
 | 22 | warn | Required parameters present for known node types |
 | 23 | warn | Node type is recognized in the registry (unknown types may not exist in n8n) |
+| 24 | warn | No deprecated `$node["..."]` accessor syntax in expressions |
+| 25 | warn | No `$json.items[n]` array access (n8n flattens items automatically) |
+| 26 | warn | Node references use `.first()` or `.all()` (bare `$('Node').json` throws at runtime) |
 
 Errors block deployment. Warnings are recorded and fed back into the prompt for future builds.
 
@@ -389,7 +392,7 @@ try {
 |---|---|
 | `GenerationError` | Anthropic API call failed |
 | `ResponseParseError` | Claude responded but produced no usable tool call |
-| `ValidationError` | Workflow failed 23-rule validation after max retries (carries `.attemptMetadata` and `.warnedRules`) |
+| `ValidationError` | Workflow failed 26-rule validation after max retries (carries `.attemptMetadata` and `.warnedRules`) |
 | `ProviderError` | Network/auth failure talking to n8n |
 | `ApiError` | n8n returned a 4xx or 5xx (carries `.statusCode`) |
 | `GuardError` | Input validation failed (empty description) or `delete()` called without `{ confirm: true }` |

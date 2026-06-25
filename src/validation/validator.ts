@@ -52,6 +52,9 @@ export class N8nValidator {
     this.checkRule21(workflow, issues)
     this.checkRule22(workflow, issues)
     this.checkRule23(workflow, issues)
+    this.checkRule24(workflow, issues)
+    this.checkRule25(workflow, issues)
+    this.checkRule26(workflow, issues)
 
     // Enrich issues with nodeType by looking up nodeId
     if (Array.isArray(workflow.nodes)) {
@@ -436,6 +439,80 @@ export class N8nValidator {
         )
       }
     }
+  }
+
+  // Rule 24 (WARN): deprecated accessor syntax in expressions
+  private checkRule24(w: N8nWorkflow, issues: ValidationIssue[]): void {
+    if (!Array.isArray(w.nodes)) return
+    const deprecated = /\$node\s*\[/
+    for (const node of w.nodes) {
+      for (const expr of this.extractExpressions(node.parameters)) {
+        if (deprecated.test(expr)) {
+          this.warn(
+            issues,
+            24,
+            `Node "${node.name}" uses deprecated accessor $node["..."] — use $('NodeName').item.json.field instead`,
+            node.id,
+          )
+          break
+        }
+      }
+    }
+  }
+
+  // Rule 25 (WARN): wrong item index assumptions in expressions
+  private checkRule25(w: N8nWorkflow, issues: ValidationIssue[]): void {
+    if (!Array.isArray(w.nodes)) return
+    const itemIndex = /\$json\s*\.\s*items\s*\[/
+    for (const node of w.nodes) {
+      for (const expr of this.extractExpressions(node.parameters)) {
+        if (itemIndex.test(expr)) {
+          this.warn(
+            issues,
+            25,
+            `Node "${node.name}" accesses $json.items[n] — n8n flattens items automatically, use $json.field directly`,
+            node.id,
+          )
+          break
+        }
+      }
+    }
+  }
+
+  // Rule 26 (WARN): missing .first() or .all() on node references
+  private checkRule26(w: N8nWorkflow, issues: ValidationIssue[]): void {
+    if (!Array.isArray(w.nodes)) return
+    const bareRef = /\$\(\s*'[^']+'\s*\)\s*\.json/
+    for (const node of w.nodes) {
+      for (const expr of this.extractExpressions(node.parameters)) {
+        if (bareRef.test(expr)) {
+          this.warn(
+            issues,
+            26,
+            `Node "${node.name}" references $('NodeName').json without .first() or .all() — use $('NodeName').first().json.field`,
+            node.id,
+          )
+          break
+        }
+      }
+    }
+  }
+
+  private extractExpressions(params: Record<string, unknown>): string[] {
+    const expressions: string[] = []
+    const walk = (val: unknown): void => {
+      if (typeof val === 'string') {
+        if (val.includes('={{') || val.includes('$node') || val.includes("$('")) {
+          expressions.push(val)
+        }
+      } else if (Array.isArray(val)) {
+        for (const item of val) walk(item)
+      } else if (val !== null && typeof val === 'object') {
+        for (const v of Object.values(val as Record<string, unknown>)) walk(v)
+      }
+    }
+    walk(params)
+    return expressions
   }
 
   // Rule 21 (WARN): webhook with responseMode="responseNode" must have respondToWebhook node

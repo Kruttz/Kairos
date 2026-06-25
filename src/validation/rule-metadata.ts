@@ -1,6 +1,6 @@
-export type PipelineStage = 'node_generation' | 'credential_injection' | 'connection_wiring' | 'workflow_structure'
+export type PipelineStage = 'node_generation' | 'credential_injection' | 'connection_wiring' | 'workflow_structure' | 'expression_syntax'
 
-export const VALIDATOR_RULE_IDS: number[] = Array.from({ length: 23 }, (_, i) => i + 1)
+export const VALIDATOR_RULE_IDS: number[] = Array.from({ length: 26 }, (_, i) => i + 1)
 
 export const RULE_PIPELINE_STAGES: Record<number, PipelineStage> = {
   1: 'node_generation',
@@ -26,6 +26,9 @@ export const RULE_PIPELINE_STAGES: Record<number, PipelineStage> = {
   21: 'workflow_structure',
   22: 'workflow_structure',
   23: 'node_generation',
+  24: 'expression_syntax',
+  25: 'expression_syntax',
+  26: 'expression_syntax',
 }
 
 export const RULE_MITIGATIONS: Record<number, string> = {
@@ -52,4 +55,7 @@ export const RULE_MITIGATIONS: Record<number, string> = {
   21: 'When using webhook with responseMode "responseNode", include a respondToWebhook node in the flow',
   22: 'Ensure all required parameters are set for each node type (e.g. webhook needs httpMethod and path)',
   23: 'Use node types that exist in the n8n registry — check with kairos_sync',
+  24: 'Use modern accessor syntax: $("NodeName").item.json.field instead of deprecated $node["NodeName"].json.field',
+  25: 'Access item fields directly with $json.field — n8n flattens items automatically, do not use $json.items[0]',
+  26: 'Use $("NodeName").first().json.field or $("NodeName").all() — bare $("NodeName").json without .first() or .all() throws at runtime',
 }

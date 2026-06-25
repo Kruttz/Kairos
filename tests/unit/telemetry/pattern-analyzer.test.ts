@@ -316,7 +316,7 @@ describe('PatternAnalyzer', () => {
   // ── Drift detection ────────────────────────────────────────────────
 
   describe('drift detection', () => {
-    it('reports healthy when all 23 rules are covered', async () => {
+    it('reports healthy when all 26 rules are covered', async () => {
       const events = [
         makeEvent('build_start', 's1', { description: 'test', dryRun: false, model: 'test' }),
         makeEvent('generation_attempt', 's1', {
@@ -330,8 +330,8 @@ describe('PatternAnalyzer', () => {
       const result = await analyzer.analyze()
 
       expect(result.drift.healthy).toBe(true)
-      expect(result.drift.coveredRules).toBe(23)
-      expect(result.drift.totalRules).toBe(23)
+      expect(result.drift.coveredRules).toBe(26)
+      expect(result.drift.totalRules).toBe(26)
     })
 
     it('every rule has a mitigation and stage mapping', async () => {
@@ -669,7 +669,7 @@ describe('PatternAnalyzer', () => {
           scoringFactors: { rawConfidence: 0, impact: 0, recency: 0, stickinessBoost: 0 },
         }],
         failingCredentialTypes: [],
-        drift: { healthy: true, coveredRules: 23, totalRules: 23, alerts: [] },
+        drift: { healthy: true, coveredRules: 26, totalRules: 26, alerts: [] },
       }
       await wf(join(parentDir, 'patterns.json'), JSON.stringify(previousAnalysis))
 
@@ -915,7 +915,7 @@ describe('PatternAnalyzer', () => {
           scoringFactors: { rawConfidence: 0.5, impact: 0.1, recency: 1, stickinessBoost: 0 },
         }],
         failingCredentialTypes: [],
-        drift: { healthy: true, coveredRules: 23, totalRules: 23, alerts: [] },
+        drift: { healthy: true, coveredRules: 26, totalRules: 26, alerts: [] },
       }
       await wf(join(parentDir, 'patterns.json'), JSON.stringify(previousAnalysis))
 
@@ -951,7 +951,7 @@ describe('PatternAnalyzer', () => {
           scoringFactors: { rawConfidence: 0.5, impact: 0.1, recency: 1, stickinessBoost: 0 },
         }],
         failingCredentialTypes: [],
-        drift: { healthy: true, coveredRules: 23, totalRules: 23, alerts: [] },
+        drift: { healthy: true, coveredRules: 26, totalRules: 26, alerts: [] },
       }
       await wf(join(parentDir, 'patterns.json'), JSON.stringify(previousAnalysis))
 
@@ -996,7 +996,7 @@ describe('PatternAnalyzer', () => {
           resolvedAt: oldResolvedAt.toISOString(),
         }],
         failingCredentialTypes: [],
-        drift: { healthy: true, coveredRules: 23, totalRules: 23, alerts: [] },
+        drift: { healthy: true, coveredRules: 26, totalRules: 26, alerts: [] },
       }
       await wf(join(parentDir, 'patterns.json'), JSON.stringify(previousAnalysis))
 
@@ -1030,7 +1030,7 @@ describe('PatternAnalyzer', () => {
           resolvedAt: recentResolvedAt.toISOString(),
         }],
         failingCredentialTypes: [],
-        drift: { healthy: true, coveredRules: 23, totalRules: 23, alerts: [] },
+        drift: { healthy: true, coveredRules: 26, totalRules: 26, alerts: [] },
       }
       await wf(join(parentDir, 'patterns.json'), JSON.stringify(previousAnalysis))
 
@@ -1065,7 +1065,7 @@ describe('PatternAnalyzer', () => {
           exampleMessages: ['cred fail'], mitigation: 'fix creds',
         }],
         failingCredentialTypes: [],
-        drift: { healthy: true, coveredRules: 23, totalRules: 23, alerts: [] },
+        drift: { healthy: true, coveredRules: 26, totalRules: 26, alerts: [] },
       }
       await wf(join(parentDir, 'patterns.json'), JSON.stringify(previousAnalysis))
 

@@ -411,6 +411,173 @@ describe('N8nValidator', () => {
     expect(rule23.length).toBe(0)
   })
 
+  // Rule 24: deprecated accessor syntax
+  it('rule 24: warns on deprecated $node["..."] accessor', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa1111-bbbb-4ccc-dddd-eeeeeeee0024',
+      name: 'Set Data',
+      type: 'n8n-nodes-base.set',
+      typeVersion: 3.4,
+      position: [450, 300],
+      parameters: {
+        assignments: {
+          assignments: [{
+            id: 'a1',
+            name: 'result',
+            value: '={{ $node["Manual Trigger"].json.data }}',
+            type: 'string',
+          }],
+        },
+      },
+    })
+    w.connections = {
+      'Manual Trigger': { main: [[{ node: 'Set Data', type: 'main', index: 0 }]] },
+    }
+    const result = validator.validate(w)
+    const rule24 = result.issues.filter(i => i.rule === 24)
+    expect(rule24.length).toBe(1)
+    expect(rule24[0]!.message).toContain('deprecated accessor')
+  })
+
+  it('rule 24: does not warn on modern accessor syntax', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa1111-bbbb-4ccc-dddd-eeeeeeee0024',
+      name: 'Set Data',
+      type: 'n8n-nodes-base.set',
+      typeVersion: 3.4,
+      position: [450, 300],
+      parameters: {
+        assignments: {
+          assignments: [{
+            id: 'a1',
+            name: 'result',
+            value: "={{ $('Manual Trigger').first().json.data }}",
+            type: 'string',
+          }],
+        },
+      },
+    })
+    w.connections = {
+      'Manual Trigger': { main: [[{ node: 'Set Data', type: 'main', index: 0 }]] },
+    }
+    const result = validator.validate(w)
+    const rule24 = result.issues.filter(i => i.rule === 24)
+    expect(rule24.length).toBe(0)
+  })
+
+  // Rule 25: wrong item index assumptions
+  it('rule 25: warns on $json.items[n] access', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa1111-bbbb-4ccc-dddd-eeeeeeee0025',
+      name: 'Set Data',
+      type: 'n8n-nodes-base.set',
+      typeVersion: 3.4,
+      position: [450, 300],
+      parameters: {
+        assignments: {
+          assignments: [{
+            id: 'a1',
+            name: 'result',
+            value: '={{ $json.items[0].name }}',
+            type: 'string',
+          }],
+        },
+      },
+    })
+    w.connections = {
+      'Manual Trigger': { main: [[{ node: 'Set Data', type: 'main', index: 0 }]] },
+    }
+    const result = validator.validate(w)
+    const rule25 = result.issues.filter(i => i.rule === 25)
+    expect(rule25.length).toBe(1)
+  })
+
+  it('rule 25: does not warn on direct $json.field access', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa1111-bbbb-4ccc-dddd-eeeeeeee0025',
+      name: 'Set Data',
+      type: 'n8n-nodes-base.set',
+      typeVersion: 3.4,
+      position: [450, 300],
+      parameters: {
+        assignments: {
+          assignments: [{
+            id: 'a1',
+            name: 'result',
+            value: '={{ $json.name }}',
+            type: 'string',
+          }],
+        },
+      },
+    })
+    w.connections = {
+      'Manual Trigger': { main: [[{ node: 'Set Data', type: 'main', index: 0 }]] },
+    }
+    const result = validator.validate(w)
+    const rule25 = result.issues.filter(i => i.rule === 25)
+    expect(rule25.length).toBe(0)
+  })
+
+  // Rule 26: missing .first() or .all()
+  it('rule 26: warns on bare $("NodeName").json without .first()/.all()', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa1111-bbbb-4ccc-dddd-eeeeeeee0026',
+      name: 'Set Data',
+      type: 'n8n-nodes-base.set',
+      typeVersion: 3.4,
+      position: [450, 300],
+      parameters: {
+        assignments: {
+          assignments: [{
+            id: 'a1',
+            name: 'result',
+            value: "={{ $('Manual Trigger').json.data }}",
+            type: 'string',
+          }],
+        },
+      },
+    })
+    w.connections = {
+      'Manual Trigger': { main: [[{ node: 'Set Data', type: 'main', index: 0 }]] },
+    }
+    const result = validator.validate(w)
+    const rule26 = result.issues.filter(i => i.rule === 26)
+    expect(rule26.length).toBe(1)
+    expect(rule26[0]!.message).toContain('.first()')
+  })
+
+  it('rule 26: does not warn when .first() is used', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa1111-bbbb-4ccc-dddd-eeeeeeee0026',
+      name: 'Set Data',
+      type: 'n8n-nodes-base.set',
+      typeVersion: 3.4,
+      position: [450, 300],
+      parameters: {
+        assignments: {
+          assignments: [{
+            id: 'a1',
+            name: 'result',
+            value: "={{ $('Manual Trigger').first().json.data }}",
+            type: 'string',
+          }],
+        },
+      },
+    })
+    w.connections = {
+      'Manual Trigger': { main: [[{ node: 'Set Data', type: 'main', index: 0 }]] },
+    }
+    const result = validator.validate(w)
+    const rule26 = result.issues.filter(i => i.rule === 26)
+    expect(rule26.length).toBe(0)
+  })
+
   // A-2: nodeType enrichment
   it('enriches issues with nodeType from workflow nodes', () => {
     const w = baseWorkflow()
