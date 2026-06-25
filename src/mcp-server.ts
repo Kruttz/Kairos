@@ -19,7 +19,10 @@ import { PromptBuilder } from './generation/prompt-builder.js'
 import { TelemetryReader } from './telemetry/reader.js'
 import { PatternAnalyzer } from './telemetry/pattern-analyzer.js'
 import { NodeSyncer, type SyncResult } from './validation/node-syncer.js'
+import { TelemetryCollector } from './telemetry/collector.js'
 import { nullLogger } from './utils/logger.js'
+import { generateUUID } from './utils/uuid.js'
+import { inferWorkflowType } from './utils/workflow-type.js'
 import type { N8nWorkflow } from './types/workflow.js'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -34,6 +37,23 @@ const nodeSyncer = new NodeSyncer()
 let lastSync: SyncResult | null = null
 const stripper = new N8nFieldStripper()
 const promptBuilder = new PromptBuilder()
+
+function getMcpTelemetry(): TelemetryCollector | null {
+  const val = process.env['KAIROS_TELEMETRY']
+  if (!val || val === 'false') return null
+  return val === 'true' ? new TelemetryCollector() : new TelemetryCollector(val)
+}
+
+const mcpTelemetry = getMcpTelemetry()
+
+interface McpBuildSession {
+  description: string
+  startTime: number
+  validateAttempts: number
+  warnedRules: number[]
+  workflowType: string | null
+}
+const mcpSessions = new Map<string, McpBuildSession>()
 
 function getTelemetryReader(): TelemetryReader | null {
   try {
@@ -101,6 +121,9 @@ server.tool(
       }
     }
 
+    const runId = generateUUID()
+    const workflowType = inferWorkflowType(description)
+
     await library.initialize()
     const syncResult = await autoSync()
     const matches = await library.search(description)
@@ -110,12 +133,24 @@ server.tool(
     const request = { description, ...(name ? { name } : {}) }
     const built = promptBuilder.build(request, matches, failureRates, syncResult?.catalogText)
 
+    if (mcpTelemetry) {
+      mcpSessions.set(runId, {
+        description,
+        startTime: Date.now(),
+        validateAttempts: 0,
+        warnedRules: promptBuilder.getWarnedRules(),
+        workflowType,
+      })
+      await mcpTelemetry.emit('build_start', { description, model: 'mcp-decomposed', dryRun: false }, runId)
+    }
+
     const systemText = built.system.map(block => block.text).join('\n\n---\n\n')
 
     return {
       content: [{
         type: 'text' as const,
         text: JSON.stringify({
+          kairos_run_id: runId,
           mode: built.mode,
           matchCount: matches.length,
           topMatchScore: matches[0]?.score ?? null,
@@ -151,8 +186,9 @@ server.tool(
   'Validate n8n workflow JSON against 26 structural rules. Returns pass/fail with specific issues. If validation fails, fix the issues and call this again. Errors block deployment; warnings are advisory.',
   {
     workflow: z.string().describe('The workflow JSON string to validate'),
+    kairos_run_id: z.string().optional().describe('Run ID from kairos_prompt — enables telemetry correlation'),
   },
-  async ({ workflow: workflowStr }) => {
+  async ({ workflow: workflowStr, kairos_run_id }) => {
     let parsed: N8nWorkflow
     try {
       parsed = JSON.parse(workflowStr) as N8nWorkflow
@@ -171,6 +207,25 @@ server.tool(
     const result = validator.validate(parsed)
     const errors = result.issues.filter(i => i.severity === 'error')
     const warnings = result.issues.filter(i => i.severity === 'warn')
+
+    if (mcpTelemetry && kairos_run_id) {
+      const session = mcpSessions.get(kairos_run_id)
+      if (session) {
+        session.validateAttempts++
+        await mcpTelemetry.emit('generation_attempt', {
+          description: session.description,
+          attempt: session.validateAttempts,
+          temperature: 0,
+          durationMs: 0,
+          tokensInput: 0,
+          tokensOutput: 0,
+          validationPassed: result.valid,
+          issueCount: result.issues.length,
+          issues: result.issues.map(i => ({ rule: i.rule, severity: i.severity, message: i.message, nodeId: i.nodeId ?? null })),
+          workflowType: session.workflowType,
+        }, kairos_run_id)
+      }
+    }
 
     return {
       content: [{
@@ -202,8 +257,9 @@ server.tool(
   {
     workflow: z.string().describe('The validated workflow JSON string to deploy'),
     activate: z.boolean().default(false).describe('Activate the workflow immediately after deployment'),
+    kairos_run_id: z.string().optional().describe('Run ID from kairos_prompt — enables telemetry correlation'),
   },
-  async ({ workflow: workflowStr, activate }) => {
+  async ({ workflow: workflowStr, activate, kairos_run_id }) => {
     if (!isAllowed('deploy')) {
       return {
         content: [{
@@ -269,6 +325,28 @@ server.tool(
       generationMode: 'scratch',
       generationAttempts: 1,
     })
+
+    if (mcpTelemetry && kairos_run_id) {
+      const session = mcpSessions.get(kairos_run_id)
+      if (session) {
+        await mcpTelemetry.emit('build_complete', {
+          description: session.description,
+          success: true,
+          totalAttempts: session.validateAttempts,
+          totalDurationMs: Date.now() - session.startTime,
+          totalTokensInput: 0,
+          totalTokensOutput: 0,
+          workflowName: response.name,
+          workflowId: response.id,
+          dryRun: false,
+          credentialsNeeded: 0,
+          warnedRules: session.warnedRules,
+          workflowType: session.workflowType,
+        }, kairos_run_id)
+        mcpSessions.delete(kairos_run_id)
+        PatternAnalyzer.fromEnv().analyzeAndSave().catch(() => {})
+      }
+    }
 
     return {
       content: [{

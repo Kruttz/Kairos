@@ -224,8 +224,32 @@ export class FileLibrary implements IWorkflowLibrary {
   private persist(): Promise<void> {
     this.writeQueue = this.writeQueue.then(async () => {
       const indexPath = join(this.dir, 'index.json')
+
+      // Re-read disk state to merge any concurrent writes from other processes
+      let onDisk: StoredWorkflow[] = []
+      try {
+        const raw = await readFile(indexPath, 'utf-8')
+        const parsed: unknown = JSON.parse(raw)
+        if (Array.isArray(parsed)) {
+          onDisk = parsed.filter(
+            (item): item is StoredWorkflow =>
+              typeof item === 'object' && item !== null &&
+              typeof (item as Record<string, unknown>).id === 'string',
+          )
+        }
+      } catch { /* file doesn't exist yet */ }
+
+      // Our in-memory state wins for IDs we know about; preserve external additions
+      const ourIds = new Set(this.workflows.map((w) => w.id))
+      const external = onDisk.filter((w) => !ourIds.has(w.id))
+      let merged = [...this.workflows, ...external]
+      if (merged.length > MAX_LIBRARY_SIZE) {
+        merged.sort((a, b) => (b.deployCount ?? 0) - (a.deployCount ?? 0))
+        merged = merged.slice(0, MAX_LIBRARY_SIZE)
+      }
+
       const tmpPath = `${indexPath}.tmp`
-      await writeFile(tmpPath, JSON.stringify(this.workflows, null, 2), 'utf-8')
+      await writeFile(tmpPath, JSON.stringify(merged, null, 2), 'utf-8')
       await rename(tmpPath, indexPath)
     })
     return this.writeQueue

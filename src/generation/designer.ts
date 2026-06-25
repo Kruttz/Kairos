@@ -70,9 +70,10 @@ export class WorkflowDesigner {
     private readonly anthropic: Anthropic,
     private readonly model: string,
     private readonly logger: ILogger,
+    patternsPath?: string,
   ) {
     this.validator = new N8nValidator()
-    this.promptBuilder = new PromptBuilder()
+    this.promptBuilder = new PromptBuilder(patternsPath)
   }
 
   async design(request: DesignRequest, matches: WorkflowMatch[], globalFailureRates: RuleFailureRate[] = []): Promise<DesignResult> {

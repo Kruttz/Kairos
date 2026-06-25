@@ -20,6 +20,8 @@ import { GuardError } from './errors/guard-error.js'
 import { ValidationError } from './errors/validation-error.js'
 import { inferWorkflowType } from './utils/workflow-type.js'
 import { generateUUID } from './utils/uuid.js'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 
 const DEFAULT_MODEL = 'claude-sonnet-4-6'
 
@@ -53,7 +55,10 @@ export class Kairos {
     }
 
     const anthropic = new Anthropic({ apiKey: options.anthropicApiKey })
-    this.designer = new WorkflowDesigner(anthropic, this.model, logger)
+    const patternsPath = typeof options.telemetry === 'string'
+      ? join(options.telemetry, '..', 'patterns.json')
+      : join(homedir(), '.kairos', 'patterns.json')
+    this.designer = new WorkflowDesigner(anthropic, this.model, logger, patternsPath)
     this.validator = new N8nValidator()
     this.library = options.library ?? new NullLibrary()
     this.logger = logger
