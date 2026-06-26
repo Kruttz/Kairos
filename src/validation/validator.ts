@@ -55,6 +55,14 @@ export class N8nValidator {
     this.checkRule24(workflow, issues)
     this.checkRule25(workflow, issues)
     this.checkRule26(workflow, issues)
+    this.checkRule27(workflow, issues)
+    this.checkRule28(workflow, issues)
+    this.checkRule29(workflow, issues)
+    this.checkRule30(workflow, issues)
+    this.checkRule31(workflow, issues)
+    this.checkRule32(workflow, issues)
+    this.checkRule33(workflow, issues)
+    this.checkRule34(workflow, issues)
 
     // Enrich issues with nodeType by looking up nodeId
     if (Array.isArray(workflow.nodes)) {
@@ -544,6 +552,187 @@ export class N8nValidator {
           21,
           `Webhook "${wh.name}" uses responseMode "responseNode" but no respondToWebhook node exists in the workflow`,
           wh.id,
+        )
+      }
+    }
+  }
+
+  // Rule 27 (WARN): httpRequest URL is a placeholder
+  private checkRule27(w: N8nWorkflow, issues: ValidationIssue[]): void {
+    if (!Array.isArray(w.nodes)) return
+    const PLACEHOLDER_RE = [
+      /^https?:\/\/example\.com/i,
+      /your[-_]?(api[-_]?)?url/i,
+      /^https?:\/\/$/,
+      /^<.+>$/,
+      /placeholder/i,
+    ]
+    for (const node of w.nodes) {
+      if (node.type !== 'n8n-nodes-base.httpRequest') continue
+      const params = node.parameters as Record<string, unknown> | undefined
+      const url = params?.['url']
+      if (typeof url !== 'string' || url.trim() === '') continue
+      if (PLACEHOLDER_RE.some((re) => re.test(url.trim()))) {
+        this.warn(
+          issues,
+          27,
+          `Node "${node.name}" httpRequest URL appears to be a placeholder: "${url}" — replace with your actual endpoint`,
+          node.id,
+        )
+      }
+    }
+  }
+
+  // Rule 28 (WARN): code node with empty or comment-only code
+  private checkRule28(w: N8nWorkflow, issues: ValidationIssue[]): void {
+    if (!Array.isArray(w.nodes)) return
+    for (const node of w.nodes) {
+      if (node.type !== 'n8n-nodes-base.code') continue
+      const params = node.parameters as Record<string, unknown> | undefined
+      const jsCode = typeof params?.['jsCode'] === 'string' ? params['jsCode'] : ''
+      const pythonCode = typeof params?.['pythonCode'] === 'string' ? params['pythonCode'] : ''
+      const code = jsCode || pythonCode
+      const stripped = code
+        .replace(/\/\/[^\n]*/g, '')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/#[^\n]*/g, '')
+        .trim()
+      if (!stripped) {
+        this.warn(issues, 28, `Node "${node.name}" code node has no executable code`, node.id)
+      }
+    }
+  }
+
+  // Rule 29 (WARN): slack node message operation missing channel
+  private checkRule29(w: N8nWorkflow, issues: ValidationIssue[]): void {
+    if (!Array.isArray(w.nodes)) return
+    for (const node of w.nodes) {
+      if (node.type !== 'n8n-nodes-base.slack') continue
+      const params = node.parameters as Record<string, unknown> | undefined
+      const resource = params?.['resource'] as string | undefined
+      const operation = params?.['operation'] as string | undefined
+      const isMessageOp = resource === 'message' || operation === 'sendMessage' || operation === 'post'
+      if (!isMessageOp) continue
+      const channel = params?.['channel'] ?? params?.['channelId']
+      const rlValue = typeof channel === 'object' && channel !== null
+        ? (channel as Record<string, unknown>)['value']
+        : undefined
+      const isEmpty = channel === undefined || channel === null ||
+        (typeof channel === 'string' && channel.trim() === '') ||
+        (typeof channel === 'object' && (!rlValue || (typeof rlValue === 'string' && rlValue.trim() === '')))
+      if (isEmpty) {
+        this.warn(issues, 29, `Node "${node.name}" Slack message has no channel specified`, node.id)
+      }
+    }
+  }
+
+  // Rule 30 (WARN): gmail node send operation missing recipient
+  private checkRule30(w: N8nWorkflow, issues: ValidationIssue[]): void {
+    if (!Array.isArray(w.nodes)) return
+    for (const node of w.nodes) {
+      if (node.type !== 'n8n-nodes-base.gmail') continue
+      const params = node.parameters as Record<string, unknown> | undefined
+      const operation = params?.['operation'] as string | undefined
+      if (operation !== 'send') continue
+      const to = params?.['to'] ?? params?.['toList']
+      const isEmpty = to === undefined || to === null ||
+        (typeof to === 'string' && to.trim() === '') ||
+        (Array.isArray(to) && to.length === 0)
+      if (isEmpty) {
+        this.warn(issues, 30, `Node "${node.name}" gmail send has no recipient (to) specified`, node.id)
+      }
+    }
+  }
+
+  // Rule 31 (WARN): if node with empty conditions
+  private checkRule31(w: N8nWorkflow, issues: ValidationIssue[]): void {
+    if (!Array.isArray(w.nodes)) return
+    for (const node of w.nodes) {
+      if (node.type !== 'n8n-nodes-base.if') continue
+      const params = node.parameters as Record<string, unknown> | undefined
+      const conditions = params?.['conditions']
+      if (conditions === undefined || conditions === null) {
+        this.warn(issues, 31, `Node "${node.name}" if node has no conditions defined`, node.id)
+        continue
+      }
+      // typeVersion 2.x: { combinator, conditions: [...] }
+      if (typeof conditions === 'object' && !Array.isArray(conditions)) {
+        const conds = (conditions as Record<string, unknown>)['conditions']
+        if (!Array.isArray(conds) || conds.length === 0) {
+          this.warn(issues, 31, `Node "${node.name}" if node conditions array is empty`, node.id)
+        }
+      } else if (Array.isArray(conditions) && conditions.length === 0) {
+        this.warn(issues, 31, `Node "${node.name}" if node conditions array is empty`, node.id)
+      }
+    }
+  }
+
+  // Rule 32 (WARN): set node with no assignments
+  private checkRule32(w: N8nWorkflow, issues: ValidationIssue[]): void {
+    if (!Array.isArray(w.nodes)) return
+    for (const node of w.nodes) {
+      if (node.type !== 'n8n-nodes-base.set') continue
+      const params = node.parameters as Record<string, unknown> | undefined
+      // typeVersion 3.x: assignments.assignments[]
+      const assignmentsObj = params?.['assignments'] as Record<string, unknown> | undefined
+      const assignmentsArr = assignmentsObj?.['assignments']
+      // typeVersion 1.x: values.string[] / values.number[] etc.
+      const valuesObj = params?.['values'] as Record<string, unknown> | undefined
+      const hasV1 = valuesObj && Object.values(valuesObj).some((v) => Array.isArray(v) && v.length > 0)
+      const hasV3 = Array.isArray(assignmentsArr) && assignmentsArr.length > 0
+      if (!hasV1 && !hasV3) {
+        this.warn(
+          issues,
+          32,
+          `Node "${node.name}" set node has no fields defined — it will pass data through unchanged`,
+          node.id,
+        )
+      }
+    }
+  }
+
+  // Rule 33 (WARN): scheduleTrigger with no schedule rules
+  private checkRule33(w: N8nWorkflow, issues: ValidationIssue[]): void {
+    if (!Array.isArray(w.nodes)) return
+    for (const node of w.nodes) {
+      if (node.type !== 'n8n-nodes-base.scheduleTrigger') continue
+      const params = node.parameters as Record<string, unknown> | undefined
+      const rule = params?.['rule'] as Record<string, unknown> | undefined
+      const intervals = rule?.['interval']
+      if (!Array.isArray(intervals) || intervals.length === 0) {
+        this.warn(issues, 33, `Node "${node.name}" scheduleTrigger has no schedule rules defined`, node.id)
+      }
+    }
+  }
+
+  // Rule 34 (WARN): webhook path contains spaces, starts with slash, or looks like a full URL
+  private checkRule34(w: N8nWorkflow, issues: ValidationIssue[]): void {
+    if (!Array.isArray(w.nodes)) return
+    for (const node of w.nodes) {
+      if (node.type !== 'n8n-nodes-base.webhook') continue
+      const params = node.parameters as Record<string, unknown> | undefined
+      const path = params?.['path']
+      if (typeof path !== 'string') continue
+      if (/\s/.test(path)) {
+        this.warn(
+          issues,
+          34,
+          `Node "${node.name}" webhook path contains spaces: "${path}" — use hyphens or underscores instead`,
+          node.id,
+        )
+      } else if (/^https?:\/\//i.test(path)) {
+        this.warn(
+          issues,
+          34,
+          `Node "${node.name}" webhook path looks like a full URL — it should be a relative path (e.g. "my-hook")`,
+          node.id,
+        )
+      } else if (path.startsWith('/')) {
+        this.warn(
+          issues,
+          34,
+          `Node "${node.name}" webhook path starts with "/" — n8n adds the leading slash automatically`,
+          node.id,
         )
       }
     }

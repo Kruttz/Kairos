@@ -1,6 +1,6 @@
 export type PipelineStage = 'node_generation' | 'credential_injection' | 'connection_wiring' | 'workflow_structure' | 'expression_syntax'
 
-export const VALIDATOR_RULE_IDS: number[] = Array.from({ length: 26 }, (_, i) => i + 1)
+export const VALIDATOR_RULE_IDS: number[] = Array.from({ length: 34 }, (_, i) => i + 1)
 
 export const RULE_PIPELINE_STAGES: Record<number, PipelineStage> = {
   1: 'node_generation',
@@ -29,6 +29,14 @@ export const RULE_PIPELINE_STAGES: Record<number, PipelineStage> = {
   24: 'expression_syntax',
   25: 'expression_syntax',
   26: 'expression_syntax',
+  27: 'node_generation',
+  28: 'node_generation',
+  29: 'node_generation',
+  30: 'node_generation',
+  31: 'node_generation',
+  32: 'node_generation',
+  33: 'node_generation',
+  34: 'node_generation',
 }
 
 export interface RuleExample {
@@ -82,4 +90,12 @@ export const RULE_MITIGATIONS: Record<number, string> = {
   24: 'Use modern accessor syntax: $("NodeName").item.json.field instead of deprecated $node["NodeName"].json.field',
   25: 'Access item fields directly with $json.field — n8n flattens items automatically, do not use $json.items[0]',
   26: 'Use $("NodeName").first().json.field or $("NodeName").all() — bare $("NodeName").json without .first() or .all() throws at runtime',
+  27: 'Replace placeholder URLs with your actual API endpoint — do not use "example.com" or "YOUR_URL" patterns',
+  28: 'Add executable code to the code node — empty or comment-only code nodes do nothing at runtime',
+  29: 'Set the channel parameter for Slack message operations (channelId with __rl object, or channel as string)',
+  30: 'Set the to parameter for Gmail send operations with at least one recipient email address',
+  31: 'Add at least one condition to the if node — conditions.conditions array must be non-empty',
+  32: 'Add field assignments to the set node — assignments.assignments array must be non-empty for typeVersion 3.x',
+  33: 'Add at least one schedule rule to scheduleTrigger — rule.interval array must have at least one entry',
+  34: 'Webhook path must be a relative path without spaces, leading slashes, or protocol prefixes (e.g. "my-hook")',
 }

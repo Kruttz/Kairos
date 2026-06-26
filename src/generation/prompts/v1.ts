@@ -196,6 +196,14 @@ Cron: { "rule": { "interval": [{ "field": "cronExpression", "expression": "0 9 *
 8. No deprecated $node["NodeName"].json — use $('NodeName').item.json.field
 9. No $json.items[0] array indexing — access fields directly as $json.field
 10. No bare $('NodeName').json — always use .first().json.field or .all()
+11. httpRequest URL is a real endpoint (not "example.com" or "YOUR_URL")
+12. code nodes contain actual logic — not empty or comment-only
+13. Slack message nodes have a channel specified (channelId or channel)
+14. Gmail send nodes have a recipient (to field non-empty)
+15. if nodes have at least one condition in conditions.conditions[]
+16. set nodes have at least one entry in assignments.assignments[]
+17. scheduleTrigger has at least one rule in rule.interval[]
+18. webhook path is relative (no spaces, no leading slash, no http://)
 
 ---
 

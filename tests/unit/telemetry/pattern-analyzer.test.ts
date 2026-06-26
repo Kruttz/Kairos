@@ -399,8 +399,8 @@ describe('PatternAnalyzer', () => {
       const result = await analyzer.analyze()
 
       expect(result.drift.healthy).toBe(true)
-      expect(result.drift.coveredRules).toBe(26)
-      expect(result.drift.totalRules).toBe(26)
+      expect(result.drift.coveredRules).toBe(34)
+      expect(result.drift.totalRules).toBe(34)
     })
 
     it('every rule has a mitigation and stage mapping', async () => {

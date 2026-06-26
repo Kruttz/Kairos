@@ -643,4 +643,359 @@ describe('N8nValidator', () => {
     const result = validator.validate(w)
     expect(result.issues.filter((i) => i.rule === 17)).toHaveLength(0)
   })
+
+  // Rule 27: httpRequest URL placeholders
+  it('rule 27: warns when httpRequest URL is example.com', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0027-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      name: 'HTTP',
+      type: 'n8n-nodes-base.httpRequest',
+      typeVersion: 4.2,
+      position: [450, 300],
+      parameters: { url: 'https://example.com/api/data' },
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 27)).toBe(true)
+  })
+
+  it('rule 27: warns when httpRequest URL contains YOUR_URL', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0027-aaaa-4aaa-aaaa-aaaaaaaaaaab',
+      name: 'HTTP',
+      type: 'n8n-nodes-base.httpRequest',
+      typeVersion: 4.2,
+      position: [450, 300],
+      parameters: { url: 'YOUR_URL_HERE' },
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 27)).toBe(true)
+  })
+
+  it('rule 27: does not warn on a real URL', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0027-aaaa-4aaa-aaaa-aaaaaaaaaaac',
+      name: 'HTTP',
+      type: 'n8n-nodes-base.httpRequest',
+      typeVersion: 4.2,
+      position: [450, 300],
+      parameters: { url: 'https://api.openai.com/v1/chat/completions' },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'HTTP', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 27)).toBe(false)
+  })
+
+  // Rule 28: code node empty or comment-only
+  it('rule 28: warns on code node with empty jsCode', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0028-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      name: 'Run Code',
+      type: 'n8n-nodes-base.code',
+      typeVersion: 2,
+      position: [450, 300],
+      parameters: { jsCode: '' },
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 28)).toBe(true)
+  })
+
+  it('rule 28: warns on code node with only comments', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0028-aaaa-4aaa-aaaa-aaaaaaaaaaab',
+      name: 'Run Code',
+      type: 'n8n-nodes-base.code',
+      typeVersion: 2,
+      position: [450, 300],
+      parameters: { jsCode: '// TODO: add logic here\n// placeholder' },
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 28)).toBe(true)
+  })
+
+  it('rule 28: does not warn when code has actual logic', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0028-aaaa-4aaa-aaaa-aaaaaaaaaaac',
+      name: 'Run Code',
+      type: 'n8n-nodes-base.code',
+      typeVersion: 2,
+      position: [450, 300],
+      parameters: { jsCode: 'return items.map(i => ({ json: { result: i.json.value * 2 } }))' },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Run Code', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 28)).toBe(false)
+  })
+
+  // Rule 29: slack missing channel
+  it('rule 29: warns when Slack message has no channel', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0029-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      name: 'Slack',
+      type: 'n8n-nodes-base.slack',
+      typeVersion: 2.2,
+      position: [450, 300],
+      parameters: { resource: 'message', operation: 'post' },
+      credentials: { slackOAuth2Api: { id: 'cred-1', name: 'Slack' } },
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 29)).toBe(true)
+  })
+
+  it('rule 29: does not warn when Slack message has channelId', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0029-aaaa-4aaa-aaaa-aaaaaaaaaaab',
+      name: 'Slack',
+      type: 'n8n-nodes-base.slack',
+      typeVersion: 2.2,
+      position: [450, 300],
+      parameters: {
+        resource: 'message',
+        operation: 'post',
+        channelId: { __rl: true, mode: 'name', value: '#general' },
+      },
+      credentials: { slackOAuth2Api: { id: 'cred-1', name: 'Slack' } },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Slack', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 29)).toBe(false)
+  })
+
+  // Rule 30: gmail missing recipient
+  it('rule 30: warns when gmail send has no recipient', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0030-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      name: 'Gmail',
+      type: 'n8n-nodes-base.gmail',
+      typeVersion: 2.1,
+      position: [450, 300],
+      parameters: { resource: 'message', operation: 'send' },
+      credentials: { gmailOAuth2: { id: 'cred-1', name: 'Gmail' } },
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 30)).toBe(true)
+  })
+
+  it('rule 30: does not warn when gmail send has a recipient', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0030-aaaa-4aaa-aaaa-aaaaaaaaaaab',
+      name: 'Gmail',
+      type: 'n8n-nodes-base.gmail',
+      typeVersion: 2.1,
+      position: [450, 300],
+      parameters: { resource: 'message', operation: 'send', to: 'user@example.com' },
+      credentials: { gmailOAuth2: { id: 'cred-1', name: 'Gmail' } },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Gmail', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 30)).toBe(false)
+  })
+
+  it('rule 30: does not warn for non-send gmail operations', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0030-aaaa-4aaa-aaaa-aaaaaaaaaaac',
+      name: 'Gmail',
+      type: 'n8n-nodes-base.gmail',
+      typeVersion: 2.1,
+      position: [450, 300],
+      parameters: { resource: 'message', operation: 'get' },
+      credentials: { gmailOAuth2: { id: 'cred-1', name: 'Gmail' } },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Gmail', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 30)).toBe(false)
+  })
+
+  // Rule 31: if node empty conditions
+  it('rule 31: warns when if node has no conditions object', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0031-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      name: 'Check',
+      type: 'n8n-nodes-base.if',
+      typeVersion: 2.2,
+      position: [450, 300],
+      parameters: {},
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 31)).toBe(true)
+  })
+
+  it('rule 31: warns when if node conditions.conditions is empty', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0031-aaaa-4aaa-aaaa-aaaaaaaaaaab',
+      name: 'Check',
+      type: 'n8n-nodes-base.if',
+      typeVersion: 2.2,
+      position: [450, 300],
+      parameters: { conditions: { combinator: 'and', conditions: [] } },
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 31)).toBe(true)
+  })
+
+  it('rule 31: does not warn when if node has conditions', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0031-aaaa-4aaa-aaaa-aaaaaaaaaaac',
+      name: 'Check',
+      type: 'n8n-nodes-base.if',
+      typeVersion: 2.2,
+      position: [450, 300],
+      parameters: {
+        conditions: {
+          combinator: 'and',
+          conditions: [{ id: 'c1', leftValue: '={{ $json.status }}', rightValue: 'active', operator: { type: 'string', operation: 'equals' } }],
+        },
+      },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Check', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 31)).toBe(false)
+  })
+
+  // Rule 32: set node no assignments
+  it('rule 32: warns when set node has no assignments', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0032-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      name: 'Set Fields',
+      type: 'n8n-nodes-base.set',
+      typeVersion: 3.4,
+      position: [450, 300],
+      parameters: { assignments: { assignments: [] } },
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 32)).toBe(true)
+  })
+
+  it('rule 32: does not warn when set node has assignments', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0032-aaaa-4aaa-aaaa-aaaaaaaaaaab',
+      name: 'Set Fields',
+      type: 'n8n-nodes-base.set',
+      typeVersion: 3.4,
+      position: [450, 300],
+      parameters: {
+        assignments: {
+          assignments: [{ id: 'a1', name: 'status', value: 'active', type: 'string' }],
+        },
+      },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Set Fields', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 32)).toBe(false)
+  })
+
+  // Rule 33: scheduleTrigger no rules
+  it('rule 33: warns when scheduleTrigger has no rule.interval', () => {
+    const w = { ...baseWorkflow(), nodes: [] }
+    w.nodes.push({
+      id: 'aaaa0033-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      name: 'Schedule',
+      type: 'n8n-nodes-base.scheduleTrigger',
+      typeVersion: 1.2,
+      position: [250, 300],
+      parameters: {},
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 33)).toBe(true)
+  })
+
+  it('rule 33: warns when scheduleTrigger rule.interval is empty', () => {
+    const w = { ...baseWorkflow(), nodes: [] }
+    w.nodes.push({
+      id: 'aaaa0033-aaaa-4aaa-aaaa-aaaaaaaaaaab',
+      name: 'Schedule',
+      type: 'n8n-nodes-base.scheduleTrigger',
+      typeVersion: 1.2,
+      position: [250, 300],
+      parameters: { rule: { interval: [] } },
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 33)).toBe(true)
+  })
+
+  it('rule 33: does not warn when scheduleTrigger has a schedule rule', () => {
+    const w = { ...baseWorkflow(), nodes: [] }
+    w.nodes.push({
+      id: 'aaaa0033-aaaa-4aaa-aaaa-aaaaaaaaaaac',
+      name: 'Schedule',
+      type: 'n8n-nodes-base.scheduleTrigger',
+      typeVersion: 1.2,
+      position: [250, 300],
+      parameters: { rule: { interval: [{ field: 'days', daysInterval: 1, triggerAtHour: 9, triggerAtMinute: 0 }] } },
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 33)).toBe(false)
+  })
+
+  // Rule 34: webhook path issues
+  it('rule 34: warns when webhook path contains spaces', () => {
+    const w = { ...baseWorkflow(), nodes: [] }
+    w.nodes.push({
+      id: 'aaaa0034-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      name: 'Webhook',
+      type: 'n8n-nodes-base.webhook',
+      typeVersion: 2,
+      position: [250, 300],
+      parameters: { httpMethod: 'POST', path: 'my webhook path' },
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 34)).toBe(true)
+  })
+
+  it('rule 34: warns when webhook path starts with slash', () => {
+    const w = { ...baseWorkflow(), nodes: [] }
+    w.nodes.push({
+      id: 'aaaa0034-aaaa-4aaa-aaaa-aaaaaaaaaaab',
+      name: 'Webhook',
+      type: 'n8n-nodes-base.webhook',
+      typeVersion: 2,
+      position: [250, 300],
+      parameters: { httpMethod: 'POST', path: '/my-hook' },
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 34)).toBe(true)
+  })
+
+  it('rule 34: warns when webhook path looks like a full URL', () => {
+    const w = { ...baseWorkflow(), nodes: [] }
+    w.nodes.push({
+      id: 'aaaa0034-aaaa-4aaa-aaaa-aaaaaaaaaaac',
+      name: 'Webhook',
+      type: 'n8n-nodes-base.webhook',
+      typeVersion: 2,
+      position: [250, 300],
+      parameters: { httpMethod: 'POST', path: 'https://example.com/my-hook' },
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 34)).toBe(true)
+  })
+
+  it('rule 34: does not warn on a valid relative webhook path', () => {
+    const w = { ...baseWorkflow(), nodes: [] }
+    w.nodes.push({
+      id: 'aaaa0034-aaaa-4aaa-aaaa-aaaaaaaaaaad',
+      name: 'Webhook',
+      type: 'n8n-nodes-base.webhook',
+      typeVersion: 2,
+      position: [250, 300],
+      parameters: { httpMethod: 'POST', path: 'my-webhook-handler' },
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 34)).toBe(false)
+  })
 })

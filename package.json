@@ -1,6 +1,6 @@
 {
   "name": "@kairos-sdk/core",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "description": "LLM-powered n8n workflow generation — use as an SDK or MCP server",
   "type": "module",
   "main": "./dist/index.cjs",
