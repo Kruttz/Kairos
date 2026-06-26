@@ -68,3 +68,15 @@ export { TelemetryCollector } from './telemetry/collector.js'
 export { TelemetryReader } from './telemetry/reader.js'
 export type { RuleFailureRate } from './telemetry/reader.js'
 export type { TelemetryEvent, AttemptMetadata } from './telemetry/types.js'
+
+export { PatternAnalyzer } from './telemetry/pattern-analyzer.js'
+export type {
+  Pattern,
+  PatternAnalysis,
+  PatternState,
+  PatternTrend,
+  ScoringFactors,
+  SessionSummary,
+  DriftReport,
+  WarningEffectiveness,
+} from './telemetry/pattern-analyzer.js'

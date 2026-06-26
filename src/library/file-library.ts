@@ -1,4 +1,4 @@
-import { readFile, writeFile, rename, mkdir, readdir } from 'node:fs/promises'
+import { readFile, writeFile, rename, mkdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type { N8nWorkflow } from '../types/workflow.js'
@@ -35,14 +35,56 @@ export function buildSearchCorpus(w: StoredWorkflow): string {
 
 const MAX_LIBRARY_SIZE = 500
 
+/**
+ * Internal per-file format: everything from StoredWorkflow except the workflow field,
+ * plus two cache fields used to rebuild search corpus without loading workflow files.
+ */
+type StoredWorkflowMeta = Omit<StoredWorkflow, 'workflow'> & {
+  workflowName: string       // n8n workflow name (copied at save time for search)
+  cachedNodeTypes: string[]  // full node type strings (e.g. "n8n-nodes-base.slack")
+}
+
+function isValidMeta(item: unknown): item is StoredWorkflowMeta {
+  return (
+    typeof item === 'object' &&
+    item !== null &&
+    typeof (item as Record<string, unknown>).id === 'string' &&
+    typeof (item as Record<string, unknown>).description === 'string' &&
+    typeof (item as Record<string, unknown>).workflowName === 'string' &&
+    Array.isArray((item as Record<string, unknown>).cachedNodeTypes)
+  )
+}
+
+function isValidOldEntry(item: unknown): item is StoredWorkflow {
+  return (
+    typeof item === 'object' &&
+    item !== null &&
+    typeof (item as Record<string, unknown>).id === 'string' &&
+    typeof (item as Record<string, unknown>).description === 'string' &&
+    typeof (item as Record<string, unknown>).workflow === 'object' &&
+    (item as Record<string, unknown>).workflow !== null &&
+    Array.isArray(
+      ((item as Record<string, unknown>).workflow as Record<string, unknown>).nodes,
+    )
+  )
+}
+
 export class FileLibrary implements IWorkflowLibrary {
   private readonly dir: string
-  private workflows: StoredWorkflow[] = []
+  private meta: StoredWorkflowMeta[] = []
   private initPromise: Promise<void> | null = null
   private writeQueue: Promise<void> = Promise.resolve()
 
   constructor(dir?: string) {
     this.dir = dir ?? join(homedir(), '.kairos', 'library')
+  }
+
+  private get workflowsDir(): string {
+    return join(this.dir, 'workflows')
+  }
+
+  private workflowFilePath(id: string): string {
+    return join(this.workflowsDir, `${id}.json`)
   }
 
   async initialize(): Promise<void> {
@@ -54,42 +96,127 @@ export class FileLibrary implements IWorkflowLibrary {
 
   private async doInitialize(): Promise<void> {
     await mkdir(this.dir, { recursive: true })
-
     const indexPath = join(this.dir, 'index.json')
+
+    // New format has a 'workflows/' subdirectory; old format does not
+    let workflowsDirExists = false
     try {
-      const raw = await readFile(indexPath, 'utf-8')
-      const parsed: unknown = JSON.parse(raw)
-      if (!Array.isArray(parsed)) {
-        this.workflows = []
-      } else {
-        this.workflows = parsed.filter(
-          (item): item is StoredWorkflow =>
-            typeof item === 'object' &&
-            item !== null &&
-            typeof (item as Record<string, unknown>).id === 'string' &&
-            typeof (item as Record<string, unknown>).description === 'string' &&
-            typeof (item as Record<string, unknown>).workflow === 'object' &&
-            (item as Record<string, unknown>).workflow !== null &&
-            Array.isArray(((item as Record<string, unknown>).workflow as Record<string, unknown>).nodes),
-        )
-      }
+      await stat(this.workflowsDir)
+      workflowsDirExists = true
     } catch {
-      this.workflows = []
+      // Directory absent — old format or fresh start
+    }
+
+    if (workflowsDirExists) {
+      // New per-file format: index.json holds lightweight meta only
+      try {
+        const raw = await readFile(indexPath, 'utf-8')
+        const parsed: unknown = JSON.parse(raw)
+        if (Array.isArray(parsed)) {
+          this.meta = parsed.filter(isValidMeta)
+        }
+      } catch {
+        this.meta = []
+      }
+    } else {
+      // Attempt to read old monolithic format
+      try {
+        const raw = await readFile(indexPath, 'utf-8')
+        const parsed: unknown = JSON.parse(raw)
+        if (Array.isArray(parsed) && parsed.length > 0 && isValidOldEntry(parsed[0])) {
+          await this.migrateFromMonolithic(parsed.filter(isValidOldEntry))
+          return
+        }
+      } catch {
+        // No index.json — fresh start
+      }
+      this.meta = []
+      await mkdir(this.workflowsDir, { recursive: true })
     }
   }
 
+  /**
+   * One-time transparent migration from v0.4.x monolithic index.json.
+   * Splits each stored workflow into a per-file workflow JSON and a lightweight
+   * meta entry. Rewrites index.json in the new format.
+   */
+  private async migrateFromMonolithic(oldEntries: StoredWorkflow[]): Promise<void> {
+    await mkdir(this.workflowsDir, { recursive: true })
+
+    const newMeta: StoredWorkflowMeta[] = []
+    for (const entry of oldEntries) {
+      const wfPath = this.workflowFilePath(entry.id)
+      const tmpPath = `${wfPath}.tmp`
+      await writeFile(tmpPath, JSON.stringify(entry.workflow), 'utf-8')
+      await rename(tmpPath, wfPath)
+
+      const { workflow, ...metaFields } = entry
+      newMeta.push({
+        ...metaFields,
+        workflowName: workflow.name,
+        cachedNodeTypes: workflow.nodes.map((n) => n.type),
+      })
+    }
+
+    this.meta = newMeta
+    // Write new lightweight index.json (no workflow fields)
+    await this.persistNow()
+  }
+
+  private async loadWorkflowFile(id: string): Promise<N8nWorkflow | null> {
+    try {
+      const raw = await readFile(this.workflowFilePath(id), 'utf-8')
+      return JSON.parse(raw) as N8nWorkflow
+    } catch {
+      return null
+    }
+  }
+
+  private async writeWorkflowFile(id: string, workflow: N8nWorkflow): Promise<void> {
+    const wfPath = this.workflowFilePath(id)
+    const tmpPath = `${wfPath}.tmp`
+    await writeFile(tmpPath, JSON.stringify(workflow), 'utf-8')
+    await rename(tmpPath, wfPath)
+  }
+
+  /**
+   * Build a lightweight StoredWorkflow shell from a meta entry for use in
+   * scoring / clustering. Only node.type is populated in each node — no other
+   * node fields are used by hybridScore or clusterWorkflows.
+   */
+  private makeSearchShell(m: StoredWorkflowMeta): StoredWorkflow {
+    return {
+      ...m,
+      workflow: {
+        name: m.workflowName,
+        nodes: m.cachedNodeTypes.map((type) => ({
+          id: '',
+          name: '',
+          type,
+          typeVersion: 1,
+          position: [0, 0] as [number, number],
+          parameters: {},
+        })),
+        connections: {},
+      },
+    } as StoredWorkflow
+  }
+
   async search(description: string, options?: SearchOptions): Promise<WorkflowMatch[]> {
-    const searchable = this.workflows.filter((w) => w.trustLevel !== 'blocked')
-    if (searchable.length === 0) return []
+    const filteredMeta = this.meta.filter((m) => m.trustLevel !== 'blocked')
+    if (filteredMeta.length === 0) return []
 
     const limit = options?.limit ?? 3
     const queryTokens = tokenize(description)
     if (queryTokens.length === 0) return []
 
-    const docTokenArrays = searchable.map((w) => tokenize(buildSearchCorpus(w)))
+    // Build lightweight shells — no file I/O, all data comes from cached meta
+    const shells = filteredMeta.map((m) => this.makeSearchShell(m))
+
+    const docTokenArrays = shells.map((w) => tokenize(buildSearchCorpus(w)))
     const docTokenSets = docTokenArrays.map((tokens) => new Set(tokens))
 
-    const docCount = searchable.length
+    const docCount = shells.length
     const idf = new Map<string, number>()
     const allTokens = new Set(queryTokens)
     for (const token of allTokens) {
@@ -97,38 +224,55 @@ export class FileLibrary implements IWorkflowLibrary {
       idf.set(token, Math.log((docCount + 1) / (docsWithToken + 1)) + 1)
     }
 
-    const scored = hybridScore(queryTokens, description, searchable, docTokenArrays, idf)
+    const scored = hybridScore(queryTokens, description, shells, docTokenArrays, idf)
       .filter((m) => m.score > 0)
       .sort((a, b) => b.score - a.score)
 
-    const clusters = clusterWorkflows(searchable)
+    const clusters = clusterWorkflows(shells)
     const reranked = rerank(scored, clusters).slice(0, limit)
 
-    const results = reranked.map((m) => {
-      return { workflow: m.workflow, score: m.score, mode: scoreToMode(m.score) }
-    })
+    if (reranked.length === 0) return []
 
-    if (results.length > 0) {
-      for (const r of results) {
-        r.workflow.timesRetrieved = (r.workflow.timesRetrieved ?? 0) + 1
-      }
-      this.persist()
+    // Update timesRetrieved in meta before persisting
+    for (const r of reranked) {
+      const m = this.meta.find((m) => m.id === r.workflow.id)
+      if (m) m.timesRetrieved = (m.timesRetrieved ?? 0) + 1
     }
+    this.persist()
 
-    return results
+    // Lazy-load full workflow files for the top matches only
+    const results = await Promise.all(
+      reranked.map(async (r) => {
+        const m = this.meta.find((meta) => meta.id === r.workflow.id)!
+        const workflow = await this.loadWorkflowFile(r.workflow.id)
+        if (!workflow) return null
+        return {
+          workflow: { ...m, workflow } as StoredWorkflow,
+          score: r.score,
+          mode: scoreToMode(r.score),
+        } as WorkflowMatch
+      }),
+    )
+
+    return results.filter((r): r is WorkflowMatch => r !== null)
   }
 
   async save(workflow: N8nWorkflow, metadata: WorkflowMetadataInput): Promise<string> {
     const id = generateUUID()
+
+    // Write workflow file first (data before index entry — crash-safe WAL pattern)
+    await this.writeWorkflowFile(id, workflow)
+
     const failurePatterns = this.deduplicateFailurePatterns(metadata.failurePatterns)
-    const stored: StoredWorkflow = {
+    const meta: StoredWorkflowMeta = {
       id,
-      workflow,
       description: metadata.description,
       tags: metadata.tags ?? [],
       platform: metadata.platform ?? 'n8n',
       deployCount: 0,
       createdAt: new Date().toISOString(),
+      workflowName: workflow.name,
+      cachedNodeTypes: workflow.nodes.map((n) => n.type),
       ...(failurePatterns?.length ? { failurePatterns } : {}),
       ...(metadata.sourceWorkflowIds?.length ? { sourceWorkflowIds: metadata.sourceWorkflowIds } : {}),
       ...(metadata.generationMode ? { generationMode: metadata.generationMode } : {}),
@@ -140,40 +284,42 @@ export class FileLibrary implements IWorkflowLibrary {
       ...(metadata.sourceUrl ? { sourceUrl: metadata.sourceUrl } : {}),
       ...(metadata.trustLevel ? { trustLevel: metadata.trustLevel } : {}),
     }
-    this.workflows.push(stored)
-    if (this.workflows.length > MAX_LIBRARY_SIZE) {
-      // Sort by deployCount desc, but always keep the newly-added entry
-      this.workflows.sort((a, b) => {
+
+    this.meta.push(meta)
+    if (this.meta.length > MAX_LIBRARY_SIZE) {
+      // Sort by deployCount desc but always keep the newly-added entry
+      this.meta.sort((a, b) => {
         if (a.id === id) return -1
         if (b.id === id) return 1
         return (b.deployCount ?? 0) - (a.deployCount ?? 0)
       })
-      this.workflows = this.workflows.slice(0, MAX_LIBRARY_SIZE)
+      this.meta = this.meta.slice(0, MAX_LIBRARY_SIZE)
     }
+
     await this.persist()
     return id
   }
 
   async recordDeployment(id: string): Promise<void> {
-    const w = this.workflows.find((w) => w.id === id)
-    if (w) {
-      w.deployCount++
-      w.lastDeployedAt = new Date().toISOString()
+    const m = this.meta.find((m) => m.id === id)
+    if (m) {
+      m.deployCount++
+      m.lastDeployedAt = new Date().toISOString()
       await this.persist()
     }
   }
 
   async recordOutcome(id: string, outcome: OutcomeData): Promise<void> {
-    const w = this.workflows.find((w) => w.id === id)
-    if (!w) return
+    const m = this.meta.find((m) => m.id === id)
+    if (!m) return
 
     if (outcome.mode === 'direct') {
-      w.timesUsedAsDirect = (w.timesUsedAsDirect ?? 0) + 1
+      m.timesUsedAsDirect = (m.timesUsedAsDirect ?? 0) + 1
     } else {
-      w.timesUsedAsReference = (w.timesUsedAsReference ?? 0) + 1
+      m.timesUsedAsReference = (m.timesUsedAsReference ?? 0) + 1
     }
 
-    const stats = w.outcomeStats ?? { totalUses: 0, totalAttempts: 0, firstTryPasses: 0, failedRules: {} }
+    const stats = m.outcomeStats ?? { totalUses: 0, totalAttempts: 0, firstTryPasses: 0, failedRules: {} }
     stats.totalUses++
     stats.totalAttempts += outcome.attempts
     if (outcome.firstTryPass) stats.firstTryPasses++
@@ -181,7 +327,7 @@ export class FileLibrary implements IWorkflowLibrary {
       const key = String(rule)
       stats.failedRules[key] = (stats.failedRules[key] ?? 0) + 1
     }
-    w.outcomeStats = stats
+    m.outcomeStats = stats
 
     await this.persist()
   }
@@ -191,18 +337,31 @@ export class FileLibrary implements IWorkflowLibrary {
   }
 
   async get(id: string): Promise<StoredWorkflow | null> {
-    return this.workflows.find((w) => w.id === id) ?? null
+    const m = this.meta.find((m) => m.id === id)
+    if (!m) return null
+    const workflow = await this.loadWorkflowFile(id)
+    if (!workflow) return null
+    return { ...m, workflow } as StoredWorkflow
   }
 
   async list(filters?: LibraryFilters): Promise<StoredWorkflow[]> {
-    let result = this.workflows
+    let filtered = this.meta
     if (filters?.platform) {
-      result = result.filter((w) => w.platform === filters.platform)
+      filtered = filtered.filter((m) => m.platform === filters.platform)
     }
     if (filters?.tags && filters.tags.length > 0) {
-      result = result.filter((w) => filters.tags!.some((t) => w.tags.includes(t)))
+      filtered = filtered.filter((m) => filters.tags!.some((t) => m.tags.includes(t)))
     }
-    return result
+
+    const results = await Promise.all(
+      filtered.map(async (m) => {
+        const workflow = await this.loadWorkflowFile(m.id)
+        if (!workflow) return null
+        return { ...m, workflow } as StoredWorkflow
+      }),
+    )
+
+    return results.filter((r): r is StoredWorkflow => r !== null)
   }
 
   private deduplicateFailurePatterns(
@@ -221,28 +380,34 @@ export class FileLibrary implements IWorkflowLibrary {
     return [...map.values()]
   }
 
+  /**
+   * Direct write used only during migration (before writeQueue is needed).
+   */
+  private async persistNow(): Promise<void> {
+    const indexPath = join(this.dir, 'index.json')
+    const tmpPath = `${indexPath}.tmp`
+    await writeFile(tmpPath, JSON.stringify(this.meta, null, 2), 'utf-8')
+    await rename(tmpPath, indexPath)
+  }
+
   private persist(): Promise<void> {
     this.writeQueue = this.writeQueue.then(async () => {
       const indexPath = join(this.dir, 'index.json')
 
-      // Re-read disk state to merge any concurrent writes from other processes
-      let onDisk: StoredWorkflow[] = []
+      // Re-read disk state to preserve concurrent additions from other processes
+      let onDisk: StoredWorkflowMeta[] = []
       try {
         const raw = await readFile(indexPath, 'utf-8')
         const parsed: unknown = JSON.parse(raw)
         if (Array.isArray(parsed)) {
-          onDisk = parsed.filter(
-            (item): item is StoredWorkflow =>
-              typeof item === 'object' && item !== null &&
-              typeof (item as Record<string, unknown>).id === 'string',
-          )
+          onDisk = parsed.filter(isValidMeta)
         }
-      } catch { /* file doesn't exist yet */ }
+      } catch { /* index.json doesn't exist yet */ }
 
-      // Our in-memory state wins for IDs we know about; preserve external additions
-      const ourIds = new Set(this.workflows.map((w) => w.id))
-      const external = onDisk.filter((w) => !ourIds.has(w.id))
-      let merged = [...this.workflows, ...external]
+      // Our in-memory state wins for IDs we manage; add any entries added by other processes
+      const ourIds = new Set(this.meta.map((m) => m.id))
+      const external = onDisk.filter((m) => !ourIds.has(m.id))
+      let merged = [...this.meta, ...external]
       if (merged.length > MAX_LIBRARY_SIZE) {
         merged.sort((a, b) => (b.deployCount ?? 0) - (a.deployCount ?? 0))
         merged = merged.slice(0, MAX_LIBRARY_SIZE)

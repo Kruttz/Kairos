@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdir, rm, readFile } from 'node:fs/promises'
+import { mkdir, rm, readFile, writeFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { FileLibrary } from '../../../src/library/file-library.js'
@@ -177,5 +177,89 @@ describe('FileLibrary', () => {
     const raw = await readFile(join(dir, 'index.json'), 'utf-8')
     const data = JSON.parse(raw) as unknown[]
     expect(data).toHaveLength(5)
+  })
+
+  // ── Per-file architecture ─────────────────────────────────────────────────
+
+  it('writes workflow to a separate file under workflows/', async () => {
+    const wf = makeWorkflow('PerFile')
+    const id = await lib.save(wf, { description: 'per-file test' })
+
+    const wfPath = join(dir, 'workflows', `${id}.json`)
+    const raw = await readFile(wfPath, 'utf-8')
+    const stored = JSON.parse(raw) as { name: string }
+    expect(stored.name).toBe('PerFile')
+  })
+
+  it('index.json entries do not contain workflow field', async () => {
+    await lib.save(makeWorkflow('Lightweight'), { description: 'lightweight index test' })
+
+    const raw = await readFile(join(dir, 'index.json'), 'utf-8')
+    const entries = JSON.parse(raw) as Array<Record<string, unknown>>
+    expect(entries).toHaveLength(1)
+    expect(entries[0]).not.toHaveProperty('workflow')
+    expect(entries[0]).toHaveProperty('workflowName', 'Lightweight')
+    expect(entries[0]).toHaveProperty('cachedNodeTypes')
+  })
+
+  it('migrates old monolithic index.json to per-file format', async () => {
+    // Use a completely fresh subdirectory with no prior FileLibrary initialization.
+    // The beforeEach already ran initialize() on `dir`, which creates workflows/,
+    // so we need a virgin directory to test the old-format detection path.
+    const migDir = join(dir, 'migrate-test')
+    await mkdir(migDir, { recursive: true })
+
+    const oldEntry = {
+      id: 'test-migration-id',
+      description: 'old format workflow',
+      tags: [],
+      platform: 'n8n',
+      deployCount: 3,
+      createdAt: '2024-01-01T00:00:00.000Z',
+      workflow: makeWorkflow('OldFormat'),
+    }
+    await writeFile(join(migDir, 'index.json'), JSON.stringify([oldEntry]), 'utf-8')
+
+    // Initialize a fresh library instance in the virgin directory (triggers migration)
+    const freshLib = new FileLibrary(migDir)
+    await freshLib.initialize()
+
+    // workflows/ dir should now exist
+    const wfDir = join(migDir, 'workflows')
+    await expect(stat(wfDir)).resolves.toBeDefined()
+
+    // The workflow file should exist
+    const wfPath = join(wfDir, 'test-migration-id.json')
+    const wfRaw = await readFile(wfPath, 'utf-8')
+    const wf = JSON.parse(wfRaw) as { name: string }
+    expect(wf.name).toBe('OldFormat')
+
+    // index.json should be in new lightweight format (no workflow field)
+    const indexRaw = await readFile(join(migDir, 'index.json'), 'utf-8')
+    const entries = JSON.parse(indexRaw) as Array<Record<string, unknown>>
+    expect(entries[0]).not.toHaveProperty('workflow')
+    expect(entries[0]).toHaveProperty('workflowName', 'OldFormat')
+    expect(entries[0]).toHaveProperty('deployCount', 3)
+
+    // get() should return the full StoredWorkflow after migration
+    const stored = await freshLib.get('test-migration-id')
+    expect(stored).not.toBeNull()
+    expect(stored!.description).toBe('old format workflow')
+    expect(stored!.workflow.name).toBe('OldFormat')
+    expect(stored!.deployCount).toBe(3)
+  })
+
+  it('list() returns full StoredWorkflow objects with workflow field populated', async () => {
+    await lib.save(makeWorkflow('ListA'), { description: 'list workflow a' })
+    await lib.save(makeWorkflow('ListB'), { description: 'list workflow b' })
+
+    const all = await lib.list()
+    expect(all).toHaveLength(2)
+    for (const entry of all) {
+      expect(entry.workflow).toBeDefined()
+      expect(Array.isArray(entry.workflow.nodes)).toBe(true)
+    }
+    const names = all.map((e) => e.workflow.name).sort()
+    expect(names).toEqual(['ListA', 'ListB'])
   })
 })

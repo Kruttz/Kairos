@@ -26,6 +26,7 @@ import { inferWorkflowType } from './utils/workflow-type.js'
 import type { N8nWorkflow } from './types/workflow.js'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -36,12 +37,24 @@ let validator = new N8nValidator()
 const nodeSyncer = new NodeSyncer()
 let lastSync: SyncResult | null = null
 const stripper = new N8nFieldStripper()
-const promptBuilder = new PromptBuilder()
+const promptBuilder = new PromptBuilder(getMcpPatternsPath())
 
 function getMcpTelemetry(): TelemetryCollector | null {
   const val = process.env['KAIROS_TELEMETRY']
   if (!val || val === 'false') return null
   return val === 'true' ? new TelemetryCollector() : new TelemetryCollector(val)
+}
+
+/**
+ * Derive the patterns.json path from KAIROS_TELEMETRY so the MCP server's
+ * PromptBuilder reads from the same location that PatternAnalyzer.fromEnv() writes to.
+ */
+function getMcpPatternsPath(): string {
+  const val = process.env['KAIROS_TELEMETRY']
+  if (val && val !== 'false' && val !== 'true') {
+    return join(val, '..', 'patterns.json')
+  }
+  return join(homedir(), '.kairos', 'patterns.json')
 }
 
 const mcpTelemetry = getMcpTelemetry()
@@ -54,6 +67,14 @@ interface McpBuildSession {
   workflowType: string | null
 }
 const mcpSessions = new Map<string, McpBuildSession>()
+const SESSION_TTL_MS = 60 * 60 * 1000  // 1 hour: abandon sessions not completed by deploy
+
+function evictStaleSessions(): void {
+  const cutoff = Date.now() - SESSION_TTL_MS
+  for (const [id, session] of mcpSessions) {
+    if (session.startTime < cutoff) mcpSessions.delete(id)
+  }
+}
 
 function getTelemetryReader(): TelemetryReader | null {
   try {
@@ -109,6 +130,8 @@ server.tool(
     name: z.string().optional().describe('Optional workflow name override'),
   },
   async ({ description, name }) => {
+    evictStaleSessions()
+
     const baseUrl = process.env['N8N_BASE_URL']
     const apiKey = process.env['N8N_API_KEY']
     if (!baseUrl || !apiKey) {
