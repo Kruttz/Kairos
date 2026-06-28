@@ -315,7 +315,7 @@ export class FileLibrary implements IWorkflowLibrary {
         existing.generationAttempts = metadata.generationAttempts
       }
       if (metadata.failurePatterns?.length) {
-        existing.failurePatterns = this.deduplicateFailurePatterns(metadata.failurePatterns)
+        existing.failurePatterns = this.deduplicateFailurePatterns(metadata.failurePatterns)!
       }
       if (metadata.tags?.length) {
         existing.tags = [...new Set([...existing.tags, ...metadata.tags])]

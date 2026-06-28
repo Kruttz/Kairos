@@ -1,9 +1,16 @@
-// ECONNRESET/ETIMEDOUT/ECONNREFUSED mean the request never completed — safe to retry
+// ECONNRESET/ETIMEDOUT/ECONNREFUSED mean the request never completed — safe to retry.
+// Walks the .cause chain up to 4 levels because Node's fetch wraps errors:
+// ProviderError → TypeError("fetch failed") → SystemError { code: 'ECONNRESET' }
 export function isTransientNetworkError(err: unknown): boolean {
   const TRANSIENT_CODES = new Set(['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'ENOTFOUND', 'ECONNABORTED'])
-  const cause = (err as { cause?: unknown })?.cause
-  const code = (cause as { code?: string })?.code
-  return typeof code === 'string' && TRANSIENT_CODES.has(code)
+  let current: unknown = err
+  for (let i = 0; i < 4; i++) {
+    if (current === null || typeof current !== 'object') break
+    const code = (current as { code?: string }).code
+    if (typeof code === 'string' && TRANSIENT_CODES.has(code)) return true
+    current = (current as { cause?: unknown }).cause
+  }
+  return false
 }
 
 export async function withRetry<T>(
