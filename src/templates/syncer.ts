@@ -81,16 +81,17 @@ export class TemplateSyncer {
 
   private async fetchWithBackoff(url: string, maxRetries = 3): Promise<Response> {
     let delayMs = DELAY_BETWEEN_FETCHES_MS
+    let lastResponse!: Response
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      const response = await fetch(url)
-      if (response.status !== 429 && response.status !== 503) return response
-      if (attempt === maxRetries) return response
-      const retryAfterHeader = response.headers.get('Retry-After')
+      lastResponse = await fetch(url)
+      if (lastResponse.status !== 429 && lastResponse.status !== 503) return lastResponse
+      if (attempt === maxRetries) break
+      const retryAfterHeader = lastResponse.headers.get('Retry-After')
       const waitMs = retryAfterHeader ? parseInt(retryAfterHeader, 10) * 1000 : delayMs * Math.pow(2, attempt)
-      this.logger.warn(`HTTP ${response.status} from template API, retrying in ${waitMs}ms`, { url, attempt })
+      this.logger.warn(`HTTP ${lastResponse.status} from template API, retrying in ${waitMs}ms`, { url, attempt })
       await new Promise((resolve) => setTimeout(resolve, waitMs))
     }
-    return fetch(url)
+    return lastResponse
   }
 
   private async fetchTemplateIds(max: number, progress: SyncProgress): Promise<number[]> {

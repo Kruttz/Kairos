@@ -566,24 +566,13 @@ server.tool(
   },
   async ({ workflow_id }) => {
     if (!isAllowed('activate')) {
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({ error: 'Activate is disabled. Set KAIROS_MCP_ALLOW_ACTIVATE=true to enable.' }),
-        }],
-        isError: true,
-      }
+      return mcpError(JSON.stringify({ error: 'Activate is disabled. Set KAIROS_MCP_ALLOW_ACTIVATE=true to enable.' }))
     }
 
     const client = getApiClient()
     await client.activateWorkflow(workflow_id)
 
-    return {
-      content: [{
-        type: 'text' as const,
-        text: `Activated workflow ${workflow_id}`,
-      }],
-    }
+    return mcpText(`Activated workflow ${workflow_id}`)
   },
 )
 
@@ -597,12 +586,7 @@ server.tool(
     const client = getApiClient()
     await client.deactivateWorkflow(workflow_id)
 
-    return {
-      content: [{
-        type: 'text' as const,
-        text: `Deactivated workflow ${workflow_id}`,
-      }],
-    }
+    return mcpText(`Deactivated workflow ${workflow_id}`)
   },
 )
 
