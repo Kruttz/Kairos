@@ -33,7 +33,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8')) as { version: string }
 
 const library = new FileLibrary()
-let validator = new N8nValidator()
+let _validator = new N8nValidator()
+// Accessor so kairos_sync can swap the registry without callers closing over the old instance
+function getValidator(): N8nValidator { return _validator }
 const nodeSyncer = new NodeSyncer()
 let lastSync: SyncResult | null = null
 const stripper = new N8nFieldStripper()
@@ -108,7 +110,7 @@ async function autoSync(): Promise<SyncResult | null> {
     const nodeTypes = await client.getNodeTypes()
     if (nodeTypes.length === 0) return null
     lastSync = nodeSyncer.sync(nodeTypes)
-    validator = new N8nValidator(lastSync.registry)
+    _validator = new N8nValidator(lastSync.registry)
     return lastSync
   } catch {
     return null
@@ -227,7 +229,7 @@ server.tool(
       }
     }
 
-    const result = validator.validate(parsed)
+    const result = getValidator().validate(parsed)
     const errors = result.issues.filter(i => i.severity === 'error')
     const warnings = result.issues.filter(i => i.severity === 'warn')
 
@@ -305,7 +307,7 @@ server.tool(
       }
     }
 
-    const validation = validator.validate(parsed)
+    const validation = getValidator().validate(parsed)
     const errors = validation.issues.filter(i => i.severity === 'error')
     if (errors.length > 0) {
       return {
@@ -343,6 +345,11 @@ server.tool(
 
     const session = kairos_run_id ? mcpSessions.get(kairos_run_id) : undefined
 
+    // Warn when kairos_run_id is provided but no matching session exists — telemetry will be skipped
+    const missingSessionWarning = (kairos_run_id && !session)
+      ? `\n\nNote: kairos_run_id "${kairos_run_id}" was provided but no active session was found. This usually means kairos_deploy was called without a prior kairos_prompt call, or the session expired. Telemetry and pattern learning for this build were skipped.`
+      : ''
+
     // Save to library for future retrieval
     await library.initialize()
     await library.save(parsed, {
@@ -378,7 +385,7 @@ server.tool(
           name: response.name,
           activated: activate,
           url: `${process.env['N8N_BASE_URL']}/workflow/${response.id}`,
-        }, null, 2),
+        }, null, 2) + missingSessionWarning,
       }],
     }
   },

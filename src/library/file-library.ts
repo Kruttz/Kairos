@@ -1,4 +1,4 @@
-import { readFile, writeFile, rename, mkdir, stat, readdir, unlink } from 'node:fs/promises'
+import { readFile, writeFile, rename, mkdir, stat, readdir, unlink, open } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import type { N8nWorkflow } from '../types/workflow.js'
@@ -433,42 +433,109 @@ export class FileLibrary implements IWorkflowLibrary {
     return [...map.values()]
   }
 
+  // ── Cross-process file locking ────────────────────────────────────────────
+  // Uses O_EXCL (exclusive create) which is atomic on POSIX and Windows NTFS.
+  // Protects the read-modify-write cycle in persist() from concurrent writers
+  // in separate OS processes (e.g. MCP server + CLI running simultaneously).
+
+  private get lockPath(): string {
+    return join(this.dir, '.index.lock')
+  }
+
+  private async acquireLock(timeoutMs = 3_000): Promise<() => Promise<void>> {
+    const deadline = Date.now() + timeoutMs
+    let delayMs = 10
+
+    while (true) {
+      try {
+        // O_EXCL: fail if the file already exists — atomic on POSIX + NTFS
+        const fh = await open(this.lockPath, 'wx')
+        await fh.writeFile(String(process.pid))
+        await fh.close()
+        return async () => { await unlink(this.lockPath).catch(() => {}) }
+      } catch {
+        // Lock file exists — check if it's stale
+        try {
+          const content = await readFile(this.lockPath, 'utf-8')
+          const lockPid = parseInt(content.trim(), 10)
+          const fileStat = await stat(this.lockPath)
+          const ageMs = Date.now() - fileStat.mtimeMs
+
+          if (ageMs > 10_000) {
+            // Lock is over 10 seconds old — definitely stale
+            await unlink(this.lockPath).catch(() => {})
+            continue
+          }
+
+          if (!isNaN(lockPid)) {
+            try {
+              process.kill(lockPid, 0) // throws ESRCH if PID is dead
+            } catch {
+              await unlink(this.lockPath).catch(() => {})
+              continue
+            }
+          }
+        } catch {
+          // Lock file was removed between our read and check — retry immediately
+          continue
+        }
+
+        if (Date.now() > deadline) {
+          // Can't acquire within timeout — proceed with a warning (degraded mode)
+          return async () => {}
+        }
+        await new Promise<void>((r) => setTimeout(r, delayMs))
+        delayMs = Math.min(delayMs * 1.5, 200)
+      }
+    }
+  }
+
   /**
    * Direct write used only during migration (before writeQueue is needed).
    */
   private async persistNow(): Promise<void> {
-    const indexPath = join(this.dir, 'index.json')
-    const tmpPath = `${indexPath}.tmp`
-    await writeFile(tmpPath, JSON.stringify(this.meta, null, 2), 'utf-8')
-    await rename(tmpPath, indexPath)
+    const releaseLock = await this.acquireLock()
+    try {
+      const indexPath = join(this.dir, 'index.json')
+      const tmpPath = `${indexPath}.tmp`
+      await writeFile(tmpPath, JSON.stringify(this.meta, null, 2), 'utf-8')
+      await rename(tmpPath, indexPath)
+    } finally {
+      await releaseLock()
+    }
   }
 
   private persist(): Promise<void> {
     this.writeQueue = this.writeQueue.then(async () => {
-      const indexPath = join(this.dir, 'index.json')
-
-      // Re-read disk state to preserve concurrent additions from other processes
-      let onDisk: StoredWorkflowMeta[] = []
+      const releaseLock = await this.acquireLock()
       try {
-        const raw = await readFile(indexPath, 'utf-8')
-        const parsed: unknown = JSON.parse(raw)
-        if (Array.isArray(parsed)) {
-          onDisk = parsed.filter(isValidMeta)
+        const indexPath = join(this.dir, 'index.json')
+
+        // Re-read disk state to preserve concurrent additions from other processes
+        let onDisk: StoredWorkflowMeta[] = []
+        try {
+          const raw = await readFile(indexPath, 'utf-8')
+          const parsed: unknown = JSON.parse(raw)
+          if (Array.isArray(parsed)) {
+            onDisk = parsed.filter(isValidMeta)
+          }
+        } catch { /* index.json doesn't exist yet */ }
+
+        // Our in-memory state wins for IDs we manage; add any entries added by other processes
+        const ourIds = new Set(this.meta.map((m) => m.id))
+        const external = onDisk.filter((m) => !ourIds.has(m.id))
+        let merged = [...this.meta, ...external]
+        if (merged.length > MAX_LIBRARY_SIZE) {
+          merged.sort((a, b) => evictionScore(b) - evictionScore(a))
+          merged = merged.slice(0, MAX_LIBRARY_SIZE)
         }
-      } catch { /* index.json doesn't exist yet */ }
 
-      // Our in-memory state wins for IDs we manage; add any entries added by other processes
-      const ourIds = new Set(this.meta.map((m) => m.id))
-      const external = onDisk.filter((m) => !ourIds.has(m.id))
-      let merged = [...this.meta, ...external]
-      if (merged.length > MAX_LIBRARY_SIZE) {
-        merged.sort((a, b) => evictionScore(b) - evictionScore(a))
-        merged = merged.slice(0, MAX_LIBRARY_SIZE)
+        const tmpPath = `${indexPath}.tmp`
+        await writeFile(tmpPath, JSON.stringify(merged, null, 2), 'utf-8')
+        await rename(tmpPath, indexPath)
+      } finally {
+        await releaseLock()
       }
-
-      const tmpPath = `${indexPath}.tmp`
-      await writeFile(tmpPath, JSON.stringify(merged, null, 2), 'utf-8')
-      await rename(tmpPath, indexPath)
     })
     return this.writeQueue
   }

@@ -93,7 +93,7 @@ export class N8nProvider implements IProvider {
     const trigger = this.detectTrigger(workflow)
 
     if (trigger.type === 'unsupported') {
-      return { status: 'skipped', triggerType: 'skipped' }
+      return { status: 'not-applicable', triggerType: 'not-applicable' }
     }
 
     if (trigger.type === 'manual') {

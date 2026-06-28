@@ -207,6 +207,9 @@ export class Kairos {
 
     const provider = this.requireProvider()
     const deployed = await provider.deploy(workflow)
+    // Log the workflow ID immediately — if any post-deploy step fails, this ID
+    // lets the user manually locate and clean up the orphaned workflow in n8n.
+    this.logger.info('Workflow deployed to n8n', { workflowId: deployed.workflowId, name: deployed.name })
     this.recordDeploy()
 
     if (options?.activate) {
@@ -313,6 +316,7 @@ export class Kairos {
 
     const provider = this.requireProvider()
     const deployed = await provider.update(id, designResult.workflow)
+    this.logger.info('Workflow updated in n8n', { workflowId: deployed.workflowId, name: deployed.name })
 
     this.saveToLibrary(designResult.workflow, description, designResult, matches)
     this.recordDeploy()

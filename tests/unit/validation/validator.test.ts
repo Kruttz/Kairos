@@ -285,12 +285,27 @@ describe('N8nValidator', () => {
   })
 
   // Rule 19 (warn)
-  it('rule 19: warns on unsafe typeVersion for known node', () => {
+  it('rule 19: lenient mode (default) does NOT warn on typeVersions higher than known max', () => {
+    // typeVersion 99 for a known node is treated as "newer release" in lenient mode
+    delete process.env['KAIROS_REGISTRY_STRICT']
     const w = baseWorkflow()
     w.nodes[0]!.typeVersion = 99
     const result = validator.validate(w)
-    expect(result.valid).toBe(true) // only a warning
-    expect(result.issues.some((i) => i.rule === 19 && i.severity === 'warn')).toBe(true)
+    expect(result.valid).toBe(true)
+    expect(result.issues.some((i) => i.rule === 19)).toBe(false)
+  })
+
+  it('rule 19: strict mode warns on typeVersion not in known safe list', () => {
+    process.env['KAIROS_REGISTRY_STRICT'] = 'true'
+    try {
+      const w = baseWorkflow()
+      w.nodes[0]!.typeVersion = 99
+      const result = validator.validate(w)
+      expect(result.valid).toBe(true) // only a warning
+      expect(result.issues.some((i) => i.rule === 19 && i.severity === 'warn')).toBe(true)
+    } finally {
+      delete process.env['KAIROS_REGISTRY_STRICT']
+    }
   })
 
   it('rule 19: passes for unknown node type (does not block)', () => {

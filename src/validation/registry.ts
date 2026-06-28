@@ -122,6 +122,15 @@ export class NodeRegistry {
     return def.safeTypeVersions.includes(version)
   }
 
+  // Returns true when the version is a positive integer greater than the highest
+  // known safe version — indicates a newer release rather than a bad value.
+  isVersionNewer(type: string, version: number): boolean {
+    const def = this.byType.get(type)
+    if (!def || def.safeTypeVersions.length === 0) return false
+    const max = Math.max(...def.safeTypeVersions)
+    return Number.isInteger(version) && version > max
+  }
+
   getRequiredParams(type: string): string[] {
     return this.byType.get(type)?.requiredParams ?? []
   }

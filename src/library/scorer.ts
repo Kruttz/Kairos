@@ -1,11 +1,34 @@
 import type { StoredWorkflow } from './types.js'
 
-const WEIGHTS = {
-  tfidf: 0.35,
-  nodeFingerprint: 0.30,
-  outcome: 0.20,
-  deploy: 0.15,
+function loadWeights() {
+  const raw = {
+    tfidf: parseFloat(process.env['KAIROS_WEIGHT_TFIDF'] ?? ''),
+    nodeFingerprint: parseFloat(process.env['KAIROS_WEIGHT_JACCARD'] ?? ''),
+    outcome: parseFloat(process.env['KAIROS_WEIGHT_OUTCOME'] ?? ''),
+    deploy: parseFloat(process.env['KAIROS_WEIGHT_DEPLOY'] ?? ''),
+  }
+  const defaults = { tfidf: 0.35, nodeFingerprint: 0.30, outcome: 0.20, deploy: 0.15 }
+  const anySet = Object.values(raw).some((v) => !isNaN(v) && v >= 0)
+  if (!anySet) return defaults
+
+  // Use provided values (default 0 for unspecified), then normalize to sum=1
+  const w = {
+    tfidf: !isNaN(raw.tfidf) && raw.tfidf >= 0 ? raw.tfidf : defaults.tfidf,
+    nodeFingerprint: !isNaN(raw.nodeFingerprint) && raw.nodeFingerprint >= 0 ? raw.nodeFingerprint : defaults.nodeFingerprint,
+    outcome: !isNaN(raw.outcome) && raw.outcome >= 0 ? raw.outcome : defaults.outcome,
+    deploy: !isNaN(raw.deploy) && raw.deploy >= 0 ? raw.deploy : defaults.deploy,
+  }
+  const total = w.tfidf + w.nodeFingerprint + w.outcome + w.deploy
+  if (total <= 0) return defaults
+  return {
+    tfidf: w.tfidf / total,
+    nodeFingerprint: w.nodeFingerprint / total,
+    outcome: w.outcome / total,
+    deploy: w.deploy / total,
+  }
 }
+
+const WEIGHTS = loadWeights()
 
 const NODE_KEYWORDS: Record<string, string[]> = {
   slack: ['slack', 'slackApi'],

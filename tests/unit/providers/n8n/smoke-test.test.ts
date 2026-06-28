@@ -70,11 +70,11 @@ describe('N8nProvider.smokeTest()', () => {
     vi.useFakeTimers()
   })
 
-  it('returns skipped for unsupported trigger types (schedule)', async () => {
+  it('returns not-applicable for unsupported trigger types (schedule)', async () => {
     const provider = makeProvider()
     const result = await provider.smokeTest('wf-1', makeWorkflow('schedule'))
-    expect(result.status).toBe('skipped')
-    expect(result.triggerType).toBe('skipped')
+    expect(result.status).toBe('not-applicable')
+    expect(result.triggerType).toBe('not-applicable')
   })
 
   it('manual trigger — passed on success execution', async () => {

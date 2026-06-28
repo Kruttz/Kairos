@@ -4,11 +4,11 @@ export interface CredentialRequirement {
   description: string
 }
 
-export type SmokeTestStatus = 'passed' | 'failed' | 'error' | 'skipped'
+export type SmokeTestStatus = 'passed' | 'failed' | 'error' | 'skipped' | 'not-applicable'
 
 export interface SmokeTestResult {
   status: SmokeTestStatus
-  triggerType: 'manual' | 'webhook' | 'skipped'
+  triggerType: 'manual' | 'webhook' | 'not-applicable'
   executionId?: string
   durationMs?: number
   error?: string

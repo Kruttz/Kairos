@@ -350,19 +350,24 @@ export class N8nValidator {
     }
   }
 
-  // Rule 19 (WARN): typeVersion is within known safe range for registered node types
+  // Rule 19 (WARN): typeVersion is within known safe range for registered node types.
+  // In lenient mode (KAIROS_REGISTRY_STRICT != 'true'), versions higher than the known
+  // max are allowed — they likely represent newer n8n releases Kairos hasn't catalogued yet.
   private checkRule19(w: N8nWorkflow, issues: ValidationIssue[]): void {
     if (!Array.isArray(w.nodes)) return
+    const strict = process.env['KAIROS_REGISTRY_STRICT'] === 'true'
     for (const node of w.nodes) {
       if (typeof node.type !== 'string' || typeof node.typeVersion !== 'number') continue
-      if (!this.registry.isVersionSafe(node.type, node.typeVersion)) {
-        this.warn(
-          issues,
-          19,
-          `Node "${node.name}" uses typeVersion ${node.typeVersion} for type "${node.type}" which is not in the known safe list`,
-          node.id,
-        )
-      }
+      if (this.registry.isVersionSafe(node.type, node.typeVersion)) continue
+      // In lenient mode (default), a version that is simply higher than our known max
+      // is likely a newer n8n release — skip the warning.
+      if (!strict && this.registry.isVersionNewer(node.type, node.typeVersion)) continue
+      this.warn(
+        issues,
+        19,
+        `Node "${node.name}" uses typeVersion ${node.typeVersion} for type "${node.type}" which is not in the known safe list`,
+        node.id,
+      )
     }
   }
 

@@ -132,4 +132,46 @@ describe('assessTemplateSafety', () => {
     const result = assessTemplateSafety(makeWorkflow([n]))
     expect(result.reasons.some((r) => r.includes('Call API'))).toBe(true)
   })
+
+  // ── Expression-level secret scanning (H9) ───────────────────────────────
+
+  it('flags expression containing split GitHub token prefix for review', () => {
+    // "ghp_" alone won't match the full regex, but collectExpressionStrings picks it up
+    const result = assessTemplateSafety(makeWorkflow([
+      node('n8n-nodes-base.httpRequest', { auth: '={{ "ghp_" + $vars.token }}' }),
+    ]))
+    expect(result.trustLevel).toBe('review')
+    expect(result.reasons.some((r) => r.includes('ghp_'))).toBe(true)
+  })
+
+  it('flags expression containing OpenAI key prefix for review', () => {
+    const result = assessTemplateSafety(makeWorkflow([
+      node('n8n-nodes-base.openAi', { apiKey: '={{ "sk-" + $env.KEY }}' }),
+    ]))
+    expect(result.trustLevel).toBe('review')
+    expect(result.reasons.some((r) => r.includes('sk-'))).toBe(true)
+  })
+
+  it('flags expression containing AWS key prefix for review', () => {
+    const result = assessTemplateSafety(makeWorkflow([
+      node('n8n-nodes-base.awsS3', { accessKey: '={{ "AKIA" + $vars.suffix }}' }),
+    ]))
+    expect(result.trustLevel).toBe('review')
+    expect(result.reasons.some((r) => r.includes('AKIA'))).toBe(true)
+  })
+
+  it('does not flag plain variable expressions with no secret prefix', () => {
+    const result = assessTemplateSafety(makeWorkflow([
+      node('n8n-nodes-base.set', { value: '={{ $json.name + " " + $json.email }}' }),
+    ]))
+    expect(result.trustLevel).toBe('safe')
+  })
+
+  it('expression scanning does not change trustLevel if node is already blocked for other reason', () => {
+    // Code node already blocks; expression with prefix should not add a second reason level
+    const result = assessTemplateSafety(makeWorkflow([
+      node('n8n-nodes-base.code', { code: '={{ "ghp_" + x }}' }),
+    ]))
+    expect(result.trustLevel).toBe('blocked')
+  })
 })

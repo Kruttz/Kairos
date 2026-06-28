@@ -262,4 +262,40 @@ describe('FileLibrary', () => {
     const names = all.map((e) => e.workflow.name).sort()
     expect(names).toEqual(['ListA', 'ListB'])
   })
+
+  // ── Cross-process file locking (C3) ─────────────────────────────────────
+
+  it('cleans up lock file after a write completes', async () => {
+    const lockPath = join(dir, '.index.lock')
+    await lib.save(makeWorkflow('LockTest'), { description: 'lock cleanup test' })
+    await lib.drain()
+
+    // Lock file must NOT persist after a successful write
+    let lockExists = false
+    try {
+      await stat(lockPath)
+      lockExists = true
+    } catch { /* expected — lock should be gone */ }
+    expect(lockExists).toBe(false)
+  })
+
+  it('breaks stale lock file and proceeds with write', async () => {
+    const lockPath = join(dir, '.index.lock')
+    // Simulate a stale lock: write a non-existent PID and an old mtime by
+    // creating the file, then forcibly setting its contents to a dead PID
+    await writeFile(lockPath, '99999999') // PID that almost certainly doesn't exist
+
+    // Change mtime to 15 seconds ago to make it look stale
+    const staleMtime = new Date(Date.now() - 15_000)
+    const { utimes } = await import('node:fs/promises')
+    await utimes(lockPath, staleMtime, staleMtime)
+
+    // Despite the stale lock, save() should succeed (stale lock gets force-removed)
+    const id = await lib.save(makeWorkflow('AfterStaleLock'), { description: 'stale lock recovery' })
+    await lib.drain()
+    expect(id).toBeTruthy()
+
+    const all = await lib.list()
+    expect(all.some((w) => w.description === 'stale lock recovery')).toBe(true)
+  })
 })
