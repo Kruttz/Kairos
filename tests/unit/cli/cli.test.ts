@@ -39,6 +39,7 @@ describe('CLI — parseArgs / routing', () => {
     it('help text mentions all major commands', () => {
       const r = run(['help'])
       expect(r.stdout).toContain('build')
+      expect(r.stdout).toContain('replace')
       expect(r.stdout).toContain('patterns')
       expect(r.stdout).toContain('sessions')
       expect(r.stdout).toContain('list')
@@ -71,6 +72,26 @@ describe('CLI — parseArgs / routing', () => {
       })
       expect(r.status).toBe(1)
       expect(r.stderr).toContain('Usage: kairos build')
+    })
+
+    it('replace without id exits with usage error', () => {
+      const r = run(['replace'], {
+        ANTHROPIC_API_KEY: 'sk-test',
+        N8N_BASE_URL: 'http://localhost:5678',
+        N8N_API_KEY: 'test-key',
+      })
+      expect(r.status).toBe(1)
+      expect(r.stderr).toContain('Usage: kairos replace')
+    })
+
+    it('replace without description exits with usage error', () => {
+      const r = run(['replace', 'some-workflow-id'], {
+        ANTHROPIC_API_KEY: 'sk-test',
+        N8N_BASE_URL: 'http://localhost:5678',
+        N8N_API_KEY: 'test-key',
+      })
+      expect(r.status).toBe(1)
+      expect(r.stderr).toContain('Usage: kairos replace')
     })
 
     it('delete without --confirm exits with error', () => {

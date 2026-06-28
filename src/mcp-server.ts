@@ -156,13 +156,7 @@ server.tool(
     const baseUrl = process.env['N8N_BASE_URL']
     const apiKey = process.env['N8N_API_KEY']
     if (!baseUrl || !apiKey) {
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({ error: 'N8N_BASE_URL and N8N_API_KEY are required. Kairos needs to sync your n8n instance\'s node types to generate accurate workflows.' }),
-        }],
-        isError: true,
-      }
+      return mcpError(JSON.stringify({ error: 'N8N_BASE_URL and N8N_API_KEY are required. Kairos needs to sync your n8n instance\'s node types to generate accurate workflows.' }))
     }
 
     const runId = generateUUID()
@@ -198,10 +192,7 @@ server.tool(
 
     const systemText = built.system.map(block => block.text).join('\n\n---\n\n')
 
-    return {
-      content: [{
-        type: 'text' as const,
-        text: JSON.stringify({
+    return mcpText(JSON.stringify({
           kairos_run_id: runId,
           mode: built.mode,
           matchCount: matches.length,
@@ -227,9 +218,7 @@ server.tool(
               }],
             },
           },
-        }, null, 2),
-      }],
-    }
+        }, null, 2))
   },
 )
 
@@ -245,15 +234,7 @@ server.tool(
     try {
       parsed = JSON.parse(workflowStr) as N8nWorkflow
     } catch (e) {
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            valid: false,
-            error: `Invalid JSON: ${e instanceof Error ? e.message : String(e)}`,
-          }, null, 2),
-        }],
-      }
+      return mcpText(JSON.stringify({ valid: false, error: `Invalid JSON: ${e instanceof Error ? e.message : String(e)}` }, null, 2))
     }
 
     const result = getValidator().validate(parsed)
@@ -279,27 +260,14 @@ server.tool(
       }
     }
 
-    return {
-      content: [{
-        type: 'text' as const,
-        text: JSON.stringify({
-          valid: result.valid,
-          errorCount: errors.length,
-          warningCount: warnings.length,
-          errors: errors.map(i => ({
-            rule: i.rule,
-            message: i.message,
-            nodeId: i.nodeId ?? null,
-          })),
-          warnings: warnings.map(i => ({
-            rule: i.rule,
-            message: i.message,
-            nodeId: i.nodeId ?? null,
-          })),
-          deployable: errors.length === 0,
-        }, null, 2),
-      }],
-    }
+    return mcpText(JSON.stringify({
+      valid: result.valid,
+      errorCount: errors.length,
+      warningCount: warnings.length,
+      errors: errors.map(i => ({ rule: i.rule, message: i.message, nodeId: i.nodeId ?? null })),
+      warnings: warnings.map(i => ({ rule: i.rule, message: i.message, nodeId: i.nodeId ?? null })),
+      deployable: errors.length === 0,
+    }, null, 2))
   },
 )
 
@@ -317,39 +285,23 @@ server.tool(
     if (authError) return authError
 
     if (!isAllowed('deploy')) {
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({ error: 'Deploy is disabled. Set KAIROS_MCP_ALLOW_DEPLOY=true to enable.' }),
-        }],
-        isError: true,
-      }
+      return mcpError(JSON.stringify({ error: 'Deploy is disabled. Set KAIROS_MCP_ALLOW_DEPLOY=true to enable.' }))
     }
 
     let parsed: N8nWorkflow
     try {
       parsed = JSON.parse(workflowStr) as N8nWorkflow
     } catch (e) {
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({ error: `Invalid JSON: ${e instanceof Error ? e.message : String(e)}` }),
-        }],
-      }
+      return mcpError(JSON.stringify({ error: `Invalid JSON: ${e instanceof Error ? e.message : String(e)}` }))
     }
 
     const validation = getValidator().validate(parsed)
     const errors = validation.issues.filter(i => i.severity === 'error')
     if (errors.length > 0) {
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            error: 'Workflow has validation errors — fix them before deploying',
-            errors: errors.map(i => ({ rule: i.rule, message: i.message })),
-          }, null, 2),
-        }],
-      }
+      return mcpError(JSON.stringify({
+        error: 'Workflow has validation errors — fix them before deploying',
+        errors: errors.map(i => ({ rule: i.rule, message: i.message })),
+      }, null, 2))
     }
 
     const client = getApiClient()
@@ -358,18 +310,13 @@ server.tool(
 
     if (activate) {
       if (!isAllowed('activate')) {
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              workflowId: response.id,
-              name: response.name,
-              activated: false,
-              warning: 'Workflow deployed but activation is disabled. Set KAIROS_MCP_ALLOW_ACTIVATE=true to enable.',
-              url: `${process.env['N8N_BASE_URL']}/workflow/${response.id}`,
-            }, null, 2),
-          }],
-        }
+        return mcpText(JSON.stringify({
+          workflowId: response.id,
+          name: response.name,
+          activated: false,
+          warning: 'Workflow deployed but activation is disabled. Set KAIROS_MCP_ALLOW_ACTIVATE=true to enable.',
+          url: `${process.env['N8N_BASE_URL']}/workflow/${response.id}`,
+        }, null, 2))
       }
       await client.activateWorkflow(response.id)
     }
@@ -381,12 +328,13 @@ server.tool(
       ? `\n\nNote: kairos_run_id "${kairos_run_id}" was provided but no active session was found. This usually means kairos_deploy was called without a prior kairos_prompt call, or the session expired. Telemetry and pattern learning for this build were skipped.`
       : ''
 
-    // Save to library for future retrieval
+    // Save to library (n8nWorkflowId enables dedup on future redeployment)
     await library.initialize()
     await library.save(parsed, {
       description: session?.description ?? parsed.name,
       generationMode: 'scratch',
       generationAttempts: session?.validateAttempts ?? 1,
+      n8nWorkflowId: response.id,
     })
 
     if (mcpTelemetry && kairos_run_id && session) {
@@ -408,17 +356,86 @@ server.tool(
       PatternAnalyzer.fromEnv().analyzeAndSave().catch(() => {})
     }
 
-    return {
-      content: [{
-        type: 'text' as const,
-        text: JSON.stringify({
-          workflowId: response.id,
-          name: response.name,
-          activated: activate,
-          url: `${process.env['N8N_BASE_URL']}/workflow/${response.id}`,
-        }, null, 2) + missingSessionWarning,
-      }],
+    return mcpText(JSON.stringify({
+      workflowId: response.id,
+      name: response.name,
+      activated: activate,
+      url: `${process.env['N8N_BASE_URL']}/workflow/${response.id}`,
+    }, null, 2) + missingSessionWarning)
+  },
+)
+
+server.tool(
+  'kairos_replace',
+  'Replace an existing n8n workflow with a new version. Validates before updating. Use kairos_prompt → kairos_validate → kairos_replace for iteration on existing workflows.',
+  {
+    workflow_id: z.string().describe('The n8n workflow ID to replace'),
+    workflow: z.string().describe('The validated workflow JSON string'),
+    kairos_run_id: z.string().optional().describe('Run ID from kairos_prompt — enables telemetry correlation'),
+    kairos_secret: z.string().optional().describe('Required when KAIROS_MCP_SECRET env var is set'),
+  },
+  async ({ workflow_id, workflow: workflowStr, kairos_run_id, kairos_secret }) => {
+    const authError = checkMcpAuth(kairos_secret)
+    if (authError) return authError
+
+    let parsed: N8nWorkflow
+    try {
+      parsed = JSON.parse(workflowStr) as N8nWorkflow
+    } catch (e) {
+      return mcpError(JSON.stringify({ error: `Invalid JSON: ${e instanceof Error ? e.message : String(e)}` }))
     }
+
+    const validation = getValidator().validate(parsed)
+    const errors = validation.issues.filter(i => i.severity === 'error')
+    if (errors.length > 0) {
+      return mcpError(JSON.stringify({
+        error: 'Workflow has validation errors — fix them before replacing',
+        errors: errors.map(i => ({ rule: i.rule, message: i.message })),
+      }, null, 2))
+    }
+
+    const client = getApiClient()
+    const stripped = stripper.stripForUpdate(parsed)
+    const response = await client.updateWorkflow(workflow_id, stripped)
+
+    const session = kairos_run_id ? mcpSessions.get(kairos_run_id) : undefined
+    const missingSessionWarning = (kairos_run_id && !session)
+      ? `\n\nNote: kairos_run_id "${kairos_run_id}" was provided but no active session was found.`
+      : ''
+
+    // Save to library — D4 dedup updates the existing entry rather than creating a duplicate
+    await library.initialize()
+    await library.save(parsed, {
+      description: session?.description ?? parsed.name,
+      generationMode: 'scratch',
+      generationAttempts: session?.validateAttempts ?? 1,
+      n8nWorkflowId: workflow_id,
+    })
+
+    if (mcpTelemetry && kairos_run_id && session) {
+      await mcpTelemetry.emit('build_complete', {
+        description: session.description,
+        success: true,
+        totalAttempts: session.validateAttempts,
+        totalDurationMs: Date.now() - session.startTime,
+        totalTokensInput: 0,
+        totalTokensOutput: 0,
+        workflowName: response.name,
+        workflowId: response.id,
+        dryRun: false,
+        credentialsNeeded: 0,
+        warnedRules: session.warnedRules,
+        workflowType: session.workflowType,
+      }, kairos_run_id)
+      mcpSessions.delete(kairos_run_id)
+      PatternAnalyzer.fromEnv().analyzeAndSave().catch(() => {})
+    }
+
+    return mcpText(JSON.stringify({
+      workflowId: response.id,
+      name: response.name,
+      url: `${process.env['N8N_BASE_URL']}/workflow/${response.id}`,
+    }, null, 2) + missingSessionWarning)
   },
 )
 
@@ -433,23 +450,20 @@ server.tool(
     await library.initialize()
     const matches = await library.search(query)
 
-    return {
-      content: [{
-        type: 'text' as const,
-        text: JSON.stringify(
-          matches.slice(0, limit).map(m => ({
-            score: Number(m.score.toFixed(3)),
-            mode: m.mode,
-            description: m.workflow.description,
-            nodeCount: m.workflow.workflow.nodes.length,
-            nodes: m.workflow.workflow.nodes.map(n => n.name),
-            failurePatterns: m.workflow.failurePatterns ?? [],
-          })),
-          null,
-          2,
-        ),
-      }],
-    }
+    return mcpText(JSON.stringify(
+      matches.slice(0, limit).map(m => ({
+        id: m.workflow.id,
+        score: Number(m.score.toFixed(3)),
+        mode: m.mode,
+        description: m.workflow.description,
+        nodeCount: m.workflow.workflow.nodes.length,
+        nodes: m.workflow.workflow.nodes.map(n => n.name),
+        n8nWorkflowId: m.workflow.n8nWorkflowId ?? null,
+        failurePatterns: m.workflow.failurePatterns ?? [],
+      })),
+      null,
+      2,
+    ))
   },
 )
 
@@ -461,38 +475,21 @@ server.tool(
     const baseUrl = process.env['N8N_BASE_URL']
     const apiKey = process.env['N8N_API_KEY']
     if (!baseUrl || !apiKey) {
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({ error: 'N8N_BASE_URL and N8N_API_KEY are required for sync.' }),
-        }],
-        isError: true,
-      }
+      return mcpError(JSON.stringify({ error: 'N8N_BASE_URL and N8N_API_KEY are required for sync.' }))
     }
 
     lastSync = null
     const result = await autoSync()
     if (!result) {
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({ error: 'Failed to fetch node types from n8n. Check your credentials and that your instance is running.' }),
-        }],
-        isError: true,
-      }
+      return mcpError(JSON.stringify({ error: 'Failed to fetch node types from n8n. Check your credentials and that your instance is running.' }))
     }
 
-    return {
-      content: [{
-        type: 'text' as const,
-        text: JSON.stringify({
-          synced: true,
-          nodeCount: result.nodeCount,
-          newNodes: result.newNodes,
-          message: `Synced ${result.nodeCount} node types from your n8n instance (${result.newNodes} not in default catalog).`,
-        }, null, 2),
-      }],
-    }
+    return mcpText(JSON.stringify({
+      synced: true,
+      nodeCount: result.nodeCount,
+      newNodes: result.newNodes,
+      message: `Synced ${result.nodeCount} node types from your n8n instance (${result.newNodes} not in default catalog).`,
+    }, null, 2))
   },
 )
 
@@ -511,12 +508,74 @@ server.tool(
       analysis.topFailureRules = analysis.topFailureRules.slice(0, limit)
     }
 
-    return {
-      content: [{
-        type: 'text' as const,
-        text: JSON.stringify(analysis, null, 2),
-      }],
+    return mcpText(JSON.stringify(analysis, null, 2))
+  },
+)
+
+server.tool(
+  'kairos_library',
+  'Browse the local Kairos workflow library. Returns saved workflow metadata. Use the optional query to search, or omit it to list all entries.',
+  {
+    query: z.string().optional().describe('Optional search query — omit to list all entries'),
+    limit: z.number().default(20).describe('Maximum entries to return'),
+  },
+  async ({ query, limit }) => {
+    await library.initialize()
+
+    if (query) {
+      const matches = await library.search(query)
+      return mcpText(JSON.stringify(
+        matches.slice(0, limit).map(m => ({
+          id: m.workflow.id,
+          description: m.workflow.description,
+          score: Number(m.score.toFixed(3)),
+          mode: m.mode,
+          nodeCount: m.workflow.workflow.nodes.length,
+          nodes: m.workflow.workflow.nodes.map(n => n.name),
+          deployCount: m.workflow.deployCount,
+          n8nWorkflowId: m.workflow.n8nWorkflowId ?? null,
+          createdAt: m.workflow.createdAt,
+        })),
+        null, 2,
+      ))
     }
+
+    const all = await library.list()
+    return mcpText(JSON.stringify(
+      all.slice(0, limit).map(w => ({
+        id: w.id,
+        description: w.description,
+        nodeCount: w.workflow.nodes.length,
+        nodes: w.workflow.nodes.map(n => n.name),
+        deployCount: w.deployCount,
+        n8nWorkflowId: w.n8nWorkflowId ?? null,
+        timesRetrieved: w.timesRetrieved ?? 0,
+        createdAt: w.createdAt,
+      })),
+      null, 2,
+    ))
+  },
+)
+
+server.tool(
+  'kairos_outcome',
+  'Record the outcome of a workflow build against a library entry. Trains the pattern learning system to know what works and what fails over time.',
+  {
+    library_id: z.string().describe('The Kairos library entry ID (returned by kairos_deploy, kairos_replace, or kairos_library)'),
+    attempts: z.number().describe('Number of generation+validation attempts before success'),
+    first_try_pass: z.boolean().describe('Whether the first attempt passed validation'),
+    failed_rules: z.array(z.number()).describe('Validation rule IDs that failed during generation'),
+    mode: z.enum(['direct', 'reference']).describe('How the library entry was used during generation'),
+  },
+  async ({ library_id, attempts, first_try_pass, failed_rules, mode }) => {
+    await library.initialize()
+    await library.recordOutcome(library_id, {
+      attempts,
+      firstTryPass: first_try_pass,
+      failedRules: failed_rules,
+      mode,
+    })
+    return mcpText(JSON.stringify({ recorded: true, libraryId: library_id }))
   },
 )
 
@@ -530,12 +589,7 @@ server.tool(
     const client = getApiClient()
     const workflows = await client.listWorkflows()
 
-    return {
-      content: [{
-        type: 'text' as const,
-        text: JSON.stringify(workflows, null, 2),
-      }],
-    }
+    return mcpText(JSON.stringify(workflows, null, 2))
   },
 )
 
@@ -549,12 +603,7 @@ server.tool(
     const client = getApiClient()
     const workflow = await client.getWorkflow(workflow_id)
 
-    return {
-      content: [{
-        type: 'text' as const,
-        text: JSON.stringify(workflow, null, 2),
-      }],
-    }
+    return mcpText(JSON.stringify(workflow, null, 2))
   },
 )
 
@@ -602,24 +651,13 @@ server.tool(
     if (authError) return authError
 
     if (!isAllowed('delete')) {
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({ error: 'Delete is disabled. Set KAIROS_MCP_ALLOW_DELETE=true to enable.' }),
-        }],
-        isError: true,
-      }
+      return mcpError(JSON.stringify({ error: 'Delete is disabled. Set KAIROS_MCP_ALLOW_DELETE=true to enable.' }))
     }
 
     const client = getApiClient()
     await client.deleteWorkflow(workflow_id)
 
-    return {
-      content: [{
-        type: 'text' as const,
-        text: `Deleted workflow ${workflow_id}`,
-      }],
-    }
+    return mcpText(`Deleted workflow ${workflow_id}`)
   },
 )
 
@@ -634,12 +672,7 @@ server.tool(
     const client = getApiClient()
     const executions = await client.getExecutions(workflow_id, { limit })
 
-    return {
-      content: [{
-        type: 'text' as const,
-        text: JSON.stringify(executions, null, 2),
-      }],
-    }
+    return mcpText(JSON.stringify(executions, null, 2))
   },
 )
 

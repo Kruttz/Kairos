@@ -11,6 +11,7 @@ Kairos SDK — LLM-powered n8n workflow generation
 Usage:
   kairos init                         First-time setup wizard
   kairos build <description> [options]
+  kairos replace <n8n-id> <description>
   kairos patterns [options]
   kairos sessions [options]
   kairos list
@@ -156,6 +157,33 @@ async function handleBuild(positional: string[], flags: Record<string, string | 
     dryRun: result.dryRun,
     credentialsNeeded: result.credentialsNeeded,
     ...(result.dryRun ? { workflow: result.workflow } : {}),
+  }, null, 2))
+}
+
+async function handleReplace(positional: string[]): Promise<void> {
+  const id = positional[0]
+  const description = positional.slice(1).join(' ')
+
+  if (!id || !description) {
+    console.error('Usage: kairos replace <n8n-workflow-id> <description>')
+    process.exit(1)
+  }
+
+  const kairos = createClient()
+  const start = Date.now()
+  console.error(`Replacing workflow ${id}...`)
+
+  const result = await kairos.replace(id, description)
+  await kairos.drain()
+
+  const elapsed = ((Date.now() - start) / 1000).toFixed(1)
+  console.error(`Done in ${elapsed}s (${result.generationAttempts} attempt${result.generationAttempts > 1 ? 's' : ''})`)
+  console.error('')
+
+  console.log(JSON.stringify({
+    workflowId: result.workflowId,
+    name: result.name,
+    generationAttempts: result.generationAttempts,
   }, null, 2))
 }
 
@@ -481,6 +509,9 @@ async function main(): Promise<void> {
       break
     case 'build':
       await handleBuild(positional, flags)
+      break
+    case 'replace':
+      await handleReplace(positional)
       break
     case 'patterns':
       await handlePatterns(flags)

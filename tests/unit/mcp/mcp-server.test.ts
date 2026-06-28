@@ -89,7 +89,10 @@ describe('Kairos MCP Server', () => {
     expect(names).toContain('kairos_executions')
     expect(names).toContain('kairos_sync')
     expect(names).toContain('kairos_patterns')
-    expect(names).toHaveLength(12)
+    expect(names).toContain('kairos_replace')
+    expect(names).toContain('kairos_library')
+    expect(names).toContain('kairos_outcome')
+    expect(names).toHaveLength(15)
   })
 
   it('kairos_prompt requires n8n credentials', async () => {
@@ -216,5 +219,78 @@ describe('Kairos MCP Server', () => {
 
     expect(result.isError).toBe(true)
     expect(content.error).toContain('KAIROS_MCP_ALLOW_DELETE')
+  })
+
+  it('kairos_replace rejects invalid JSON', async () => {
+    client.send({
+      jsonrpc: '2.0', id: 9, method: 'tools/call',
+      params: { name: 'kairos_replace', arguments: { workflow_id: 'wf-1', workflow: 'not json' } },
+    })
+    const resp = await client.waitForResponse(9)
+    const result = resp['result'] as { content: Array<{ text: string }>; isError?: boolean }
+    const content = JSON.parse(result.content[0].text)
+
+    expect(result.isError).toBe(true)
+    expect(content.error).toContain('Invalid JSON')
+  })
+
+  it('kairos_replace rejects a workflow with validation errors', async () => {
+    const bad = JSON.stringify({ name: '', nodes: [], connections: {}, settings: {} })
+    client.send({
+      jsonrpc: '2.0', id: 10, method: 'tools/call',
+      params: { name: 'kairos_replace', arguments: { workflow_id: 'wf-1', workflow: bad } },
+    })
+    const resp = await client.waitForResponse(10)
+    const result = resp['result'] as { content: Array<{ text: string }>; isError?: boolean }
+    const content = JSON.parse(result.content[0].text)
+
+    expect(result.isError).toBe(true)
+    expect(content.error).toContain('validation errors')
+  })
+
+  it('kairos_library returns empty array when library has no entries', async () => {
+    client.send({
+      jsonrpc: '2.0', id: 11, method: 'tools/call',
+      params: { name: 'kairos_library', arguments: {} },
+    })
+    const resp = await client.waitForResponse(11)
+    const result = resp['result'] as { content: Array<{ text: string }> }
+    const content = JSON.parse(result.content[0].text) as unknown[]
+
+    expect(Array.isArray(content)).toBe(true)
+  })
+
+  it('kairos_library search returns scored results', async () => {
+    client.send({
+      jsonrpc: '2.0', id: 12, method: 'tools/call',
+      params: { name: 'kairos_library', arguments: { query: 'slack notification' } },
+    })
+    const resp = await client.waitForResponse(12)
+    const result = resp['result'] as { content: Array<{ text: string }> }
+    const content = JSON.parse(result.content[0].text) as unknown[]
+
+    expect(Array.isArray(content)).toBe(true)
+  })
+
+  it('kairos_outcome records feedback against a library entry', async () => {
+    client.send({
+      jsonrpc: '2.0', id: 13, method: 'tools/call',
+      params: {
+        name: 'kairos_outcome',
+        arguments: {
+          library_id: 'nonexistent-id',
+          attempts: 2,
+          first_try_pass: false,
+          failed_rules: [12, 17],
+          mode: 'direct',
+        },
+      },
+    })
+    const resp = await client.waitForResponse(13)
+    const result = resp['result'] as { content: Array<{ text: string }> }
+    const content = JSON.parse(result.content[0].text) as { recorded: boolean; libraryId: string }
+
+    expect(content.recorded).toBe(true)
+    expect(content.libraryId).toBe('nonexistent-id')
   })
 })
