@@ -168,8 +168,6 @@ export class Kairos {
       ? { ...designResult.workflow, name: options.name }
       : designResult.workflow
 
-    this.saveToLibrary(workflow, description, designResult, matches)
-
     if (options?.dryRun) {
       const totalTokensInput = designResult.attemptMetadata.reduce((s, m) => s + m.tokensInput, 0)
       const totalTokensOutput = designResult.attemptMetadata.reduce((s, m) => s + m.tokensOutput, 0)
@@ -212,6 +210,8 @@ export class Kairos {
     if (options?.activate) {
       await provider.activate(deployed.workflowId)
     }
+
+    this.saveToLibrary(workflow, description, designResult, matches, deployed.workflowId)
 
     let smokeTestResult: SmokeTestResult | undefined
     if (options?.smokeTest) {
