@@ -36,7 +36,9 @@
     "test": "vitest run",
     "test:e2e": "vitest run --dir tests/e2e",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix"
   },
   "keywords": [
     "n8n",
@@ -80,6 +82,9 @@
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.36.0",
     "@types/node": "^20.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.62.0",
+    "@typescript-eslint/parser": "^8.62.0",
+    "eslint": "^10.6.0",
     "msw": "^2.0.0",
     "tsup": "^8.0.0",
     "tsx": "^4.22.4",

@@ -155,7 +155,7 @@ export class PatternAnalyzer {
     const starts = events.filter(e => e.eventType === 'build_start')
     const attempts = events.filter(e => e.eventType === 'generation_attempt')
 
-    const passed = attempts.filter(a =>
+    const _passed = attempts.filter(a =>
       (a.data as { validationPassed?: boolean }).validationPassed === true
     )
     const failed = attempts.filter(a =>
