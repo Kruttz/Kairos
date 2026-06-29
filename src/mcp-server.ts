@@ -29,6 +29,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
+import { readCatalogCache, writeCatalogCache } from './utils/node-catalog-cache.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8')) as { version: string }
@@ -120,8 +121,24 @@ function getApiClient(): N8nApiClient {
   return new N8nApiClient(baseUrl, apiKey, nullLogger)
 }
 
+function getCatalogCachePath(): string {
+  const telemetry = process.env['KAIROS_TELEMETRY']
+  const base = telemetry ? join(telemetry, '..') : join(homedir(), '.kairos')
+  return join(base, 'node-catalog-cache.json')
+}
+
 async function autoSync(): Promise<SyncResult | null> {
   if (lastSync) return lastSync
+
+  // Try disk cache before hitting the network
+  const cachePath = getCatalogCachePath()
+  const cached = await readCatalogCache(cachePath)
+  if (cached) {
+    lastSync = cached
+    _validator = new N8nValidator(lastSync.registry)
+    return lastSync
+  }
+
   const baseUrl = process.env['N8N_BASE_URL']
   const apiKey = process.env['N8N_API_KEY']
   if (!baseUrl || !apiKey) return null
@@ -131,6 +148,7 @@ async function autoSync(): Promise<SyncResult | null> {
     if (nodeTypes.length === 0) return null
     lastSync = nodeSyncer.sync(nodeTypes)
     _validator = new N8nValidator(lastSync.registry)
+    writeCatalogCache(cachePath, lastSync).catch(() => {})
     return lastSync
   } catch {
     return null
