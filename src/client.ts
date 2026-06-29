@@ -7,7 +7,6 @@ import { NullLibrary } from './library/null-library.js'
 import { N8nApiClient } from './providers/n8n/api-client.js'
 import { N8nFieldStripper } from './providers/n8n/stripper.js'
 import { N8nProvider } from './providers/n8n/provider.js'
-import { N8nValidator } from './validation/validator.js'
 import { WorkflowDesigner } from './generation/designer.js'
 import type { DesignResult } from './generation/types.js'
 import { TelemetryCollector } from './telemetry/collector.js'
@@ -28,7 +27,6 @@ const DEFAULT_MODEL = process.env['KAIROS_MODEL'] ?? 'claude-sonnet-4-6'
 export class Kairos {
   private readonly provider: N8nProvider | null
   private readonly designer: WorkflowDesigner
-  private readonly validator: N8nValidator
   private readonly library: IWorkflowLibrary
   private readonly logger: ILogger
   private readonly telemetry: TelemetryCollector | null
@@ -59,7 +57,6 @@ export class Kairos {
       ? join(options.telemetry, '..', 'patterns.json')
       : join(homedir(), '.kairos', 'patterns.json')
     this.designer = new WorkflowDesigner(anthropic, this.model, logger, patternsPath)
-    this.validator = new N8nValidator()
     this.library = options.library ?? new NullLibrary()
     this.logger = logger
 
