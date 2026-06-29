@@ -1,6 +1,6 @@
 # @kairos-sdk/core
 
-[![CI](https://github.com/Kruttz/kairos-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/Kruttz/kairos-sdk/actions/workflows/ci.yml)
+[![CI](https://github.com/Kruttz/Kairos/actions/workflows/ci.yml/badge.svg)](https://github.com/Kruttz/Kairos/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/@kairos-sdk/core)](https://www.npmjs.com/package/@kairos-sdk/core)
 [![npm downloads](https://img.shields.io/npm/dw/@kairos-sdk/core)](https://www.npmjs.com/package/@kairos-sdk/core)
 
@@ -111,18 +111,27 @@ This means Kairos works with **any LLM** — Claude, GPT, Gemini, Llama, or anyt
 | `kairos_validate` | Validates workflow JSON against 34 structural rules — returns errors and warnings |
 | `kairos_search` | Searches the local workflow library for similar past builds |
 | `kairos_sync` | Manually refresh the node catalog from your n8n instance (auto-runs on first `kairos_prompt` call) |
+| `kairos_patterns` | Returns pattern analysis — top failure rules, confidence scores, and improvement suggestions derived from build telemetry |
 
 #### Deployment tools
 
 | Tool | Description |
 |------|-------------|
 | `kairos_deploy` | Deploys validated workflow JSON to n8n (re-validates before deploying) |
+| `kairos_replace` | Replaces an existing n8n workflow with a new version — validates before updating, preserves workflow ID |
 | `kairos_list` | List all deployed workflows |
 | `kairos_get` | Get full workflow JSON by ID |
 | `kairos_activate` | Activate a workflow |
 | `kairos_deactivate` | Deactivate a workflow |
 | `kairos_delete` | Delete a workflow |
 | `kairos_executions` | List recent executions with status |
+
+#### Library tools
+
+| Tool | Description |
+|------|-------------|
+| `kairos_library` | Browse or search the local Kairos workflow library — returns metadata, node counts, deploy history, and n8n workflow IDs |
+| `kairos_outcome` | Record build outcome against a library entry — feeds the pattern learning system with attempt counts, failed rules, and generation mode |
 
 ---
 
