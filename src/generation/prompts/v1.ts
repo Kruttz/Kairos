@@ -31,6 +31,13 @@ id, active, createdAt, updatedAt, versionId, meta, isArchived, activeVersionId, 
 - Use "placeholder-id" as the id — users replace this with their real credential ID from n8n after deployment
 - The credentialsNeeded field in your response declares what credentials the user must configure
 - Never put API keys or tokens directly in node parameters when a credential type exists
+- NEVER put raw API keys, Bearer tokens, or secrets in headerParameters.parameters[].value — use credentials
+
+Credential type key reference (key MUST match exactly — wrong key = silent auth failure):
+  Gmail: gmailOAuth2 | Google Sheets: googleSheetsOAuth2Api | Google Drive: googleDriveOAuth2Api
+  Slack: slackOAuth2Api | Postgres: postgres | MySQL: mySql | Anthropic: anthropicApi
+  OpenAI: openAiApi | Notion: notionApi | Airtable: airtableTokenApi | HubSpot: hubspotOAuth2Api
+  GitHub: githubApi | Jira: jiraSoftwareCloudApi | Telegram: telegramApi | IMAP: imap | SMTP: smtp
 
 ### Node names:
 - All node names must be unique within the workflow
@@ -191,7 +198,7 @@ Cron: { "rule": { "interval": [{ "field": "cronExpression", "expression": "0 9 *
 3. No duplicate node IDs
 4. No forbidden fields at the workflow root
 5. At least one trigger node present
-6. Every AI Agent has an ai_languageModel sub-node
+6. Every AI Agent / chainLlm / chainRetrievalQa has an ai_languageModel sub-node connected TO it
 7. settings block is complete with executionOrder: "v1"
 8. No deprecated $node["NodeName"].json — use $('NodeName').item.json.field
 9. No $json.items[0] array indexing — access fields directly as $json.field
@@ -204,6 +211,18 @@ Cron: { "rule": { "interval": [{ "field": "cronExpression", "expression": "0 9 *
 16. set nodes have at least one entry in assignments.assignments[]
 17. scheduleTrigger has at least one rule in rule.interval[]
 18. webhook path is relative (no spaces, no leading slash, no http://)
+19. Google Sheets documentId and sheetName use __rl format: { "__rl": true, "mode": "id", "value": "..." } — not plain strings
+20. HTTP Request nodes using POST/PUT/PATCH: set sendBody: true and populate jsonBody (or bodyParameters) with actual content — only omit the body for intentional action-style endpoints (e.g. activate, trigger, refresh-token, webhook signal) or purely query-param-driven APIs; never leave sendBody: true with an empty body
+21. SplitInBatches: output 0 = "done" (post-all-batches); output 1 = "loop body" (per item) — do not reverse them
+22. IF/Filter nodes typeVersion 2+: each condition operator must be an object { "type": "string", "operation": "equals" } — not a plain string
+23. Switch nodes: connect every output route to a downstream node — unconnected routes silently drop items
+24. executeWorkflow nodes: always set the workflowId parameter
+25. Credential type keys must match exactly — see Credential type key reference above
+26. AI Agent promptType "auto" requires a chatTrigger or formTrigger upstream — with scheduleTrigger/webhook use promptType "define" with explicit text
+27. Wait node in webhook-resume mode: always send $execution.resumeUrl to an external system (email/SMS) before the Wait — otherwise execution pauses forever
+28. SQL queries in Code nodes: use parameterized queries ($1, $2 placeholders + values array) — never interpolate $json fields into SQL strings
+29. Merge nodes in chooseBranch or combine mode require exactly 2 incoming main connections
+30. HTTP Requests to known protected APIs (Stripe, Twilio, GitHub, HubSpot, etc.) must have credentials or an auth header configured
 
 ---
 

@@ -1410,4 +1410,2665 @@ describe('N8nValidator', () => {
     const result = validator.validate(baseWorkflow())
     expect(result.issues.some((i) => i.rule === 35)).toBe(false)
   })
+
+  // Rule 36: Code node output / downstream $json field name mismatch
+  it('rule 36: warns when downstream node uses snake_case but code outputs camelCase', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0036-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      name: 'Filter',
+      type: 'n8n-nodes-base.code',
+      typeVersion: 2,
+      position: [450, 300],
+      parameters: { jsCode: 'return items.map(i => ({ json: { contactEmail: i.json.email, facilityName: i.json.name } }))' },
+    })
+    w.nodes.push({
+      id: 'aaaa0036-aaaa-4aaa-aaaa-aaaaaaaaaaab',
+      name: 'Send Email',
+      type: 'n8n-nodes-base.gmail',
+      typeVersion: 2,
+      position: [650, 300],
+      parameters: { operation: 'send', to: '={{ $json.contact_email }}', subject: 'Hello', sent_at: '={{ $now }}' },
+      credentials: { gmailOAuth2: { id: 'cred-1', name: 'Gmail' } },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Filter', type: 'main', index: 0 }]] }
+    w.connections['Filter'] = { main: [[{ node: 'Send Email', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 36)).toBe(true)
+    const issue = result.issues.find((i) => i.rule === 36)!
+    expect(issue.message).toContain('contact_email')
+    expect(issue.message).toContain('contactEmail')
+  })
+
+  it('rule 36: no warning when field names match exactly (camelCase both sides)', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0036-aaaa-4aaa-aaaa-aaaaaaaaaaac',
+      name: 'Filter',
+      type: 'n8n-nodes-base.code',
+      typeVersion: 2,
+      position: [450, 300],
+      parameters: { jsCode: 'return items.map(i => ({ json: { contactEmail: i.json.email } }))' },
+    })
+    w.nodes.push({
+      id: 'aaaa0036-aaaa-4aaa-aaaa-aaaaaaaaaaad',
+      name: 'Send Email',
+      type: 'n8n-nodes-base.gmail',
+      typeVersion: 2,
+      position: [650, 300],
+      parameters: { operation: 'send', to: '={{ $json.contactEmail }}', subject: 'Hello', sent_at: '={{ $now }}' },
+      credentials: { gmailOAuth2: { id: 'cred-1', name: 'Gmail' } },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Filter', type: 'main', index: 0 }]] }
+    w.connections['Filter'] = { main: [[{ node: 'Send Email', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 36)).toBe(false)
+  })
+
+  it('rule 36: no warning when code node is not upstream of the referencing node', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0036-aaaa-4aaa-aaaa-aaaaaaaaaaae',
+      name: 'Unrelated Code',
+      type: 'n8n-nodes-base.code',
+      typeVersion: 2,
+      position: [450, 500],
+      parameters: { jsCode: 'return items.map(i => ({ json: { contactEmail: i.json.email } }))' },
+    })
+    // Gmail node is NOT downstream of the code node
+    w.nodes.push({
+      id: 'aaaa0036-aaaa-4aaa-aaaa-aaaaaaaaaaaf',
+      name: 'Send Email',
+      type: 'n8n-nodes-base.gmail',
+      typeVersion: 2,
+      position: [650, 300],
+      parameters: { operation: 'send', to: '={{ $json.contact_email }}', subject: 'Hello', sent_at: '={{ $now }}' },
+      credentials: { gmailOAuth2: { id: 'cred-1', name: 'Gmail' } },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Send Email', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 36)).toBe(false)
+  })
+
+  // Rule 37: new Date() on external data without parseDate helper
+  it('rule 37: warns when code calls new Date() on row data without a parseDate helper', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0037-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      name: 'Filter Dates',
+      type: 'n8n-nodes-base.code',
+      typeVersion: 2,
+      position: [450, 300],
+      parameters: {
+        jsCode: [
+          'const results = [];',
+          'for (const item of items) {',
+          '  const d = new Date(row.last_service_date);',
+          '  results.push({ json: { days: Math.floor((Date.now() - d) / 86400000) } });',
+          '}',
+          'return results;',
+        ].join('\n'),
+      },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Filter Dates', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 37)).toBe(true)
+  })
+
+  it('rule 37: no warning when parseDate helper is present', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0037-aaaa-4aaa-aaaa-aaaaaaaaaaab',
+      name: 'Filter Dates',
+      type: 'n8n-nodes-base.code',
+      typeVersion: 2,
+      position: [450, 300],
+      parameters: {
+        jsCode: [
+          'function parseDate(s) { const [m,d,y] = s.split("-"); return new Date(2000+parseInt(y), parseInt(m)-1, parseInt(d)); }',
+          'for (const item of items) {',
+          '  const d = new Date(row.last_service_date);',
+          '}',
+          'return [];',
+        ].join('\n'),
+      },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Filter Dates', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 37)).toBe(false)
+  })
+
+  it('rule 37: no warning when code does not read dates from external data', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0037-aaaa-4aaa-aaaa-aaaaaaaaaaac',
+      name: 'Run Code',
+      type: 'n8n-nodes-base.code',
+      typeVersion: 2,
+      position: [450, 300],
+      parameters: { jsCode: 'const d = new Date(); return [{ json: { ts: d.toISOString() } }];' },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Run Code', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 37)).toBe(false)
+  })
+
+  // Rule 38: parallel AI HTTP calls merging into same node
+  it('rule 38: warns when 2 AI HTTP nodes connect to same downstream node', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0038-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      name: 'Generate Post 1',
+      type: 'n8n-nodes-base.httpRequest',
+      typeVersion: 4.2,
+      position: [450, 200],
+      parameters: { url: 'https://api.anthropic.com/v1/messages', method: 'POST' },
+    })
+    w.nodes.push({
+      id: 'aaaa0038-aaaa-4aaa-aaaa-aaaaaaaaaaab',
+      name: 'Generate Post 2',
+      type: 'n8n-nodes-base.httpRequest',
+      typeVersion: 4.2,
+      position: [450, 400],
+      parameters: { url: 'https://api.anthropic.com/v1/messages', method: 'POST' },
+    })
+    w.nodes.push({
+      id: 'aaaa0038-aaaa-4aaa-aaaa-aaaaaaaaaaac',
+      name: 'Combine Posts',
+      type: 'n8n-nodes-base.code',
+      typeVersion: 2,
+      position: [700, 300],
+      parameters: { jsCode: 'return items;' },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Generate Post 1', type: 'main', index: 0 }, { node: 'Generate Post 2', type: 'main', index: 0 }]] }
+    w.connections['Generate Post 1'] = { main: [[{ node: 'Combine Posts', type: 'main', index: 0 }]] }
+    w.connections['Generate Post 2'] = { main: [[{ node: 'Combine Posts', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 38)).toBe(true)
+    expect(result.issues.find((i) => i.rule === 38)!.message).toContain('Combine Posts')
+  })
+
+  it('rule 38: no warning when AI HTTP nodes are chained sequentially', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0038-aaaa-4aaa-aaaa-aaaaaaaaaaad',
+      name: 'Generate Post 1',
+      type: 'n8n-nodes-base.httpRequest',
+      typeVersion: 4.2,
+      position: [450, 300],
+      parameters: { url: 'https://api.anthropic.com/v1/messages', method: 'POST' },
+    })
+    w.nodes.push({
+      id: 'aaaa0038-aaaa-4aaa-aaaa-aaaaaaaaaaae',
+      name: 'Generate Post 2',
+      type: 'n8n-nodes-base.httpRequest',
+      typeVersion: 4.2,
+      position: [650, 300],
+      parameters: { url: 'https://api.anthropic.com/v1/messages', method: 'POST' },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Generate Post 1', type: 'main', index: 0 }]] }
+    w.connections['Generate Post 1'] = { main: [[{ node: 'Generate Post 2', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 38)).toBe(false)
+  })
+
+  it('rule 38: no warning when only one AI HTTP node exists', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0038-aaaa-4aaa-aaaa-aaaaaaaaaaaf',
+      name: 'Call AI',
+      type: 'n8n-nodes-base.httpRequest',
+      typeVersion: 4.2,
+      position: [450, 300],
+      parameters: { url: 'https://api.anthropic.com/v1/messages', method: 'POST' },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Call AI', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 38)).toBe(false)
+  })
+
+  // Rule 39: deprecated Claude model names
+  it('rule 39: warns on deprecated Claude model claude-3-5-sonnet-20241022', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0039-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      name: 'Call Claude',
+      type: 'n8n-nodes-base.httpRequest',
+      typeVersion: 4.2,
+      position: [450, 300],
+      parameters: { url: 'https://api.anthropic.com/v1/messages', method: 'POST', body: JSON.stringify({ model: 'claude-3-5-sonnet-20241022' }) },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Call Claude', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 39)).toBe(true)
+    expect(result.issues.find((i) => i.rule === 39)!.message).toContain('claude-3-5-sonnet-20241022')
+  })
+
+  it('rule 39: warns on deprecated model claude-3-opus-20240229', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0039-aaaa-4aaa-aaaa-aaaaaaaaaaab',
+      name: 'Call Claude',
+      type: 'n8n-nodes-base.httpRequest',
+      typeVersion: 4.2,
+      position: [450, 300],
+      parameters: { url: 'https://api.anthropic.com/v1/messages', method: 'POST', body: { model: 'claude-3-opus-20240229' } },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Call Claude', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 39)).toBe(true)
+  })
+
+  it('rule 39: no warning when current model name is used', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0039-aaaa-4aaa-aaaa-aaaaaaaaaaac',
+      name: 'Call Claude',
+      type: 'n8n-nodes-base.httpRequest',
+      typeVersion: 4.2,
+      position: [450, 300],
+      parameters: { url: 'https://api.anthropic.com/v1/messages', method: 'POST', body: { model: 'claude-sonnet-4-6' } },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Call Claude', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 39)).toBe(false)
+  })
+
+  it('rule 39: no warning when no Claude model referenced', () => {
+    const result = validator.validate(baseWorkflow())
+    expect(result.issues.some((i) => i.rule === 39)).toBe(false)
+  })
+
+  // ── Rule 40: __rl resource locator wrong shape ──────────────────────────────
+
+  it('rule 40: warns when googleSheets documentId is a plain string', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0040-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      name: 'Read Sheet',
+      type: 'n8n-nodes-base.googleSheets',
+      typeVersion: 4.5,
+      position: [450, 300],
+      parameters: { documentId: '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms', operation: 'read' },
+      credentials: { googleSheetsOAuth2Api: { id: 'cred-1', name: 'Google Sheets' } },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Read Sheet', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 40)).toBe(true)
+  })
+
+  it('rule 40: warns when googleSheets documentId __rl has empty value', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0040-aaaa-4aaa-aaaa-aaaaaaaaaaab',
+      name: 'Read Sheet',
+      type: 'n8n-nodes-base.googleSheets',
+      typeVersion: 4.5,
+      position: [450, 300],
+      parameters: { documentId: { __rl: true, mode: 'id', value: '' }, operation: 'read' },
+      credentials: { googleSheetsOAuth2Api: { id: 'cred-1', name: 'Google Sheets' } },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Read Sheet', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 40)).toBe(true)
+  })
+
+  it('rule 40: no warning when googleSheets documentId uses correct __rl format', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0040-aaaa-4aaa-aaaa-aaaaaaaaaaac',
+      name: 'Read Sheet',
+      type: 'n8n-nodes-base.googleSheets',
+      typeVersion: 4.5,
+      position: [450, 300],
+      parameters: {
+        documentId: { __rl: true, mode: 'id', value: '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms' },
+        sheetName: { __rl: true, mode: 'name', value: 'Sheet1' },
+        operation: 'read',
+      },
+      credentials: { googleSheetsOAuth2Api: { id: 'cred-1', name: 'Google Sheets' } },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Read Sheet', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 40)).toBe(false)
+  })
+
+  // ── Rule 41: HTTP Request body ignored when sendBody not true ──────────────
+
+  it('rule 41: warns when httpRequest has bodyParameters but sendBody is false', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0041-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      name: 'POST Data',
+      type: 'n8n-nodes-base.httpRequest',
+      typeVersion: 4.2,
+      position: [450, 300],
+      parameters: {
+        url: 'https://api.myservice.com/data',
+        method: 'POST',
+        sendBody: false,
+        bodyParameters: { parameters: [{ name: 'key', value: 'val' }] },
+      },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'POST Data', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 41)).toBe(true)
+  })
+
+  it('rule 41: no warning when sendBody is true', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0041-aaaa-4aaa-aaaa-aaaaaaaaaaab',
+      name: 'POST Data',
+      type: 'n8n-nodes-base.httpRequest',
+      typeVersion: 4.2,
+      position: [450, 300],
+      parameters: {
+        url: 'https://api.myservice.com/data',
+        method: 'POST',
+        sendBody: true,
+        bodyParameters: { parameters: [{ name: 'key', value: 'val' }] },
+      },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'POST Data', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 41)).toBe(false)
+  })
+
+  it('rule 41: no warning when no body content is defined', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0041-aaaa-4aaa-aaaa-aaaaaaaaaaac',
+      name: 'GET Data',
+      type: 'n8n-nodes-base.httpRequest',
+      typeVersion: 4.2,
+      position: [450, 300],
+      parameters: { url: 'https://api.myservice.com/data', method: 'GET' },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'GET Data', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 41)).toBe(false)
+  })
+
+  // ── Rule 42: SplitInBatches done branch loops back ─────────────────────────
+
+  it('rule 42: warns when splitInBatches output 0 loops back to itself', () => {
+    const w = baseWorkflow()
+    w.nodes.push(
+      { id: 'aaaa0042-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Split', type: 'n8n-nodes-base.splitInBatches', typeVersion: 3, position: [450, 300], parameters: { batchSize: 10 } },
+      { id: 'aaaa0042-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Process', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [670, 300], parameters: {} },
+    )
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Split', type: 'main', index: 0 }]] }
+    // output 0 (done) → Process → Split (loop) — this is the REVERSED / wrong wiring
+    w.connections['Split'] = { main: [[{ node: 'Process', type: 'main', index: 0 }], []] }
+    w.connections['Process'] = { main: [[{ node: 'Split', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 42)).toBe(true)
+  })
+
+  it('rule 42: no warning when splitInBatches output 1 loops back (correct wiring)', () => {
+    const w = baseWorkflow()
+    w.nodes.push(
+      { id: 'aaaa0042-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Split', type: 'n8n-nodes-base.splitInBatches', typeVersion: 3, position: [450, 300], parameters: { batchSize: 10 } },
+      { id: 'aaaa0042-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'Process', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [670, 300], parameters: {} },
+      { id: 'aaaa0042-aaaa-4aaa-aaaa-aaaaaaaaaaae', name: 'Done', type: 'n8n-nodes-base.noOp', typeVersion: 1, position: [670, 150], parameters: {} },
+    )
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Split', type: 'main', index: 0 }]] }
+    // output 0 (done) → Done node; output 1 (loop) → Process → Split (correct)
+    w.connections['Split'] = { main: [[{ node: 'Done', type: 'main', index: 0 }], [{ node: 'Process', type: 'main', index: 0 }]] }
+    w.connections['Process'] = { main: [[{ node: 'Split', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 42)).toBe(false)
+  })
+
+  // ── Rule 43: IF node string operator instead of object ─────────────────────
+
+  it('rule 43: warns when IF node condition has string operator in typeVersion 2+', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0043-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      name: 'Check Status',
+      type: 'n8n-nodes-base.if',
+      typeVersion: 2.2,
+      position: [450, 300],
+      parameters: {
+        conditions: {
+          combinator: 'and',
+          conditions: [{ id: 'c1', leftValue: '={{ $json.status }}', rightValue: 'active', operator: 'equals' }],
+        },
+      },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Check Status', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 43)).toBe(true)
+  })
+
+  it('rule 43: no warning when IF node condition uses correct operator object', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0043-aaaa-4aaa-aaaa-aaaaaaaaaaab',
+      name: 'Check Status',
+      type: 'n8n-nodes-base.if',
+      typeVersion: 2.2,
+      position: [450, 300],
+      parameters: {
+        conditions: {
+          combinator: 'and',
+          conditions: [{ id: 'c1', leftValue: '={{ $json.status }}', rightValue: 'active', operator: { type: 'string', operation: 'equals' } }],
+        },
+      },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Check Status', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 43)).toBe(false)
+  })
+
+  it('rule 43: no warning for IF node typeVersion 1 (string operator OK in v1)', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0043-aaaa-4aaa-aaaa-aaaaaaaaaaac',
+      name: 'Check',
+      type: 'n8n-nodes-base.if',
+      typeVersion: 1,
+      position: [450, 300],
+      parameters: {
+        conditions: {
+          conditions: [{ leftValue: '={{ $json.status }}', rightValue: 'active', operator: 'equals' }],
+        },
+      },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Check', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 43)).toBe(false)
+  })
+
+  // ── Rule 44: Google Sheets defineBelow with empty fieldsUi ─────────────────
+
+  it('rule 44: warns when googleSheets append has defineBelow with empty fieldsUi', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0044-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      name: 'Append Row',
+      type: 'n8n-nodes-base.googleSheets',
+      typeVersion: 4.5,
+      position: [450, 300],
+      parameters: {
+        operation: 'append',
+        columnMappingMode: 'defineBelow',
+        fieldsUi: { values: [] },
+        documentId: { __rl: true, mode: 'id', value: 'spreadsheet-id' },
+        sheetName: { __rl: true, mode: 'name', value: 'Sheet1' },
+      },
+      credentials: { googleSheetsOAuth2Api: { id: 'cred-1', name: 'Google Sheets' } },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Append Row', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 44)).toBe(true)
+  })
+
+  it('rule 44: no warning when googleSheets append uses autoMapInputData', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0044-aaaa-4aaa-aaaa-aaaaaaaaaaab',
+      name: 'Append Row',
+      type: 'n8n-nodes-base.googleSheets',
+      typeVersion: 4.5,
+      position: [450, 300],
+      parameters: {
+        operation: 'append',
+        columnMappingMode: 'autoMapInputData',
+        documentId: { __rl: true, mode: 'id', value: 'spreadsheet-id' },
+        sheetName: { __rl: true, mode: 'name', value: 'Sheet1' },
+      },
+      credentials: { googleSheetsOAuth2Api: { id: 'cred-1', name: 'Google Sheets' } },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Append Row', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 44)).toBe(false)
+  })
+
+  it('rule 44: no warning for read operations regardless of columnMappingMode', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0044-aaaa-4aaa-aaaa-aaaaaaaaaaac',
+      name: 'Read Sheet',
+      type: 'n8n-nodes-base.googleSheets',
+      typeVersion: 4.5,
+      position: [450, 300],
+      parameters: {
+        operation: 'read',
+        columnMappingMode: 'defineBelow',
+        fieldsUi: { values: [] },
+        documentId: { __rl: true, mode: 'id', value: 'spreadsheet-id' },
+        sheetName: { __rl: true, mode: 'name', value: 'Sheet1' },
+      },
+      credentials: { googleSheetsOAuth2Api: { id: 'cred-1', name: 'Google Sheets' } },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Read Sheet', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 44)).toBe(false)
+  })
+
+  // ── Rule 45: AI Agent missing language model sub-node ──────────────────────
+
+  it('rule 45: errors when AI Agent has no ai_languageModel connection', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0045-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      name: 'AI Agent',
+      type: '@n8n/n8n-nodes-langchain.agent',
+      typeVersion: 1.9,
+      position: [450, 300],
+      parameters: { promptType: 'define', text: 'Summarize this' },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'AI Agent', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 45 && i.severity === 'error')).toBe(true)
+  })
+
+  it('rule 45: no error when AI Agent has ai_languageModel sub-node connected', () => {
+    const w = baseWorkflow()
+    w.nodes.push(
+      {
+        id: 'aaaa0045-aaaa-4aaa-aaaa-aaaaaaaaaaab',
+        name: 'AI Agent',
+        type: '@n8n/n8n-nodes-langchain.agent',
+        typeVersion: 1.9,
+        position: [450, 300],
+        parameters: { promptType: 'define', text: 'Summarize' },
+      },
+      {
+        id: 'aaaa0045-aaaa-4aaa-aaaa-aaaaaaaaaaac',
+        name: 'Claude Model',
+        type: '@n8n/n8n-nodes-langchain.lmChatAnthropic',
+        typeVersion: 1.3,
+        position: [450, 500],
+        parameters: { model: 'claude-sonnet-4-6' },
+        credentials: { anthropicApi: { id: 'cred-1', name: 'Anthropic' } },
+      },
+    )
+    w.connections['Manual Trigger'] = { main: [[{ node: 'AI Agent', type: 'main', index: 0 }]] }
+    w.connections['Claude Model'] = { ai_languageModel: [[{ node: 'AI Agent', type: 'ai_languageModel', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 45)).toBe(false)
+  })
+
+  it('rule 45: no error for non-agent langchain nodes', () => {
+    const result = validator.validate(baseWorkflow())
+    expect(result.issues.some((i) => i.rule === 45)).toBe(false)
+  })
+
+  // ── Rule 46: hardcoded API key in HTTP Request header ─────────────────────
+
+  it('rule 46: warns when Authorization header has hardcoded Bearer token', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0046-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      name: 'Call API',
+      type: 'n8n-nodes-base.httpRequest',
+      typeVersion: 4.2,
+      position: [450, 300],
+      parameters: {
+        url: 'https://api.example.com/data',
+        method: 'GET',
+        sendHeaders: true,
+        headerParameters: { parameters: [{ name: 'Authorization', value: 'Bearer sk-abc123def456ghi789jkl012mno345pqr678' }] },
+      },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Call API', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 46)).toBe(true)
+  })
+
+  it('rule 46: no warning when Authorization header uses an expression', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0046-aaaa-4aaa-aaaa-aaaaaaaaaaab',
+      name: 'Call API',
+      type: 'n8n-nodes-base.httpRequest',
+      typeVersion: 4.2,
+      position: [450, 300],
+      parameters: {
+        url: 'https://api.example.com/data',
+        method: 'GET',
+        sendHeaders: true,
+        headerParameters: { parameters: [{ name: 'Authorization', value: '={{ "Bearer " + $credential.apiKey }}' }] },
+      },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Call API', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 46)).toBe(false)
+  })
+
+  it('rule 46: no warning when sendHeaders is false', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0046-aaaa-4aaa-aaaa-aaaaaaaaaaac',
+      name: 'Call API',
+      type: 'n8n-nodes-base.httpRequest',
+      typeVersion: 4.2,
+      position: [450, 300],
+      parameters: { url: 'https://api.example.com/data', method: 'GET', sendHeaders: false },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Call API', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 46)).toBe(false)
+  })
+
+  // ── Rule 47: Switch node with unconnected output routes ────────────────────
+
+  it('rule 47: warns when switch route has no downstream connection', () => {
+    const w = baseWorkflow()
+    w.nodes.push(
+      {
+        id: 'aaaa0047-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+        name: 'Route',
+        type: 'n8n-nodes-base.switch',
+        typeVersion: 3.2,
+        position: [450, 300],
+        parameters: { rules: { values: [{ value: 'high' }, { value: 'low' }] } },
+      },
+      {
+        id: 'aaaa0047-aaaa-4aaa-aaaa-aaaaaaaaaaab',
+        name: 'High Path',
+        type: 'n8n-nodes-base.noOp',
+        typeVersion: 1,
+        position: [670, 200],
+        parameters: {},
+      },
+    )
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Route', type: 'main', index: 0 }]] }
+    // Only connect route 0 — route 1 is unconnected
+    w.connections['Route'] = { main: [[{ node: 'High Path', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 47)).toBe(true)
+  })
+
+  it('rule 47: no warning when all switch routes are connected', () => {
+    const w = baseWorkflow()
+    w.nodes.push(
+      {
+        id: 'aaaa0047-aaaa-4aaa-aaaa-aaaaaaaaaaac',
+        name: 'Route',
+        type: 'n8n-nodes-base.switch',
+        typeVersion: 3.2,
+        position: [450, 300],
+        parameters: { rules: { values: [{ value: 'high' }, { value: 'low' }] } },
+      },
+      { id: 'aaaa0047-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'High', type: 'n8n-nodes-base.noOp', typeVersion: 1, position: [670, 200], parameters: {} },
+      { id: 'aaaa0047-aaaa-4aaa-aaaa-aaaaaaaaaaae', name: 'Low', type: 'n8n-nodes-base.noOp', typeVersion: 1, position: [670, 400], parameters: {} },
+    )
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Route', type: 'main', index: 0 }]] }
+    w.connections['Route'] = { main: [[{ node: 'High', type: 'main', index: 0 }], [{ node: 'Low', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 47)).toBe(false)
+  })
+
+  it('rule 47: no warning for non-switch nodes', () => {
+    const result = validator.validate(baseWorkflow())
+    expect(result.issues.some((i) => i.rule === 47)).toBe(false)
+  })
+
+  // ── Rule 48: deprecated OpenAI model names ─────────────────────────────────
+
+  it('rule 48: warns on deprecated gpt-3.5-turbo model', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0048-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      name: 'OpenAI Chat',
+      type: '@n8n/n8n-nodes-langchain.lmChatOpenAi',
+      typeVersion: 1.7,
+      position: [450, 300],
+      parameters: { model: 'gpt-3.5-turbo' },
+      credentials: { openAiApi: { id: 'cred-1', name: 'OpenAI' } },
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 48)).toBe(true)
+  })
+
+  it('rule 48: no warning when current gpt-4o model is used', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0048-aaaa-4aaa-aaaa-aaaaaaaaaaab',
+      name: 'OpenAI Chat',
+      type: '@n8n/n8n-nodes-langchain.lmChatOpenAi',
+      typeVersion: 1.7,
+      position: [450, 300],
+      parameters: { model: 'gpt-4o-mini' },
+      credentials: { openAiApi: { id: 'cred-1', name: 'OpenAI' } },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'OpenAI Chat', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 48)).toBe(false)
+  })
+
+  it('rule 48: no warning when no OpenAI model referenced', () => {
+    const result = validator.validate(baseWorkflow())
+    expect(result.issues.some((i) => i.rule === 48)).toBe(false)
+  })
+
+  // ── Rule 49: executeWorkflow missing workflowId ────────────────────────────
+
+  it('rule 49: warns when executeWorkflow has no workflowId', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0049-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      name: 'Run Sub',
+      type: 'n8n-nodes-base.executeWorkflow',
+      typeVersion: 1.2,
+      position: [450, 300],
+      parameters: {},
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Run Sub', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 49)).toBe(true)
+  })
+
+  it('rule 49: no warning when executeWorkflow has a workflowId', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0049-aaaa-4aaa-aaaa-aaaaaaaaaaab',
+      name: 'Run Sub',
+      type: 'n8n-nodes-base.executeWorkflow',
+      typeVersion: 1.2,
+      position: [450, 300],
+      parameters: { workflowId: '12345' },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Run Sub', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 49)).toBe(false)
+  })
+
+  it('rule 49: no warning for other node types', () => {
+    const result = validator.validate(baseWorkflow())
+    expect(result.issues.some((i) => i.rule === 49)).toBe(false)
+  })
+
+  // ── Rule 50: AI Agent promptType auto with no chatTrigger ──────────────────
+
+  it('rule 50: warns when AI Agent has promptType auto but trigger is scheduleTrigger', () => {
+    const w: N8nWorkflow = {
+      name: 'Daily Summarize',
+      nodes: [
+        { id: 'aaaa0050-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Schedule', type: 'n8n-nodes-base.scheduleTrigger', typeVersion: 1.2, position: [250, 300], parameters: { rule: { interval: [{ field: 'days', daysInterval: 1 }] } } },
+        { id: 'aaaa0050-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'AI Agent', type: '@n8n/n8n-nodes-langchain.agent', typeVersion: 1.9, position: [470, 300], parameters: { promptType: 'auto' } },
+        { id: 'aaaa0050-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Claude', type: '@n8n/n8n-nodes-langchain.lmChatAnthropic', typeVersion: 1.3, position: [470, 500], parameters: { model: 'claude-sonnet-4-6' }, credentials: { anthropicApi: { id: 'c', name: 'C' } } },
+      ],
+      connections: {
+        Schedule: { main: [[{ node: 'AI Agent', type: 'main', index: 0 }]] },
+        Claude: { ai_languageModel: [[{ node: 'AI Agent', type: 'ai_languageModel', index: 0 }]] },
+      },
+      settings: {},
+    }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 50)).toBe(true)
+  })
+
+  it('rule 50: no warning when AI Agent uses promptType define', () => {
+    const w: N8nWorkflow = {
+      name: 'Scheduled Agent',
+      nodes: [
+        { id: 'aaaa0050-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'Schedule', type: 'n8n-nodes-base.scheduleTrigger', typeVersion: 1.2, position: [250, 300], parameters: { rule: { interval: [{ field: 'days' }] } } },
+        { id: 'aaaa0050-aaaa-4aaa-aaaa-aaaaaaaaaaae', name: 'AI Agent', type: '@n8n/n8n-nodes-langchain.agent', typeVersion: 1.9, position: [470, 300], parameters: { promptType: 'define', text: 'Summarize emails' } },
+        { id: 'aaaa0050-aaaa-4aaa-aaaa-aaaaaaaaaaaf', name: 'Claude', type: '@n8n/n8n-nodes-langchain.lmChatAnthropic', typeVersion: 1.3, position: [470, 500], parameters: { model: 'claude-sonnet-4-6' }, credentials: { anthropicApi: { id: 'c', name: 'C' } } },
+      ],
+      connections: {
+        Schedule: { main: [[{ node: 'AI Agent', type: 'main', index: 0 }]] },
+        Claude: { ai_languageModel: [[{ node: 'AI Agent', type: 'ai_languageModel', index: 0 }]] },
+      },
+      settings: {},
+    }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 50)).toBe(false)
+  })
+
+  it('rule 50: no warning when chatTrigger is present', () => {
+    const w: N8nWorkflow = {
+      name: 'Chat Agent',
+      nodes: [
+        { id: 'aaaa0050-aaaa-4aaa-aaaa-aaaaaaaaaaag', name: 'Chat', type: '@n8n/n8n-nodes-langchain.chatTrigger', typeVersion: 1.1, position: [250, 300], parameters: {} },
+        { id: 'aaaa0050-aaaa-4aaa-aaaa-aaaaaaaaaaah', name: 'AI Agent', type: '@n8n/n8n-nodes-langchain.agent', typeVersion: 1.9, position: [470, 300], parameters: { promptType: 'auto' } },
+        { id: 'aaaa0050-aaaa-4aaa-aaaa-aaaaaaaaaaai', name: 'Claude', type: '@n8n/n8n-nodes-langchain.lmChatAnthropic', typeVersion: 1.3, position: [470, 500], parameters: { model: 'claude-sonnet-4-6' }, credentials: { anthropicApi: { id: 'c', name: 'C' } } },
+      ],
+      connections: {
+        Chat: { main: [[{ node: 'AI Agent', type: 'main', index: 0 }]] },
+        Claude: { ai_languageModel: [[{ node: 'AI Agent', type: 'ai_languageModel', index: 0 }]] },
+      },
+      settings: {},
+    }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 50)).toBe(false)
+  })
+
+  // ── Rule 51: Wait webhook mode with no resumeUrl ───────────────────────────
+
+  it('rule 51: warns when Wait node is in webhook mode with nothing sending resumeUrl', () => {
+    const w = baseWorkflow()
+    w.nodes.push(
+      { id: 'aaaa0051-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Wait', type: 'n8n-nodes-base.wait', typeVersion: 1.1, position: [450, 300], parameters: { resume: 'webhook' } },
+      { id: 'aaaa0051-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Continue', type: 'n8n-nodes-base.noOp', typeVersion: 1, position: [670, 300], parameters: {} },
+    )
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Wait', type: 'main', index: 0 }]] }
+    w.connections['Wait'] = { main: [[{ node: 'Continue', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 51)).toBe(true)
+  })
+
+  it('rule 51: no warning when workflow contains resumeUrl reference', () => {
+    const w = baseWorkflow()
+    w.nodes.push(
+      { id: 'aaaa0051-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Wait', type: 'n8n-nodes-base.wait', typeVersion: 1.1, position: [450, 300], parameters: { resume: 'webhook' } },
+      { id: 'aaaa0051-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'Send Link', type: 'n8n-nodes-base.gmail', typeVersion: 2.1, position: [250, 450], parameters: { operation: 'send', to: 'boss@example.com', message: 'Approve: ={{ $execution.resumeUrl }}' }, credentials: { gmailOAuth2: { id: 'c', name: 'G' } } },
+    )
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Send Link', type: 'main', index: 0 }], [{ node: 'Wait', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 51)).toBe(false)
+  })
+
+  it('rule 51: no warning for Wait node in timeInterval mode', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0051-aaaa-4aaa-aaaa-aaaaaaaaaaae',
+      name: 'Wait 3 Days',
+      type: 'n8n-nodes-base.wait',
+      typeVersion: 1.1,
+      position: [450, 300],
+      parameters: { resume: 'timeInterval', waitAmount: 3, waitUnit: 'days' },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Wait 3 Days', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 51)).toBe(false)
+  })
+
+  // ── Rule 52: SQL injection risk in Code node ───────────────────────────────
+
+  it('rule 52: warns on template literal SQL with $json field', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0052-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      name: 'Query DB',
+      type: 'n8n-nodes-base.code',
+      typeVersion: 2,
+      position: [450, 300],
+      parameters: { jsCode: "const q = `SELECT * FROM users WHERE email = '${$json.email}'`; return [{ json: { q } }]" },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Query DB', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 52)).toBe(true)
+  })
+
+  it('rule 52: no warning when parameterized query is used', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0052-aaaa-4aaa-aaaa-aaaaaaaaaaab',
+      name: 'Query DB',
+      type: 'n8n-nodes-base.code',
+      typeVersion: 2,
+      position: [450, 300],
+      parameters: { jsCode: "const q = { sql: 'SELECT * FROM users WHERE email = $1', values: [$json.email] }; return [{ json: q }]" },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Query DB', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 52)).toBe(false)
+  })
+
+  it('rule 52: no warning when code node has no SQL', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0052-aaaa-4aaa-aaaa-aaaaaaaaaaac',
+      name: 'Transform',
+      type: 'n8n-nodes-base.code',
+      typeVersion: 2,
+      position: [450, 300],
+      parameters: { jsCode: 'return items.map(i => ({ json: { name: i.json.name.toUpperCase() } }))' },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Transform', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 52)).toBe(false)
+  })
+
+  // ── Rule 53: Merge mode vs input count ────────────────────────────────────
+
+  it('rule 53: warns when Merge chooseBranch has only 1 incoming connection', () => {
+    const w = baseWorkflow()
+    w.nodes.push(
+      { id: 'aaaa0053-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Merge', type: 'n8n-nodes-base.merge', typeVersion: 3, position: [670, 300], parameters: { mode: 'chooseBranch' } },
+    )
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Merge', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 53)).toBe(true)
+  })
+
+  it('rule 53: no warning when Merge chooseBranch has 2 incoming connections', () => {
+    const w = baseWorkflow()
+    w.nodes.push(
+      { id: 'aaaa0053-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Branch A', type: 'n8n-nodes-base.noOp', typeVersion: 1, position: [450, 200], parameters: {} },
+      { id: 'aaaa0053-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Branch B', type: 'n8n-nodes-base.noOp', typeVersion: 1, position: [450, 400], parameters: {} },
+      { id: 'aaaa0053-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'Merge', type: 'n8n-nodes-base.merge', typeVersion: 3, position: [670, 300], parameters: { mode: 'chooseBranch' } },
+    )
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Branch A', type: 'main', index: 0 }], [{ node: 'Branch B', type: 'main', index: 0 }]] }
+    w.connections['Branch A'] = { main: [[{ node: 'Merge', type: 'main', index: 0 }]] }
+    w.connections['Branch B'] = { main: [[{ node: 'Merge', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 53)).toBe(false)
+  })
+
+  it('rule 53: no warning for Merge in append mode with 1 input', () => {
+    const w = baseWorkflow()
+    w.nodes.push(
+      { id: 'aaaa0053-aaaa-4aaa-aaaa-aaaaaaaaaaae', name: 'Merge', type: 'n8n-nodes-base.merge', typeVersion: 3, position: [670, 300], parameters: { mode: 'append' } },
+    )
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Merge', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 53)).toBe(false)
+  })
+
+  // ── Rule 54: HTTP Request to protected API without auth ────────────────────
+
+  it('rule 54: warns when calling Stripe API with no credentials', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0054-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      name: 'Stripe Call',
+      type: 'n8n-nodes-base.httpRequest',
+      typeVersion: 4.2,
+      position: [450, 300],
+      parameters: { url: 'https://api.stripe.com/v1/charges', method: 'GET' },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Stripe Call', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 54)).toBe(true)
+  })
+
+  it('rule 54: no warning when Stripe call has credentials', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0054-aaaa-4aaa-aaaa-aaaaaaaaaaab',
+      name: 'Stripe Call',
+      type: 'n8n-nodes-base.httpRequest',
+      typeVersion: 4.2,
+      position: [450, 300],
+      parameters: { url: 'https://api.stripe.com/v1/charges', method: 'GET' },
+      credentials: { stripeApi: { id: 'cred-1', name: 'Stripe' } },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Stripe Call', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 54)).toBe(false)
+  })
+
+  it('rule 54: no warning for unknown/unlisted API domains', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0054-aaaa-4aaa-aaaa-aaaaaaaaaaac',
+      name: 'Custom API',
+      type: 'n8n-nodes-base.httpRequest',
+      typeVersion: 4.2,
+      position: [450, 300],
+      parameters: { url: 'https://api.myownservice.com/data', method: 'GET' },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Custom API', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 54)).toBe(false)
+  })
+
+  // ── Rule 55: Google Sheets sheetName placeholder ───────────────────────────
+
+  it('rule 55: warns when sheetName is "Sheet1" placeholder with real documentId', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0055-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      name: 'Read Data',
+      type: 'n8n-nodes-base.googleSheets',
+      typeVersion: 4.5,
+      position: [450, 300],
+      parameters: {
+        operation: 'read',
+        documentId: { __rl: true, mode: 'id', value: '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms' },
+        sheetName: { __rl: true, mode: 'name', value: 'Sheet1' },
+      },
+      credentials: { googleSheetsOAuth2Api: { id: 'c', name: 'GS' } },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Read Data', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 55)).toBe(true)
+  })
+
+  it('rule 55: no warning when sheetName is a real tab name', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0055-aaaa-4aaa-aaaa-aaaaaaaaaaab',
+      name: 'Read Data',
+      type: 'n8n-nodes-base.googleSheets',
+      typeVersion: 4.5,
+      position: [450, 300],
+      parameters: {
+        operation: 'read',
+        documentId: { __rl: true, mode: 'id', value: '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms' },
+        sheetName: { __rl: true, mode: 'name', value: 'Customers' },
+      },
+      credentials: { googleSheetsOAuth2Api: { id: 'c', name: 'GS' } },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Read Data', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 55)).toBe(false)
+  })
+
+  // ── Rule 56: continueOnFail with no error check downstream ────────────────
+
+  it('rule 56: warns when continueOnFail node has no downstream error check', () => {
+    const w = baseWorkflow()
+    w.nodes.push(
+      { id: 'aaaa0056-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Call API', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], parameters: { url: 'https://api.example.com/data', onError: 'continueRegularOutput' } },
+      { id: 'aaaa0056-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Process', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [670, 300], parameters: { assignments: { assignments: [{ id: 'a1', name: 'status', value: 'ok', type: 'string' }] } } },
+    )
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Call API', type: 'main', index: 0 }]] }
+    w.connections['Call API'] = { main: [[{ node: 'Process', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 56)).toBe(true)
+  })
+
+  it('rule 56: no warning when downstream node checks $json.error', () => {
+    const w = baseWorkflow()
+    w.nodes.push(
+      { id: 'aaaa0056-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Call API', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], parameters: { url: 'https://api.example.com/data', onError: 'continueRegularOutput' } },
+      { id: 'aaaa0056-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'Check Error', type: 'n8n-nodes-base.if', typeVersion: 2.2, position: [670, 300], parameters: { conditions: { combinator: 'and', conditions: [{ id: 'c1', leftValue: '={{ $json.error }}', rightValue: '', operator: { type: 'string', operation: 'exists' } }] } } },
+    )
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Call API', type: 'main', index: 0 }]] }
+    w.connections['Call API'] = { main: [[{ node: 'Check Error', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 56)).toBe(false)
+  })
+
+  // ── Rule 57: HTTP Request binary upload missing binaryPropertyName ─────────
+
+  it('rule 57: warns when binary upload has empty binaryPropertyName', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0057-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      name: 'Upload File',
+      type: 'n8n-nodes-base.httpRequest',
+      typeVersion: 4.2,
+      position: [450, 300],
+      parameters: { url: 'https://api.example.com/upload', method: 'POST', sendBody: true, contentType: 'binaryData', binaryPropertyName: '' },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Upload File', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 57)).toBe(true)
+  })
+
+  it('rule 57: no warning when binaryPropertyName is set', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0057-aaaa-4aaa-aaaa-aaaaaaaaaaab',
+      name: 'Upload File',
+      type: 'n8n-nodes-base.httpRequest',
+      typeVersion: 4.2,
+      position: [450, 300],
+      parameters: { url: 'https://api.example.com/upload', method: 'POST', sendBody: true, contentType: 'binaryData', binaryPropertyName: 'data' },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Upload File', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 57)).toBe(false)
+  })
+
+  it('rule 57: no warning when contentType is not binaryData', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0057-aaaa-4aaa-aaaa-aaaaaaaaaaac',
+      name: 'POST JSON',
+      type: 'n8n-nodes-base.httpRequest',
+      typeVersion: 4.2,
+      position: [450, 300],
+      parameters: { url: 'https://api.example.com/data', method: 'POST', sendBody: true, contentType: 'json' },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'POST JSON', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 57)).toBe(false)
+  })
+
+  // ── Rule 58: wrong credential type key ────────────────────────────────────
+
+  it('rule 58: warns when Gmail node uses wrong credential key', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0058-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      name: 'Send Email',
+      type: 'n8n-nodes-base.gmail',
+      typeVersion: 2.1,
+      position: [450, 300],
+      parameters: { operation: 'send', to: 'user@example.com' },
+      credentials: { gmailOAuth: { id: 'c', name: 'Gmail' } },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Send Email', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 58)).toBe(true)
+  })
+
+  it('rule 58: no warning when Gmail node uses correct credential key', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0058-aaaa-4aaa-aaaa-aaaaaaaaaaab',
+      name: 'Send Email',
+      type: 'n8n-nodes-base.gmail',
+      typeVersion: 2.1,
+      position: [450, 300],
+      parameters: { operation: 'send', to: 'user@example.com' },
+      credentials: { gmailOAuth2: { id: 'c', name: 'Gmail' } },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Send Email', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 58)).toBe(false)
+  })
+
+  it('rule 58: no warning for node types not in the expected credential map', () => {
+    const result = validator.validate(baseWorkflow())
+    expect(result.issues.some((i) => i.rule === 58)).toBe(false)
+  })
+
+  // Rule 59: webhook with no authentication
+  it('rule 59: warns when webhook has no authentication', () => {
+    const w = baseWorkflow()
+    w.nodes[0] = { id: 'aaaa0059-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Webhook', type: 'n8n-nodes-base.webhook', typeVersion: 2, position: [250, 300], parameters: { httpMethod: 'POST', path: 'my-hook', authentication: 'none' } }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 59)).toBe(true)
+  })
+
+  it('rule 59: warns when webhook authentication is missing', () => {
+    const w = baseWorkflow()
+    w.nodes[0] = { id: 'aaaa0059-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Webhook', type: 'n8n-nodes-base.webhook', typeVersion: 2, position: [250, 300], parameters: { httpMethod: 'POST', path: 'my-hook' } }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 59)).toBe(true)
+  })
+
+  it('rule 59: no warning when webhook uses headerAuth', () => {
+    const w = baseWorkflow()
+    w.nodes[0] = { id: 'aaaa0059-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Webhook', type: 'n8n-nodes-base.webhook', typeVersion: 2, position: [250, 300], parameters: { httpMethod: 'POST', path: 'my-hook', authentication: 'headerAuth' } }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 59)).toBe(false)
+  })
+
+  // Rule 60: schedule fires every minute
+  it('rule 60: warns when cronExpression minute field is *', () => {
+    const w = baseWorkflow()
+    w.nodes[0] = { id: 'aaaa0060-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Schedule', type: 'n8n-nodes-base.scheduleTrigger', typeVersion: 1.2, position: [250, 300], parameters: { rule: { interval: [{ field: 'cronExpression', expression: '* * * * *' }] } } }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 60)).toBe(true)
+  })
+
+  it('rule 60: warns when minutesInterval is 1', () => {
+    const w = baseWorkflow()
+    w.nodes[0] = { id: 'aaaa0060-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Schedule', type: 'n8n-nodes-base.scheduleTrigger', typeVersion: 1.2, position: [250, 300], parameters: { rule: { interval: [{ field: 'minutes', minutesInterval: 1 }] } } }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 60)).toBe(true)
+  })
+
+  it('rule 60: no warning for cron that fires hourly', () => {
+    const w = baseWorkflow()
+    w.nodes[0] = { id: 'aaaa0060-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Schedule', type: 'n8n-nodes-base.scheduleTrigger', typeVersion: 1.2, position: [250, 300], parameters: { rule: { interval: [{ field: 'cronExpression', expression: '0 9 * * 1-5' }] } } }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 60)).toBe(false)
+  })
+
+  // Rule 61: toolWorkflow missing description
+  it('rule 61: warns when toolWorkflow has no description', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0061-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Tool WF', type: '@n8n/n8n-nodes-langchain.toolWorkflow', typeVersion: 2, position: [450, 300], parameters: { workflowId: '123' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 61)).toBe(true)
+  })
+
+  it('rule 61: no warning when toolWorkflow has description', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0061-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Tool WF', type: '@n8n/n8n-nodes-langchain.toolWorkflow', typeVersion: 2, position: [450, 300], parameters: { workflowId: '123', description: 'Looks up stock prices' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 61)).toBe(false)
+  })
+
+  // Rule 62: memoryBufferWindow without chatTrigger and no sessionKey
+  it('rule 62: warns when memoryBufferWindow has no chatTrigger and no sessionKey', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0062-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Memory', type: '@n8n/n8n-nodes-langchain.memoryBufferWindow', typeVersion: 1.3, position: [450, 300], parameters: {} })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 62)).toBe(true)
+  })
+
+  it('rule 62: no warning when memoryBufferWindow has a sessionKey', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0062-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Memory', type: '@n8n/n8n-nodes-langchain.memoryBufferWindow', typeVersion: 1.3, position: [450, 300], parameters: { sessionKey: '={{ $json.sessionId }}' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 62)).toBe(false)
+  })
+
+  it('rule 62: no warning when chatTrigger is present', () => {
+    const w = baseWorkflow()
+    w.nodes[0] = { id: 'aaaa0062-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Chat', type: '@n8n/n8n-nodes-langchain.chatTrigger', typeVersion: 1.1, position: [250, 300], parameters: {} }
+    w.nodes.push({ id: 'aaaa0062-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'Memory', type: '@n8n/n8n-nodes-langchain.memoryBufferWindow', typeVersion: 1.3, position: [450, 300], parameters: {} })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 62)).toBe(false)
+  })
+
+  // Rule 63: duplicate webhook path+method
+  it('rule 63: errors on duplicate webhook path+method', () => {
+    const w = baseWorkflow()
+    w.nodes = [
+      { id: 'aaaa0063-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Hook A', type: 'n8n-nodes-base.webhook', typeVersion: 2, position: [250, 300], parameters: { httpMethod: 'POST', path: 'intake' } },
+      { id: 'aaaa0063-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Hook B', type: 'n8n-nodes-base.webhook', typeVersion: 2, position: [450, 300], parameters: { httpMethod: 'POST', path: 'intake' } },
+    ]
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 63 && i.severity === 'error')).toBe(true)
+  })
+
+  it('rule 63: no error when webhooks have different paths', () => {
+    const w = baseWorkflow()
+    w.nodes = [
+      { id: 'aaaa0063-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Hook A', type: 'n8n-nodes-base.webhook', typeVersion: 2, position: [250, 300], parameters: { httpMethod: 'POST', path: 'intake' } },
+      { id: 'aaaa0063-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'Hook B', type: 'n8n-nodes-base.webhook', typeVersion: 2, position: [450, 300], parameters: { httpMethod: 'POST', path: 'update' } },
+    ]
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 63)).toBe(false)
+  })
+
+  // Rule 65: SplitInBatches batchSize <= 0
+  it('rule 65: errors when batchSize is 0', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0065-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Batch', type: 'n8n-nodes-base.splitInBatches', typeVersion: 3, position: [450, 300], parameters: { batchSize: 0 } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Batch', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 65 && i.severity === 'error')).toBe(true)
+  })
+
+  it('rule 65: errors when batchSize is negative', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0065-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Batch', type: 'n8n-nodes-base.splitInBatches', typeVersion: 3, position: [450, 300], parameters: { batchSize: -5 } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Batch', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 65 && i.severity === 'error')).toBe(true)
+  })
+
+  it('rule 65: no error when batchSize is positive', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0065-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Batch', type: 'n8n-nodes-base.splitInBatches', typeVersion: 3, position: [450, 300], parameters: { batchSize: 10 } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Batch', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 65)).toBe(false)
+  })
+
+  // Rule 66: HTTP Request URL missing protocol
+  it('rule 66: errors when HTTP Request URL has no protocol', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0066-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'HTTP', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], parameters: { method: 'GET', url: 'api.example.com/data' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'HTTP', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 66 && i.severity === 'error')).toBe(true)
+  })
+
+  it('rule 66: no error when URL starts with https://', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0066-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'HTTP', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], parameters: { method: 'GET', url: 'https://api.example.com/data' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'HTTP', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 66)).toBe(false)
+  })
+
+  it('rule 66: no error when URL is an expression', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0066-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'HTTP', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], parameters: { method: 'GET', url: '={{ $json.endpoint }}' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'HTTP', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 66)).toBe(false)
+  })
+
+  // Rule 67: Code node references non-existent node
+  it('rule 67: warns when code references a node that does not exist', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0067-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Code', type: 'n8n-nodes-base.code', typeVersion: 2, position: [450, 300], parameters: { jsCode: "return $('Nonexistent Node').all()" } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Code', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 67)).toBe(true)
+  })
+
+  it('rule 67: no warning when code references an existing node', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0067-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Code', type: 'n8n-nodes-base.code', typeVersion: 2, position: [450, 300], parameters: { jsCode: "return $('Manual Trigger').all()" } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Code', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 67)).toBe(false)
+  })
+
+  // Rule 68: Google Calendar create event missing timezone
+  it('rule 68: warns when Google Calendar create event has no timezone', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0068-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Calendar', type: 'n8n-nodes-base.googleCalendar', typeVersion: 1.3, position: [450, 300], parameters: { resource: 'event', operation: 'create', calendarId: { __rl: true, mode: 'id', value: 'primary' } } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Calendar', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 68)).toBe(true)
+  })
+
+  it('rule 68: no warning when timezone is set', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0068-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Calendar', type: 'n8n-nodes-base.googleCalendar', typeVersion: 1.3, position: [450, 300], parameters: { resource: 'event', operation: 'create', timezone: 'America/New_York' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Calendar', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 68)).toBe(false)
+  })
+
+  it('rule 68: no warning for non-create operations', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0068-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Calendar', type: 'n8n-nodes-base.googleCalendar', typeVersion: 1.3, position: [450, 300], parameters: { resource: 'event', operation: 'getAll' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Calendar', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 68)).toBe(false)
+  })
+
+  // Rule 69: Gmail send missing subject
+  it('rule 69: warns when Gmail send has no subject', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0069-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Gmail', type: 'n8n-nodes-base.gmail', typeVersion: 2.1, position: [450, 300], parameters: { resource: 'message', operation: 'send', to: 'user@example.com', subject: '' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Gmail', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 69)).toBe(true)
+  })
+
+  it('rule 69: no warning when Gmail send has subject', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0069-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Gmail', type: 'n8n-nodes-base.gmail', typeVersion: 2.1, position: [450, 300], parameters: { resource: 'message', operation: 'send', to: 'user@example.com', subject: 'Hello' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Gmail', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 69)).toBe(false)
+  })
+
+  // Rule 70: Set v1 with keepOnlySet=true
+  it('rule 70: warns when Set v1 has keepOnlySet=true', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0070-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 1, position: [450, 300], parameters: { keepOnlySet: true, values: { string: [] } } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Set', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 70)).toBe(true)
+  })
+
+  it('rule 70: no warning when Set v1 has keepOnlySet=false', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0070-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 1, position: [450, 300], parameters: { keepOnlySet: false } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Set', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 70)).toBe(false)
+  })
+
+  it('rule 70: no warning for Set v3 (keepOnlySet removed)', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0070-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [450, 300], parameters: { assignments: { assignments: [] } } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Set', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 70)).toBe(false)
+  })
+
+  // Rule 71: toolWorkflow source=database missing workflowId
+  it('rule 71: warns when toolWorkflow has no workflowId', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0071-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Tool WF', type: '@n8n/n8n-nodes-langchain.toolWorkflow', typeVersion: 2, position: [450, 300], parameters: { description: 'Does something', source: 'database' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 71)).toBe(true)
+  })
+
+  it('rule 71: no warning when toolWorkflow has workflowId', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0071-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Tool WF', type: '@n8n/n8n-nodes-langchain.toolWorkflow', typeVersion: 2, position: [450, 300], parameters: { description: 'Does something', source: 'database', workflowId: '42' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 71)).toBe(false)
+  })
+
+  // Rule 72: Code node JSON.parse without try/catch
+  it('rule 72: warns when JSON.parse is used without try/catch', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0072-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Code', type: 'n8n-nodes-base.code', typeVersion: 2, position: [450, 300], parameters: { jsCode: "const data = JSON.parse($json.payload); return [{ json: data }]" } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Code', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 72)).toBe(true)
+  })
+
+  it('rule 72: no warning when JSON.parse is in a try/catch', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0072-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Code', type: 'n8n-nodes-base.code', typeVersion: 2, position: [450, 300], parameters: { jsCode: "try { const d = JSON.parse($json.p); return [{ json: d }] } catch(e) { return [{ json: { error: e.message } }] }" } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Code', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 72)).toBe(false)
+  })
+
+  it('rule 72: no warning when code has no JSON.parse', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0072-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Code', type: 'n8n-nodes-base.code', typeVersion: 2, position: [450, 300], parameters: { jsCode: "return items.map(i => ({ json: { val: i.json.value * 2 } }))" } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Code', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 72)).toBe(false)
+  })
+
+  // Rule 73: AI tool sub-node missing description
+  it('rule 73: warns when toolCode has no description', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0073-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Tool', type: '@n8n/n8n-nodes-langchain.toolCode', typeVersion: 1.1, position: [450, 300], parameters: { jsCode: "return 'result'" } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 73)).toBe(true)
+  })
+
+  it('rule 73: no warning when toolCode has description', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0073-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Tool', type: '@n8n/n8n-nodes-langchain.toolCode', typeVersion: 1.1, position: [450, 300], parameters: { jsCode: "return 'result'", description: 'Calculates something useful' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 73)).toBe(false)
+  })
+
+  // Rule 74: multiple memoryBufferWindow nodes with same static sessionKey
+  it('rule 74: warns when two memory nodes share the same static sessionKey', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0074-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Mem A', type: '@n8n/n8n-nodes-langchain.memoryBufferWindow', typeVersion: 1.3, position: [450, 300], parameters: { sessionKey: 'shared-session' } })
+    w.nodes.push({ id: 'aaaa0074-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Mem B', type: '@n8n/n8n-nodes-langchain.memoryBufferWindow', typeVersion: 1.3, position: [650, 300], parameters: { sessionKey: 'shared-session' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 74)).toBe(true)
+  })
+
+  it('rule 74: no warning when memory nodes have different sessionKeys', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0074-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Mem A', type: '@n8n/n8n-nodes-langchain.memoryBufferWindow', typeVersion: 1.3, position: [450, 300], parameters: { sessionKey: 'session-a' } })
+    w.nodes.push({ id: 'aaaa0074-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'Mem B', type: '@n8n/n8n-nodes-langchain.memoryBufferWindow', typeVersion: 1.3, position: [650, 300], parameters: { sessionKey: 'session-b' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 74)).toBe(false)
+  })
+
+  // Rule 75: emailSend missing required fields
+  it('rule 75: warns when emailSend has no to address', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0075-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Email', type: 'n8n-nodes-base.emailSend', typeVersion: 2.1, position: [450, 300], parameters: { toAddresses: '', subject: 'Hello', message: 'Body' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Email', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 75)).toBe(true)
+  })
+
+  it('rule 75: warns when emailSend has no subject', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0075-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Email', type: 'n8n-nodes-base.emailSend', typeVersion: 2.1, position: [450, 300], parameters: { toAddresses: 'user@example.com', subject: '', message: 'Body' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Email', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 75)).toBe(true)
+  })
+
+  it('rule 75: no warning when emailSend has all required fields', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0075-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Email', type: 'n8n-nodes-base.emailSend', typeVersion: 2.1, position: [450, 300], parameters: { toAddresses: 'user@example.com', subject: 'Hello', message: 'Body text' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Email', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 75)).toBe(false)
+  })
+
+  // Rule 76: Telegram sendMessage missing chatId
+  it('rule 76: warns when Telegram sendMessage has no chatId', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0076-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Telegram', type: 'n8n-nodes-base.telegram', typeVersion: 1.2, position: [450, 300], parameters: { resource: 'message', operation: 'sendMessage', chatId: '', text: 'Hello' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Telegram', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 76)).toBe(true)
+  })
+
+  it('rule 76: no warning when Telegram sendMessage has chatId', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0076-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Telegram', type: 'n8n-nodes-base.telegram', typeVersion: 1.2, position: [450, 300], parameters: { resource: 'message', operation: 'sendMessage', chatId: '123456789', text: 'Hello' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Telegram', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 76)).toBe(false)
+  })
+
+  // Rule 77: Code runOnceForAllItems uses $json
+  it('rule 77: warns when runOnceForAllItems mode uses $json', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0077-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Code', type: 'n8n-nodes-base.code', typeVersion: 2, position: [450, 300], parameters: { mode: 'runOnceForAllItems', jsCode: "const name = $json.name; return [{ json: { name } }]" } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Code', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 77)).toBe(true)
+  })
+
+  it('rule 77: no warning when runOnceForAllItems uses $input.all()', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0077-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Code', type: 'n8n-nodes-base.code', typeVersion: 2, position: [450, 300], parameters: { mode: 'runOnceForAllItems', jsCode: "return $input.all().map(i => ({ json: { name: i.json.name } }))" } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Code', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 77)).toBe(false)
+  })
+
+  it('rule 77: no warning for runOnceForEachItem mode', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0077-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Code', type: 'n8n-nodes-base.code', typeVersion: 2, position: [450, 300], parameters: { mode: 'runOnceForEachItem', jsCode: "return [{ json: { val: $json.value } }]" } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Code', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 77)).toBe(false)
+  })
+
+  // Rule 78: workflow has no errorWorkflow
+  it('rule 78: warns when workflow has no errorWorkflow in settings', () => {
+    const w = baseWorkflow()
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 78)).toBe(true)
+  })
+
+  it('rule 78: no warning when errorWorkflow is set', () => {
+    const w = { ...baseWorkflow(), settings: { ...baseWorkflow().settings, errorWorkflow: '99' } }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 78)).toBe(false)
+  })
+
+  // Rule 79: HTTP Request URL contains "webhook-test"
+  it('rule 79: warns when HTTP Request URL contains webhook-test', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0079-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'HTTP', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], parameters: { method: 'POST', url: 'https://myinstance.n8n.cloud/webhook-test/abc123' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'HTTP', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 79)).toBe(true)
+  })
+
+  it('rule 79: no warning when URL does not contain webhook-test', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0079-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'HTTP', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], parameters: { method: 'POST', url: 'https://myinstance.n8n.cloud/webhook/abc123' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'HTTP', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 79)).toBe(false)
+  })
+
+  // Rule 80: Set v3+ has assignments but no includeOtherInputFields
+  it('rule 80: warns when Set v3+ has assignments without includeOtherInputFields', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0080-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [450, 300], parameters: { assignments: { assignments: [{ id: '1', name: 'foo', value: 'bar', type: 'string' }] } } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Set', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 80)).toBe(true)
+  })
+
+  it('rule 80: no warning when includeOtherInputFields is true', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0080-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [450, 300], parameters: { assignments: { assignments: [{ id: '1', name: 'foo', value: 'bar', type: 'string' }] }, includeOtherInputFields: true } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Set', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 80)).toBe(false)
+  })
+
+  it('rule 80: no warning when Set v3+ has empty assignments array', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0080-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [450, 300], parameters: { assignments: { assignments: [] } } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Set', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 80)).toBe(false)
+  })
+
+  // Rule 81: executeWorkflow calls current workflow
+  it('rule 81: errors when executeWorkflow references the current workflow id', () => {
+    const w = { ...baseWorkflow(), id: 'self-wf-id-1234' } as N8nWorkflow & { id: string }
+    w.nodes.push({ id: 'aaaa0081-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Run Sub', type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, position: [450, 300], parameters: { workflowId: 'self-wf-id-1234' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Run Sub', type: 'main', index: 0 }]] }
+    const result = validator.validate(w as N8nWorkflow)
+    expect(result.issues.some((i) => i.rule === 81 && i.severity === 'error')).toBe(true)
+  })
+
+  it('rule 81: no error when executeWorkflow references a different workflow', () => {
+    const w = { ...baseWorkflow(), id: 'self-wf-id-1234' } as N8nWorkflow & { id: string }
+    w.nodes.push({ id: 'aaaa0081-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Run Sub', type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, position: [450, 300], parameters: { workflowId: 'other-wf-id-9999' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Run Sub', type: 'main', index: 0 }]] }
+    const result = validator.validate(w as N8nWorkflow)
+    expect(result.issues.some((i) => i.rule === 81)).toBe(false)
+  })
+
+  it('rule 81: no error when workflow has no id (Kairos-generated)', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0081-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Run Sub', type: 'n8n-nodes-base.executeWorkflow', typeVersion: 1.2, position: [450, 300], parameters: { workflowId: 'some-id' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Run Sub', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 81)).toBe(false)
+  })
+
+  // Rule 82: nested SplitInBatches
+  it('rule 82: warns when workflow has 2 or more SplitInBatches nodes', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0082-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Outer Batch', type: 'n8n-nodes-base.splitInBatches', typeVersion: 3, position: [450, 300], parameters: { batchSize: 10 } })
+    w.nodes.push({ id: 'aaaa0082-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Inner Batch', type: 'n8n-nodes-base.splitInBatches', typeVersion: 3, position: [650, 300], parameters: { batchSize: 5 } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 82)).toBe(true)
+  })
+
+  it('rule 82: no warning with only one SplitInBatches node', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0082-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Batch', type: 'n8n-nodes-base.splitInBatches', typeVersion: 3, position: [450, 300], parameters: { batchSize: 10 } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 82)).toBe(false)
+  })
+
+  // Rule 83: toolWorkflow source=parameter with no inline nodes
+  it('rule 83: errors when toolWorkflow source=parameter has no workflow nodes', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0083-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Tool WF', type: '@n8n/n8n-nodes-langchain.toolWorkflow', typeVersion: 2, position: [450, 300], parameters: { source: 'parameter', workflow: { nodes: [] }, description: 'Does something' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 83 && i.severity === 'error')).toBe(true)
+  })
+
+  it('rule 83: no error when source=parameter has inline nodes', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0083-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Tool WF', type: '@n8n/n8n-nodes-langchain.toolWorkflow', typeVersion: 2, position: [450, 300], parameters: { source: 'parameter', workflow: { nodes: [{ id: 'x', name: 'Start', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [250, 300], parameters: {} }] }, description: 'Does something' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 83)).toBe(false)
+  })
+
+  // Rule 85: HTTP Request has both credential and manual Authorization header
+  it('rule 85: warns when HTTP Request has credential and Authorization header', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0085-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'HTTP', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], parameters: { method: 'GET', url: 'https://api.example.com', sendHeaders: true, headerParameters: { parameters: [{ name: 'Authorization', value: 'Bearer token123' }] } }, credentials: { httpBearerAuth: { id: 'c1', name: 'My API' } } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'HTTP', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 85)).toBe(true)
+  })
+
+  it('rule 85: no warning when only credential is used', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0085-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'HTTP', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], parameters: { method: 'GET', url: 'https://api.example.com' }, credentials: { httpBearerAuth: { id: 'c1', name: 'My API' } } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'HTTP', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 85)).toBe(false)
+  })
+
+  // Rule 86: scheduleTrigger cronExpression invalid field count
+  it('rule 86: errors when cronExpression has only 4 fields', () => {
+    const w = baseWorkflow()
+    w.nodes[0] = { id: 'aaaa0086-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Schedule', type: 'n8n-nodes-base.scheduleTrigger', typeVersion: 1.2, position: [250, 300], parameters: { rule: { interval: [{ field: 'cronExpression', expression: '0 9 * *' }] } } }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 86 && i.severity === 'error')).toBe(true)
+  })
+
+  it('rule 86: errors when cronExpression is empty', () => {
+    const w = baseWorkflow()
+    w.nodes[0] = { id: 'aaaa0086-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Schedule', type: 'n8n-nodes-base.scheduleTrigger', typeVersion: 1.2, position: [250, 300], parameters: { rule: { interval: [{ field: 'cronExpression', expression: '' }] } } }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 86 && i.severity === 'error')).toBe(true)
+  })
+
+  it('rule 86: no error for valid 5-field cronExpression', () => {
+    const w = baseWorkflow()
+    w.nodes[0] = { id: 'aaaa0086-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Schedule', type: 'n8n-nodes-base.scheduleTrigger', typeVersion: 1.2, position: [250, 300], parameters: { rule: { interval: [{ field: 'cronExpression', expression: '0 9 * * 1-5' }] } } }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 86)).toBe(false)
+  })
+
+  // Rule 87: Merge combineByPosition with upstream Filter
+  it('rule 87: warns when Merge combineByPosition has upstream Filter node', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0087-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Filter Items', type: 'n8n-nodes-base.filter', typeVersion: 2.2, position: [450, 300], parameters: { conditions: { conditions: [] } } })
+    w.nodes.push({ id: 'aaaa0087-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Merge', type: 'n8n-nodes-base.merge', typeVersion: 3, position: [650, 300], parameters: { mode: 'combineByPosition' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Filter Items', type: 'main', index: 0 }]] }
+    w.connections['Filter Items'] = { main: [[{ node: 'Merge', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 87)).toBe(true)
+  })
+
+  it('rule 87: no warning when Merge uses combineByFields', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0087-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Filter Items', type: 'n8n-nodes-base.filter', typeVersion: 2.2, position: [450, 300], parameters: { conditions: { conditions: [] } } })
+    w.nodes.push({ id: 'aaaa0087-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'Merge', type: 'n8n-nodes-base.merge', typeVersion: 3, position: [650, 300], parameters: { mode: 'combineByFields' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Filter Items', type: 'main', index: 0 }]] }
+    w.connections['Filter Items'] = { main: [[{ node: 'Merge', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 87)).toBe(false)
+  })
+
+  // Rule 88: Telegram sendMessage missing text
+  it('rule 88: warns when Telegram sendMessage has no text', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0088-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Telegram', type: 'n8n-nodes-base.telegram', typeVersion: 1.2, position: [450, 300], parameters: { resource: 'message', operation: 'sendMessage', chatId: '123456789', text: '' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Telegram', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 88)).toBe(true)
+  })
+
+  it('rule 88: no warning when Telegram sendMessage has text', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0088-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Telegram', type: 'n8n-nodes-base.telegram', typeVersion: 1.2, position: [450, 300], parameters: { resource: 'message', operation: 'sendMessage', chatId: '123456789', text: 'Hello from n8n' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Telegram', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 88)).toBe(false)
+  })
+
+  // Rule 84: toolWorkflow source=parameter inline workflow missing executeWorkflowTrigger
+  it('rule 84: errors when toolWorkflow source=parameter inline workflow has no executeWorkflowTrigger', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0084-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Tool WF', type: '@n8n/n8n-nodes-langchain.toolWorkflow', typeVersion: 2, position: [450, 300],
+      parameters: { source: 'parameter', description: 'Does something', workflow: { nodes: [{ id: 'sub-001', name: 'Set Data', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [250, 300], parameters: {} }] } },
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 84 && i.severity === 'error')).toBe(true)
+  })
+
+  it('rule 84: no error when inline workflow has executeWorkflowTrigger', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0084-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Tool WF', type: '@n8n/n8n-nodes-langchain.toolWorkflow', typeVersion: 2, position: [450, 300],
+      parameters: { source: 'parameter', description: 'Does something', workflow: { nodes: [{ id: 'sub-002', name: 'Entry', type: 'n8n-nodes-base.executeWorkflowTrigger', typeVersion: 1.1, position: [250, 300], parameters: {} }] } },
+    })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 84)).toBe(false)
+  })
+
+  it('rule 84: does not fire when source=database (Rule 83 domain)', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0084-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Tool WF', type: '@n8n/n8n-nodes-langchain.toolWorkflow', typeVersion: 2, position: [450, 300], parameters: { source: 'database', description: 'Does something', workflowId: '42' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 84)).toBe(false)
+  })
+
+  // Rule 89: chainRetrievalQa missing ai_retriever
+  it('rule 89: errors when chainRetrievalQa has no ai_retriever connection', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0089-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'QA Chain', type: '@n8n/n8n-nodes-langchain.chainRetrievalQa', typeVersion: 1.4, position: [450, 300], parameters: {} })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'QA Chain', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 89 && i.severity === 'error')).toBe(true)
+  })
+
+  it('rule 89: no error when ai_retriever is connected', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0089-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'QA Chain', type: '@n8n/n8n-nodes-langchain.chainRetrievalQa', typeVersion: 1.4, position: [450, 300], parameters: {} })
+    w.nodes.push({ id: 'aaaa0089-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Retriever', type: '@n8n/n8n-nodes-langchain.vectorStoreRetriever', typeVersion: 1, position: [450, 500], parameters: {} })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'QA Chain', type: 'main', index: 0 }]] }
+    w.connections['Retriever'] = { ai_retriever: [[{ node: 'QA Chain', type: 'ai_retriever', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 89)).toBe(false)
+  })
+
+  // Rule 90: respondToWebhook without matching webhook responseMode
+  it('rule 90: errors when respondToWebhook exists but webhook responseMode is not responseNode', () => {
+    const w = baseWorkflow()
+    w.nodes[0] = { id: 'aaaa0090-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Webhook', type: 'n8n-nodes-base.webhook', typeVersion: 2, position: [250, 300], parameters: { httpMethod: 'POST', path: 'hook', responseMode: 'lastNode' } }
+    w.nodes.push({ id: 'aaaa0090-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Respond', type: 'n8n-nodes-base.respondToWebhook', typeVersion: 1.1, position: [450, 300], parameters: {} })
+    w.connections['Webhook'] = { main: [[{ node: 'Respond', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 90 && i.severity === 'error')).toBe(true)
+  })
+
+  it('rule 90: no error when webhook has responseMode=responseNode', () => {
+    const w = baseWorkflow()
+    w.nodes[0] = { id: 'aaaa0090-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Webhook', type: 'n8n-nodes-base.webhook', typeVersion: 2, position: [250, 300], parameters: { httpMethod: 'POST', path: 'hook', responseMode: 'responseNode' } }
+    w.nodes.push({ id: 'aaaa0090-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'Respond', type: 'n8n-nodes-base.respondToWebhook', typeVersion: 1.1, position: [450, 300], parameters: {} })
+    w.connections['Webhook'] = { main: [[{ node: 'Respond', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 90)).toBe(false)
+  })
+
+  it('rule 90: no error when no respondToWebhook node exists', () => {
+    const result = validator.validate(baseWorkflow())
+    expect(result.issues.some((i) => i.rule === 90)).toBe(false)
+  })
+
+  // Rule 91: filter node empty conditions
+  it('rule 91: warns when filter has empty conditions array', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0091-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Filter', type: 'n8n-nodes-base.filter', typeVersion: 2.2, position: [450, 300], parameters: { conditions: { conditions: [] } } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Filter', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 91)).toBe(true)
+  })
+
+  it('rule 91: warns when filter has no conditions key', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0091-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Filter', type: 'n8n-nodes-base.filter', typeVersion: 2.2, position: [450, 300], parameters: {} })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Filter', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 91)).toBe(true)
+  })
+
+  it('rule 91: no warning when filter has conditions', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0091-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Filter', type: 'n8n-nodes-base.filter', typeVersion: 2.2, position: [450, 300], parameters: { conditions: { conditions: [{ leftValue: '={{ $json.active }}', rightValue: true, operator: { type: 'boolean', operation: 'equals' } }] } } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Filter', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 91)).toBe(false)
+  })
+
+  // Rule 92: .toISOString() on Luxon DateTime
+  it('rule 92: errors when expression calls $now.toISOString()', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0092-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [450, 300], parameters: { assignments: { assignments: [{ id: '1', name: 'ts', value: '={{ $now.toISOString() }}', type: 'string' }] } } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Set', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 92 && i.severity === 'error')).toBe(true)
+  })
+
+  it('rule 92: errors when expression calls $today.toISOString()', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0092-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [450, 300], parameters: { assignments: { assignments: [{ id: '1', name: 'ts', value: '={{ $today.toISOString() }}', type: 'string' }] } } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Set', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 92)).toBe(true)
+  })
+
+  it('rule 92: no error when using correct .toISO()', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0092-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [450, 300], parameters: { assignments: { assignments: [{ id: '1', name: 'ts', value: '={{ $now.toISO() }}', type: 'string' }] } } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Set', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 92)).toBe(false)
+  })
+
+  // Rule 93: .format() instead of .toFormat() on Luxon
+  it('rule 93: warns when expression calls $now.format()', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0093-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [450, 300], parameters: { assignments: { assignments: [{ id: '1', name: 'date', value: "={{ $now.format('YYYY-MM-DD') }}", type: 'string' }] } } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Set', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 93)).toBe(true)
+  })
+
+  it('rule 93: warns when expression calls $today.format()', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0093-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [450, 300], parameters: { assignments: { assignments: [{ id: '1', name: 'date', value: "={{ $today.format('DD/MM/YYYY') }}", type: 'string' }] } } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Set', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 93)).toBe(true)
+  })
+
+  it('rule 93: no warning when using correct .toFormat()', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0093-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [450, 300], parameters: { assignments: { assignments: [{ id: '1', name: 'date', value: "={{ $now.toFormat('yyyy-MM-dd') }}", type: 'string' }] } } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Set', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 93)).toBe(false)
+  })
+
+  // Rule 94: toolCode with no executable code
+  it('rule 94: warns when toolCode has no jsCode', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0094-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'My Tool', type: '@n8n/n8n-nodes-langchain.toolCode', typeVersion: 1.1, position: [450, 300], parameters: { description: 'Does something' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 94)).toBe(true)
+  })
+
+  it('rule 94: warns when toolCode has only comments', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0094-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'My Tool', type: '@n8n/n8n-nodes-langchain.toolCode', typeVersion: 1.1, position: [450, 300], parameters: { description: 'Does something', jsCode: '// TODO: implement' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 94)).toBe(true)
+  })
+
+  it('rule 94: no warning when toolCode has executable code', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0094-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'My Tool', type: '@n8n/n8n-nodes-langchain.toolCode', typeVersion: 1.1, position: [450, 300], parameters: { description: 'Does something', jsCode: "return [{ json: { result: $input.first().json.value * 2 } }]" } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 94)).toBe(false)
+  })
+
+  // Rule 95: toolHttpRequest no URL
+  it('rule 95: errors when toolHttpRequest has no url parameter', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0095-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'HTTP Tool', type: '@n8n/n8n-nodes-langchain.toolHttpRequest', typeVersion: 1.1, position: [450, 300], parameters: { description: 'Fetches data' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 95 && i.severity === 'error')).toBe(true)
+  })
+
+  it('rule 95: errors when toolHttpRequest url is empty string', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0095-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'HTTP Tool', type: '@n8n/n8n-nodes-langchain.toolHttpRequest', typeVersion: 1.1, position: [450, 300], parameters: { description: 'Fetches data', url: '' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 95 && i.severity === 'error')).toBe(true)
+  })
+
+  it('rule 95: no error when toolHttpRequest has a url', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0095-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'HTTP Tool', type: '@n8n/n8n-nodes-langchain.toolHttpRequest', typeVersion: 1.1, position: [450, 300], parameters: { description: 'Fetches data', url: 'https://api.example.com/search' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 95)).toBe(false)
+  })
+
+  // Rule 96: agent has multiple ai_languageModel sub-nodes
+  it('rule 96: warns when agent has 2 language model sub-nodes connected', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0096-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Agent', type: '@n8n/n8n-nodes-langchain.agent', typeVersion: 1.9, position: [450, 300], parameters: { promptType: 'define', text: 'Do the task' } })
+    w.nodes.push({ id: 'aaaa0096-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Model A', type: '@n8n/n8n-nodes-langchain.lmChatAnthropic', typeVersion: 1.3, position: [450, 500], parameters: { model: 'claude-sonnet-4-6' } })
+    w.nodes.push({ id: 'aaaa0096-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Model B', type: '@n8n/n8n-nodes-langchain.lmChatOpenAi', typeVersion: 1.7, position: [650, 500], parameters: { model: 'gpt-4o' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Agent', type: 'main', index: 0 }]] }
+    w.connections['Model A'] = { ai_languageModel: [[{ node: 'Agent', type: 'ai_languageModel', index: 0 }]] }
+    w.connections['Model B'] = { ai_languageModel: [[{ node: 'Agent', type: 'ai_languageModel', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 96)).toBe(true)
+  })
+
+  it('rule 96: no warning when agent has exactly one language model', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0096-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'Agent', type: '@n8n/n8n-nodes-langchain.agent', typeVersion: 1.9, position: [450, 300], parameters: { promptType: 'define', text: 'Do the task' } })
+    w.nodes.push({ id: 'aaaa0096-aaaa-4aaa-aaaa-aaaaaaaaaaae', name: 'Model A', type: '@n8n/n8n-nodes-langchain.lmChatAnthropic', typeVersion: 1.3, position: [450, 500], parameters: { model: 'claude-sonnet-4-6' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Agent', type: 'main', index: 0 }]] }
+    w.connections['Model A'] = { ai_languageModel: [[{ node: 'Agent', type: 'ai_languageModel', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 96)).toBe(false)
+  })
+
+  // Rule 97: vectorStore missing ai_embedding sub-node
+  it('rule 97: errors when vectorStore has no ai_embedding connection', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0097-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Pinecone Store', type: '@n8n/n8n-nodes-langchain.vectorStorePinecone', typeVersion: 1, position: [450, 300], parameters: {} })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 97 && i.severity === 'error')).toBe(true)
+  })
+
+  it('rule 97: no error when vectorStore has ai_embedding connected', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0097-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Pinecone Store', type: '@n8n/n8n-nodes-langchain.vectorStorePinecone', typeVersion: 1, position: [450, 300], parameters: {} })
+    w.nodes.push({ id: 'aaaa0097-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Embeddings', type: '@n8n/n8n-nodes-langchain.embeddingsOpenAi', typeVersion: 1, position: [450, 500], parameters: {} })
+    w.connections['Embeddings'] = { ai_embedding: [[{ node: 'Pinecone Store', type: 'ai_embedding', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 97)).toBe(false)
+  })
+
+  it('rule 97: no error for non-vectorStore node types', () => {
+    const result = validator.validate(baseWorkflow())
+    expect(result.issues.some((i) => i.rule === 97)).toBe(false)
+  })
+
+  // Rule 98: outputParserStructured missing JSON schema
+  it('rule 98: errors when outputParserStructured has no jsonSchema', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0098-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Parser', type: '@n8n/n8n-nodes-langchain.outputParserStructured', typeVersion: 1, position: [450, 300], parameters: {} })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 98 && i.severity === 'error')).toBe(true)
+  })
+
+  it('rule 98: errors when outputParserStructured has empty schema object', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0098-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Parser', type: '@n8n/n8n-nodes-langchain.outputParserStructured', typeVersion: 1, position: [450, 300], parameters: { jsonSchema: {} } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 98)).toBe(true)
+  })
+
+  it('rule 98: no error when outputParserStructured has a schema', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0098-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Parser', type: '@n8n/n8n-nodes-langchain.outputParserStructured', typeVersion: 1, position: [450, 300], parameters: { jsonSchema: { type: 'object', properties: { name: { type: 'string' } } } } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 98)).toBe(false)
+  })
+
+  // Rule 99: chainLlm with output parser but missing {format_instructions}
+  it('rule 99: warns when chainLlm has output parser connected but prompt lacks {format_instructions}', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0099-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'My Chain', type: '@n8n/n8n-nodes-langchain.chainLlm', typeVersion: 1.5, position: [450, 300], parameters: { prompt: 'Answer the question: {question}' } })
+    w.nodes.push({ id: 'aaaa0099-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'My Parser', type: '@n8n/n8n-nodes-langchain.outputParserStructured', typeVersion: 1, position: [450, 500], parameters: { jsonSchema: { type: 'object' } } })
+    ;(w.connections as Record<string, unknown>)['My Parser'] = { ai_outputParser: [[{ node: 'My Chain', type: 'ai_outputParser', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 99 && i.severity === 'warn')).toBe(true)
+  })
+
+  it('rule 99: no warning when prompt contains {format_instructions}', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0099-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'My Chain', type: '@n8n/n8n-nodes-langchain.chainLlm', typeVersion: 1.5, position: [450, 300], parameters: { prompt: 'Answer the question: {question}\n\n{format_instructions}' } })
+    w.nodes.push({ id: 'aaaa0099-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'My Parser', type: '@n8n/n8n-nodes-langchain.outputParserStructured', typeVersion: 1, position: [450, 500], parameters: { jsonSchema: { type: 'object' } } })
+    ;(w.connections as Record<string, unknown>)['My Parser'] = { ai_outputParser: [[{ node: 'My Chain', type: 'ai_outputParser', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 99)).toBe(false)
+  })
+
+  it('rule 99: no warning when prompt is an expression (cannot inspect)', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0099-aaaa-4aaa-aaaa-aaaaaaaaaaae', name: 'My Chain', type: '@n8n/n8n-nodes-langchain.chainLlm', typeVersion: 1.5, position: [450, 300], parameters: { prompt: '={{ $json.promptTemplate }}' } })
+    w.nodes.push({ id: 'aaaa0099-aaaa-4aaa-aaaa-aaaaaaaaaaaf', name: 'My Parser', type: '@n8n/n8n-nodes-langchain.outputParserStructured', typeVersion: 1, position: [450, 500], parameters: { jsonSchema: { type: 'object' } } })
+    ;(w.connections as Record<string, unknown>)['My Parser'] = { ai_outputParser: [[{ node: 'My Chain', type: 'ai_outputParser', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 99)).toBe(false)
+  })
+
+  it('rule 99: no warning when chainLlm has no output parser connected', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0099-aaaa-4aaa-aaaa-aaaaaaaaaaag', name: 'My Chain', type: '@n8n/n8n-nodes-langchain.chainLlm', typeVersion: 1.5, position: [450, 300], parameters: { prompt: 'Just answer: {question}' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 99)).toBe(false)
+  })
+
+  // Rule 100: Postgres/MySQL empty query
+  it('rule 100: errors when postgres executeQuery has empty query', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0100-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'DB', type: 'n8n-nodes-base.postgres', typeVersion: 2.5, position: [450, 300], parameters: { operation: 'executeQuery', query: '' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'DB', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 100 && i.severity === 'error')).toBe(true)
+  })
+
+  it('rule 100: errors when mySql executeQuery has no query', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0100-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'DB', type: 'n8n-nodes-base.mySql', typeVersion: 2.4, position: [450, 300], parameters: { operation: 'executeQuery' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'DB', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 100 && i.severity === 'error')).toBe(true)
+  })
+
+  it('rule 100: no error when postgres has a valid query', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0100-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'DB', type: 'n8n-nodes-base.postgres', typeVersion: 2.5, position: [450, 300], parameters: { operation: 'executeQuery', query: 'SELECT * FROM customers' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'DB', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 100)).toBe(false)
+  })
+
+  it('rule 100: no error when query is an expression', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0100-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'DB', type: 'n8n-nodes-base.postgres', typeVersion: 2.5, position: [450, 300], parameters: { operation: 'executeQuery', query: '={{ $json.query }}' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'DB', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 100)).toBe(false)
+  })
+
+  // Rule 101: formTrigger with no form fields
+  it('rule 101: warns when formTrigger has no form fields', () => {
+    const w = baseWorkflow()
+    w.nodes[0] = { id: 'aaaa0101-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Form', type: 'n8n-nodes-base.formTrigger', typeVersion: 2.2, position: [250, 300], parameters: { formTitle: 'My Form', formFields: { values: [] } } }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 101)).toBe(true)
+  })
+
+  it('rule 101: warns when formTrigger has no formFields key at all', () => {
+    const w = baseWorkflow()
+    w.nodes[0] = { id: 'aaaa0101-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Form', type: 'n8n-nodes-base.formTrigger', typeVersion: 2.2, position: [250, 300], parameters: { formTitle: 'My Form' } }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 101)).toBe(true)
+  })
+
+  it('rule 101: no warning when formTrigger has form fields', () => {
+    const w = baseWorkflow()
+    w.nodes[0] = { id: 'aaaa0101-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Form', type: 'n8n-nodes-base.formTrigger', typeVersion: 2.2, position: [250, 300], parameters: { formTitle: 'My Form', formFields: { values: [{ fieldLabel: 'Name', fieldType: 'text', requiredField: false }] } } }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 101)).toBe(false)
+  })
+
+  // Rule 102: splitOut missing fieldToSplitOut
+  it('rule 102: errors when splitOut has no fieldToSplitOut', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0102-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Split', type: 'n8n-nodes-base.splitOut', typeVersion: 1, position: [450, 300], parameters: {} })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Split', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 102 && i.severity === 'error')).toBe(true)
+  })
+
+  it('rule 102: errors when fieldToSplitOut is empty string', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0102-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Split', type: 'n8n-nodes-base.splitOut', typeVersion: 1, position: [450, 300], parameters: { fieldToSplitOut: '' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Split', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 102 && i.severity === 'error')).toBe(true)
+  })
+
+  it('rule 102: no error when fieldToSplitOut is set', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0102-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Split', type: 'n8n-nodes-base.splitOut', typeVersion: 1, position: [450, 300], parameters: { fieldToSplitOut: 'items' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Split', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 102)).toBe(false)
+  })
+
+  it('rule 102: no error when fieldToSplitOut is an expression', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0102-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'Split', type: 'n8n-nodes-base.splitOut', typeVersion: 1, position: [450, 300], parameters: { fieldToSplitOut: '={{ $json.arrayField }}' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Split', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 102)).toBe(false)
+  })
+
+  // Rule 103: Code node returns items without json wrapper
+  it('rule 103: warns when code node returns array without json wrapper', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0103-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Transform', type: 'n8n-nodes-base.code', typeVersion: 2, position: [450, 300], parameters: { jsCode: 'return [{ name: "Alice", email: "alice@example.com" }]' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Transform', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 103 && i.severity === 'warn')).toBe(true)
+  })
+
+  it('rule 103: no warning when code node uses json wrapper', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0103-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Transform', type: 'n8n-nodes-base.code', typeVersion: 2, position: [450, 300], parameters: { jsCode: 'return [{ json: { name: "Alice", email: "alice@example.com" } }]' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Transform', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 103)).toBe(false)
+  })
+
+  it('rule 103: no warning when code node uses return items passthrough', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0103-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Transform', type: 'n8n-nodes-base.code', typeVersion: 2, position: [450, 300], parameters: { jsCode: 'for (const item of $input.all()) { item.json.processed = true }\nreturn items' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Transform', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 103)).toBe(false)
+  })
+
+  it('rule 103: no warning when code node has no return statement', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0103-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'Transform', type: 'n8n-nodes-base.code', typeVersion: 2, position: [450, 300], parameters: { jsCode: '// no return' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Transform', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 103)).toBe(false)
+  })
+
+  // Rule 105: LM model set to invalid alias
+  it('rule 105: errors when lmChatAnthropic model is "latest"', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0105-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Model', type: '@n8n/n8n-nodes-langchain.lmChatAnthropic', typeVersion: 1.3, position: [450, 300], parameters: { model: 'latest' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 105 && i.severity === 'error')).toBe(true)
+  })
+
+  it('rule 105: errors when lmChatOpenAi model is "default"', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0105-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Model', type: '@n8n/n8n-nodes-langchain.lmChatOpenAi', typeVersion: 1.7, position: [450, 300], parameters: { model: 'default' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 105 && i.severity === 'error')).toBe(true)
+  })
+
+  it('rule 105: no error when model is a real identifier', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0105-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Model', type: '@n8n/n8n-nodes-langchain.lmChatAnthropic', typeVersion: 1.3, position: [450, 300], parameters: { model: 'claude-sonnet-4-6' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 105)).toBe(false)
+  })
+
+  // Rule 106: Switch fallbackOutput enabled but fallback port unwired
+  it('rule 106: warns when Switch fallback is enabled but fallback port has no connection', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0106-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2, position: [450, 300], parameters: { mode: 'rules', rules: { rules: [{ conditions: { conditions: [{ leftValue: '={{ $json.type }}', rightValue: 'A', operator: { type: 'string', operation: 'equals' } }] } }] }, fallbackOutput: 'extra' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Switch', type: 'main', index: 0 }]] }
+    // Only wire route 0, not the fallback (port 1)
+    w.connections['Switch'] = { main: [[{ node: 'Manual Trigger', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 106)).toBe(true)
+  })
+
+  it('rule 106: no warning when fallbackOutput is "none"', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0106-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2, position: [450, 300], parameters: { mode: 'rules', rules: { rules: [] }, fallbackOutput: 'none' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Switch', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 106)).toBe(false)
+  })
+
+  it('rule 106: no warning when fallback port is connected', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0106-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Switch', type: 'n8n-nodes-base.switch', typeVersion: 3.2, position: [450, 300], parameters: { mode: 'rules', rules: { rules: [{ conditions: { conditions: [] } }] }, fallbackOutput: 'extra' } })
+    w.nodes.push({ id: 'aaaa0106-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'No Op', type: 'n8n-nodes-base.noOp', typeVersion: 1, position: [650, 300], parameters: {} })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Switch', type: 'main', index: 0 }]] }
+    // Wire route 0 and fallback (port 1)
+    w.connections['Switch'] = { main: [[{ node: 'Manual Trigger', type: 'main', index: 0 }], [{ node: 'No Op', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 106)).toBe(false)
+  })
+
+  // Rule 107: trigger node expression references $json
+  it('rule 107: warns when scheduleTrigger expression references $json', () => {
+    const w = baseWorkflow()
+    w.nodes[0] = { id: 'aaaa0107-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Schedule', type: 'n8n-nodes-base.scheduleTrigger', typeVersion: 1.2, position: [250, 300], parameters: { rule: { interval: [{ field: 'cronExpression', expression: '={{ $json.schedule }}' }] } } }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 107)).toBe(true)
+  })
+
+  it('rule 107: no warning when trigger expression does not reference $json', () => {
+    const w = baseWorkflow()
+    w.nodes[0] = { id: 'aaaa0107-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Schedule', type: 'n8n-nodes-base.scheduleTrigger', typeVersion: 1.2, position: [250, 300], parameters: { rule: { interval: [{ field: 'cronExpression', expression: '0 9 * * 1-5' }] } } }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 107)).toBe(false)
+  })
+
+  it('rule 107: no warning for chatTrigger (skipped)', () => {
+    const w = baseWorkflow()
+    w.nodes[0] = { id: 'aaaa0107-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Chat', type: '@n8n/n8n-nodes-langchain.chatTrigger', typeVersion: 1.1, position: [250, 300], parameters: { options: { systemMessage: '={{ $json.prompt }}' } } }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 107)).toBe(false)
+  })
+
+  // Rule 108: aggregate node in field-specific mode with no fields
+  it('rule 108: warns when aggregate is field-specific with no fields', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0108-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Aggregate', type: 'n8n-nodes-base.aggregate', typeVersion: 1, position: [450, 300], parameters: { aggregate: 'aggregateIndividualFields', fieldsToAggregate: { fieldToAggregate: [] } } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Aggregate', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 108)).toBe(true)
+  })
+
+  it('rule 108: no warning when aggregate mode is aggregateAllItemData', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0108-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Aggregate', type: 'n8n-nodes-base.aggregate', typeVersion: 1, position: [450, 300], parameters: { aggregate: 'aggregateAllItemData' } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Aggregate', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 108)).toBe(false)
+  })
+
+  it('rule 108: no warning when aggregate has fields defined', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0108-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Aggregate', type: 'n8n-nodes-base.aggregate', typeVersion: 1, position: [450, 300], parameters: { aggregate: 'aggregateIndividualFields', fieldsToAggregate: { fieldToAggregate: [{ fieldToAggregate: 'email', renameField: false }] } } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Aggregate', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 108)).toBe(false)
+  })
+
+  // Rule 109: Airtable create/update/upsert with no field mappings
+  it('rule 109: warns when Airtable create has no field mappings', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0109-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Airtable', type: 'n8n-nodes-base.airtable', typeVersion: 2.1, position: [450, 300], parameters: { operation: 'create', base: { __rl: true, mode: 'id', value: 'app123' }, table: { __rl: true, mode: 'id', value: 'tbl123' }, fieldsUi: { fieldValues: [] } } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Airtable', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 109)).toBe(true)
+  })
+
+  it('rule 109: no warning for Airtable get operation', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0109-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Airtable', type: 'n8n-nodes-base.airtable', typeVersion: 2.1, position: [450, 300], parameters: { operation: 'get', base: { __rl: true, mode: 'id', value: 'app123' }, table: { __rl: true, mode: 'id', value: 'tbl123' } } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Airtable', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 109)).toBe(false)
+  })
+
+  it('rule 109: no warning when Airtable create has field mappings', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0109-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Airtable', type: 'n8n-nodes-base.airtable', typeVersion: 2.1, position: [450, 300], parameters: { operation: 'create', fieldsUi: { fieldValues: [{ fieldId: 'Name', fieldValue: '={{ $json.name }}' }] } } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Airtable', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 109)).toBe(false)
+  })
+
+  // Rule 110: agent promptType=define with empty text
+  it('rule 110: warns when agent has promptType define but empty text', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0110-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'AI Agent', type: '@n8n/n8n-nodes-langchain.agent', typeVersion: 1.9, position: [450, 300], parameters: { promptType: 'define', text: '' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 110 && i.severity === 'warn')).toBe(true)
+  })
+
+  it('rule 110: warns when agent has promptType define but no text field', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0110-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'AI Agent', type: '@n8n/n8n-nodes-langchain.agent', typeVersion: 1.9, position: [450, 300], parameters: { promptType: 'define' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 110)).toBe(true)
+  })
+
+  it('rule 110: no warning when agent has promptType define with populated text', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0110-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'AI Agent', type: '@n8n/n8n-nodes-langchain.agent', typeVersion: 1.9, position: [450, 300], parameters: { promptType: 'define', text: 'Summarize the following: {{ $json.content }}' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 110)).toBe(false)
+  })
+
+  it('rule 110: no warning when text is an expression', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0110-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'AI Agent', type: '@n8n/n8n-nodes-langchain.agent', typeVersion: 1.9, position: [450, 300], parameters: { promptType: 'define', text: '={{ $json.userMessage }}' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 110)).toBe(false)
+  })
+
+  it('rule 110: no warning when promptType is auto', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0110-aaaa-4aaa-aaaa-aaaaaaaaaaae', name: 'AI Agent', type: '@n8n/n8n-nodes-langchain.agent', typeVersion: 1.9, position: [450, 300], parameters: { promptType: 'auto' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 110)).toBe(false)
+  })
+
+  // Rule 111: ai_languageModel targets a non-agent/chain node
+  it('rule 111: warns when ai_languageModel is wired to a Set node', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0111-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'OpenAI Model', type: '@n8n/n8n-nodes-langchain.lmChatOpenAi', typeVersion: 1.7, position: [450, 500], parameters: { model: 'gpt-4o' } })
+    w.nodes.push({ id: 'aaaa0111-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Set Data', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [450, 300], parameters: {} })
+    ;(w.connections as Record<string, unknown>)['OpenAI Model'] = { ai_languageModel: [[{ node: 'Set Data', type: 'ai_languageModel', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 111 && i.severity === 'warn')).toBe(true)
+  })
+
+  it('rule 111: no warning when ai_languageModel targets an agent node', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0111-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'OpenAI Model', type: '@n8n/n8n-nodes-langchain.lmChatOpenAi', typeVersion: 1.7, position: [450, 500], parameters: { model: 'gpt-4o' } })
+    w.nodes.push({ id: 'aaaa0111-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'AI Agent', type: '@n8n/n8n-nodes-langchain.agent', typeVersion: 1.9, position: [450, 300], parameters: {} })
+    ;(w.connections as Record<string, unknown>)['OpenAI Model'] = { ai_languageModel: [[{ node: 'AI Agent', type: 'ai_languageModel', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 111)).toBe(false)
+  })
+
+  // Rule 112: Luxon .add()/.subtract() in expressions
+  it('rule 112: errors when $now.add() is used', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0112-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Set Date', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [450, 300], parameters: { assignments: { assignments: [{ id: '1', name: 'date', value: "={{ $now.add(1, 'day') }}", type: 'string' }] } } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 112 && i.severity === 'error')).toBe(true)
+  })
+
+  it('rule 112: errors when $today.subtract() is used', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0112-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Set Date', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [450, 300], parameters: { assignments: { assignments: [{ id: '1', name: 'date', value: "={{ $today.subtract(7, 'days') }}", type: 'string' }] } } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 112 && i.severity === 'error')).toBe(true)
+  })
+
+  it('rule 112: no error when using correct .plus() form', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0112-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Set Date', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [450, 300], parameters: { assignments: { assignments: [{ id: '1', name: 'date', value: '={{ $now.plus({ days: 1 }).toISO() }}', type: 'string' }] } } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 112)).toBe(false)
+  })
+
+  // Rule 113: IF node with unconnected output branch
+  it('rule 113: warns when IF true branch is unconnected', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0113-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Check', type: 'n8n-nodes-base.if', typeVersion: 2.2, position: [450, 300], parameters: { conditions: { conditions: [{ id: '1', leftValue: '={{ $json.status }}', rightValue: 'active', operator: { type: 'string', operation: 'equals' } }] }, combinator: 'and' } })
+    ;(w.connections as Record<string, unknown>)['Manual Trigger'] = { main: [[{ node: 'Check', type: 'main', index: 0 }]] }
+    // Only false branch connected
+    ;(w.connections as Record<string, unknown>)['Check'] = { main: [[], [{ node: 'Manual Trigger', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    const r113 = result.issues.filter((i) => i.rule === 113)
+    expect(r113.some((i) => i.message.includes('true'))).toBe(true)
+  })
+
+  it('rule 113: warns when IF false branch is unconnected', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0113-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Check', type: 'n8n-nodes-base.if', typeVersion: 2.2, position: [450, 300], parameters: { conditions: { conditions: [{ id: '1', leftValue: '={{ $json.status }}', rightValue: 'active', operator: { type: 'string', operation: 'equals' } }] }, combinator: 'and' } })
+    w.nodes.push({ id: 'aaaa0113-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Handler', type: 'n8n-nodes-base.noOp', typeVersion: 1, position: [670, 300], parameters: {} })
+    ;(w.connections as Record<string, unknown>)['Check'] = { main: [[{ node: 'Handler', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 113 && i.message.includes('false'))).toBe(true)
+  })
+
+  it('rule 113: no warning when both IF branches are connected', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0113-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'Check', type: 'n8n-nodes-base.if', typeVersion: 2.2, position: [450, 300], parameters: {} })
+    w.nodes.push({ id: 'aaaa0113-aaaa-4aaa-aaaa-aaaaaaaaaaae', name: 'TrueHandler', type: 'n8n-nodes-base.noOp', typeVersion: 1, position: [670, 200], parameters: {} })
+    w.nodes.push({ id: 'aaaa0113-aaaa-4aaa-aaaa-aaaaaaaaaaaf', name: 'FalseHandler', type: 'n8n-nodes-base.noOp', typeVersion: 1, position: [670, 400], parameters: {} })
+    ;(w.connections as Record<string, unknown>)['Check'] = { main: [[{ node: 'TrueHandler', type: 'main', index: 0 }], [{ node: 'FalseHandler', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 113)).toBe(false)
+  })
+
+  // Rule 114: $('NodeName') references non-existent node in expressions
+  it('rule 114: warns when expression references a missing node', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0114-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Set Data', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [450, 300], parameters: { assignments: { assignments: [{ id: '1', name: 'email', value: "={{ $('Deleted Node').first().json.email }}", type: 'string' }] } } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 114 && i.severity === 'warn')).toBe(true)
+  })
+
+  it('rule 114: no warning when referenced node exists', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0114-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Set Data', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [450, 300], parameters: { assignments: { assignments: [{ id: '1', name: 'email', value: "={{ $('Manual Trigger').first().json.email }}", type: 'string' }] } } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 114)).toBe(false)
+  })
+
+  it('rule 114: no warning for code nodes (covered by Rule 67)', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0114-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Code', type: 'n8n-nodes-base.code', typeVersion: 2, position: [450, 300], parameters: { jsCode: "return [{ json: { v: $('Ghost Node').first().json.x } }]" } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 114)).toBe(false)
+  })
+
+  // Rule 115: SplitInBatches output 1 has no loop-back
+  it('rule 115: warns when SplitInBatches loop body has no loop-back', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0115-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Split', type: 'n8n-nodes-base.splitInBatches', typeVersion: 3, position: [450, 300], parameters: { batchSize: 10 } })
+    w.nodes.push({ id: 'aaaa0115-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Process', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [670, 400], parameters: {} })
+    ;(w.connections as Record<string, unknown>)['Split'] = { main: [[], [{ node: 'Process', type: 'main', index: 0 }]] }
+    // Process does NOT loop back to Split
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 115 && i.severity === 'warn')).toBe(true)
+  })
+
+  it('rule 115: no warning when loop-back is present', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0115-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Split', type: 'n8n-nodes-base.splitInBatches', typeVersion: 3, position: [450, 300], parameters: { batchSize: 10 } })
+    w.nodes.push({ id: 'aaaa0115-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'Process', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [670, 400], parameters: {} })
+    ;(w.connections as Record<string, unknown>)['Split'] = { main: [[], [{ node: 'Process', type: 'main', index: 0 }]] }
+    ;(w.connections as Record<string, unknown>)['Process'] = { main: [[{ node: 'Split', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 115)).toBe(false)
+  })
+
+  // Rule 116: LM sub-node using wrong-provider model name
+  it('rule 116: errors when lmChatOpenAi uses a Claude model', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0116-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'LM', type: '@n8n/n8n-nodes-langchain.lmChatOpenAi', typeVersion: 1.7, position: [450, 300], parameters: { model: 'claude-sonnet-4-6' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 116 && i.severity === 'error')).toBe(true)
+  })
+
+  it('rule 116: errors when lmChatAnthropic uses a GPT model', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0116-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'LM', type: '@n8n/n8n-nodes-langchain.lmChatAnthropic', typeVersion: 1.3, position: [450, 300], parameters: { model: 'gpt-4o' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 116 && i.severity === 'error')).toBe(true)
+  })
+
+  it('rule 116: no error when model matches the provider', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0116-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'LM', type: '@n8n/n8n-nodes-langchain.lmChatAnthropic', typeVersion: 1.3, position: [450, 300], parameters: { model: 'claude-sonnet-4-6' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 116)).toBe(false)
+  })
+
+  it('rule 116: no error when model is an expression', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0116-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'LM', type: '@n8n/n8n-nodes-langchain.lmChatOpenAi', typeVersion: 1.7, position: [450, 300], parameters: { model: '={{ $json.model }}' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 116)).toBe(false)
+  })
+
+  // Rule 117: Google Calendar create event missing start or end time
+  it('rule 117: warns when googleCalendar create event has no start time', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0117-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Cal', type: 'n8n-nodes-base.googleCalendar', typeVersion: 1.3, position: [450, 300], parameters: { resource: 'event', operation: 'create', end: '2026-07-01T10:00:00Z' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 117 && i.message.includes('start'))).toBe(true)
+  })
+
+  it('rule 117: warns when googleCalendar create event has no end time', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0117-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Cal', type: 'n8n-nodes-base.googleCalendar', typeVersion: 1.3, position: [450, 300], parameters: { resource: 'event', operation: 'create', start: '2026-07-01T09:00:00Z' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 117 && i.message.includes('end'))).toBe(true)
+  })
+
+  it('rule 117: no warning when both start and end are set', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0117-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Cal', type: 'n8n-nodes-base.googleCalendar', typeVersion: 1.3, position: [450, 300], parameters: { resource: 'event', operation: 'create', start: '2026-07-01T09:00:00Z', end: '2026-07-01T10:00:00Z' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 117)).toBe(false)
+  })
+
+  it('rule 117: no warning for googleCalendar get operation', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0117-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'Cal', type: 'n8n-nodes-base.googleCalendar', typeVersion: 1.3, position: [450, 300], parameters: { resource: 'event', operation: 'get' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 117)).toBe(false)
+  })
+
+  // Rule 118: Redis missing key parameter
+  it('rule 118: warns when Redis get has no propertyName', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0118-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Redis', type: 'n8n-nodes-base.redis', typeVersion: 1, position: [450, 300], parameters: { operation: 'get' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 118 && i.severity === 'warn')).toBe(true)
+  })
+
+  it('rule 118: warns when Redis set has empty propertyName', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0118-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Redis', type: 'n8n-nodes-base.redis', typeVersion: 1, position: [450, 300], parameters: { operation: 'set', propertyName: '' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 118)).toBe(true)
+  })
+
+  it('rule 118: no warning when Redis get has a key', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0118-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Redis', type: 'n8n-nodes-base.redis', typeVersion: 1, position: [450, 300], parameters: { operation: 'get', propertyName: 'session:{{ $json.userId }}' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 118)).toBe(false)
+  })
+
+  // Rule 119: Supabase missing tableId
+  it('rule 119: errors when supabase node has no tableId', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0119-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'DB', type: 'n8n-nodes-base.supabase', typeVersion: 1, position: [450, 300], parameters: { operation: 'insert' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 119 && i.severity === 'error')).toBe(true)
+  })
+
+  it('rule 119: no error when supabase node has tableId', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0119-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'DB', type: 'n8n-nodes-base.supabase', typeVersion: 1, position: [450, 300], parameters: { operation: 'insert', tableId: 'leads' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 119)).toBe(false)
+  })
+
+  // Rule 120: Gmail reply missing messageId
+  it('rule 120: warns when Gmail reply has no messageId', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0120-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Gmail', type: 'n8n-nodes-base.gmail', typeVersion: 2.1, position: [450, 300], parameters: { operation: 'reply', sendTo: 'user@example.com' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 120 && i.severity === 'warn')).toBe(true)
+  })
+
+  it('rule 120: no warning when Gmail reply has messageId', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0120-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Gmail', type: 'n8n-nodes-base.gmail', typeVersion: 2.1, position: [450, 300], parameters: { operation: 'reply', messageId: '={{ $json.id }}' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 120)).toBe(false)
+  })
+
+  it('rule 120: no warning for Gmail send operation', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0120-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Gmail', type: 'n8n-nodes-base.gmail', typeVersion: 2.1, position: [450, 300], parameters: { operation: 'send', sendTo: 'user@example.com', subject: 'Hello', message: 'World' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 120)).toBe(false)
+  })
+
+  // Rule 121: splitOut fieldToSplitOut contains a dot
+  it('rule 121: warns when fieldToSplitOut contains a dot', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0121-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Split', type: 'n8n-nodes-base.splitOut', typeVersion: 1, position: [450, 300], parameters: { fieldToSplitOut: 'data.items' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 121 && i.severity === 'warn')).toBe(true)
+  })
+
+  it('rule 121: no warning when fieldToSplitOut has no dot', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0121-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Split', type: 'n8n-nodes-base.splitOut', typeVersion: 1, position: [450, 300], parameters: { fieldToSplitOut: 'items' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 121)).toBe(false)
+  })
+
+  it('rule 121: no warning when fieldToSplitOut is an expression', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0121-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Split', type: 'n8n-nodes-base.splitOut', typeVersion: 1, position: [450, 300], parameters: { fieldToSplitOut: '={{ $json.fieldName }}' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 121)).toBe(false)
+  })
+
+  // Rule 122: Luxon .plus()/.minus() with positional args
+  it('rule 122: warns when .plus() is called with positional (n, unit) args', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0122-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [450, 300], parameters: { assignments: { assignments: [{ id: '1', name: 'date', value: "={{ $now.plus(7, 'days') }}", type: 'string' }] } } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 122 && i.severity === 'warn')).toBe(true)
+  })
+
+  it('rule 122: no warning when .plus() uses object form', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0122-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [450, 300], parameters: { assignments: { assignments: [{ id: '1', name: 'date', value: '={{ $now.plus({ days: 7 }).toISO() }}', type: 'string' }] } } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 122)).toBe(false)
+  })
+
+  it('rule 122: no warning when .plus() has single arg (valid ms form)', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0122-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [450, 300], parameters: { assignments: { assignments: [{ id: '1', name: 'date', value: '={{ $now.plus(1000).toISO() }}', type: 'string' }] } } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 122)).toBe(false)
+  })
+
+  // Rule 123: HTTP Request sendQuery=true but no query parameters
+  it('rule 123: warns when sendQuery is true but queryParameters is empty', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0123-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'HTTP', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], parameters: { method: 'GET', url: 'https://api.example.com/data', sendQuery: true } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 123 && i.severity === 'warn')).toBe(true)
+  })
+
+  it('rule 123: no warning when query parameters are populated', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0123-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'HTTP', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], parameters: { method: 'GET', url: 'https://api.example.com/data', sendQuery: true, queryParameters: { parameters: [{ name: 'page', value: '1' }] } } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 123)).toBe(false)
+  })
+
+  it('rule 123: no warning when queryParametersJson provides dynamic params', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0123-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'HTTP', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], parameters: { method: 'GET', url: 'https://api.example.com/data', sendQuery: true, queryParametersJson: '={{ $json.queryParams }}' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 123)).toBe(false)
+  })
+
+  it('rule 123: no warning when sendQuery is false', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0123-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'HTTP', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], parameters: { method: 'GET', url: 'https://api.example.com/data', sendQuery: false } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 123)).toBe(false)
+  })
+
+  // Rule 124: Code node in runOnceForAllItems mode with no return statement
+  it('rule 124: warns when runOnceForAllItems code has no return', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0124-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Code', type: 'n8n-nodes-base.code', typeVersion: 2, position: [450, 300], parameters: { mode: 'runOnceForAllItems', jsCode: 'const x = $input.all().length\nconsole.log(x)' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 124 && i.severity === 'warn')).toBe(true)
+  })
+
+  it('rule 124: no warning when runOnceForAllItems code has a return', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0124-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Code', type: 'n8n-nodes-base.code', typeVersion: 2, position: [450, 300], parameters: { mode: 'runOnceForAllItems', jsCode: 'return $input.all().map(i => ({ json: i.json }))' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 124)).toBe(false)
+  })
+
+  it('rule 124: no warning in default (runOnceForEachItem) mode with no return', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0124-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Code', type: 'n8n-nodes-base.code', typeVersion: 2, position: [450, 300], parameters: { jsCode: 'const x = $json.value * 2' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 124)).toBe(false)
+  })
+
+  // Rule 125: Luxon uppercase YYYY/DD tokens in .toFormat()
+  it('rule 125: warns when .toFormat() uses YYYY token', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0125-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [450, 300], parameters: { assignments: { assignments: [{ id: '1', name: 'date', value: "={{ $now.toFormat('YYYY-MM-dd') }}", type: 'string' }] } } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 125 && i.severity === 'warn')).toBe(true)
+  })
+
+  it('rule 125: warns when .toFormat() uses DD token', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0125-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [450, 300], parameters: { assignments: { assignments: [{ id: '1', name: 'date', value: "={{ $now.toFormat('DD/MM/yyyy') }}", type: 'string' }] } } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 125)).toBe(true)
+  })
+
+  it('rule 125: no warning when .toFormat() uses correct lowercase tokens', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0125-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [450, 300], parameters: { assignments: { assignments: [{ id: '1', name: 'date', value: "={{ $now.toFormat('yyyy-MM-dd') }}", type: 'string' }] } } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 125)).toBe(false)
+  })
+
+  // Rule 126: Node ID not a valid UUID v4
+  it('rule 126: warns when node has a non-UUID ID', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'node-1', name: 'Set Data', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [450, 300], parameters: {} })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 126 && i.severity === 'warn')).toBe(true)
+  })
+
+  it('rule 126: no warning when node has a valid UUID v4', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'a1b2c3d4-e5f6-4789-8abc-def012345678', name: 'Set Data', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [450, 300], parameters: {} })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 126)).toBe(false)
+  })
+
+  it('rule 126: no warning for the base workflow nodes (they have valid UUIDs)', () => {
+    const w = baseWorkflow()
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 126)).toBe(false)
+  })
 })
