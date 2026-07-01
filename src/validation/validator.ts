@@ -1924,7 +1924,7 @@ export class N8nValidator {
       const params = node.parameters as Record<string, unknown> | undefined
       const code = (params?.['jsCode'] ?? params?.['code'] ?? '') as string
       if (!code) continue
-      const refs = [...code.matchAll(/\$\(['"]([^'"]+)['"]\)/g)].map(m => m[1])
+      const refs = [...code.matchAll(/\$\(['"]([^'"]+)['"]\)/g)].map(m => m[1]).filter((r): r is string => r !== undefined)
       for (const ref of refs) {
         if (!nodeNames.has(ref)) {
           this.warn(
@@ -2202,7 +2202,7 @@ export class N8nValidator {
   // Rule 81 (ERROR): executeWorkflow calls the current workflow (infinite loop)
   private checkRule81(w: N8nWorkflow, issues: ValidationIssue[]): void {
     if (!Array.isArray(w.nodes)) return
-    const wf = w as Record<string, unknown>
+    const wf = w as unknown as Record<string, unknown>
     const currentId = typeof wf['id'] === 'string' ? wf['id'] : undefined
     if (!currentId) return
     for (const node of w.nodes) {
@@ -2890,7 +2890,7 @@ export class N8nValidator {
             this.warn(
               issues, 111,
               `Node "${sourceName}" is connected as a language model sub-node to "${target}" (${targetType}), which is not an agent or chain node — the ai_languageModel connection will be ignored at runtime. Connect the LM sub-node to an Agent, chainLlm, chainRetrievalQa, or chainSummarization node instead.`,
-              nodeIdByName.get(sourceName),
+              nodeIdByName.get(sourceName) ?? undefined,
             )
           }
         }
@@ -2957,9 +2957,9 @@ export class N8nValidator {
       if (node.type === 'n8n-nodes-base.code') continue
       const paramStr = JSON.stringify(node.parameters ?? '')
       // Single-quote refs: $('NodeName') — single quotes are not escaped in JSON stringify
-      const singleRefs = [...paramStr.matchAll(/\$\('([^']+)'\)/g)].map(m => m[1])
+      const singleRefs = [...paramStr.matchAll(/\$\('([^']+)'\)/g)].map(m => m[1]).filter((r): r is string => r !== undefined)
       // Double-quote refs: $("NodeName") — double quotes become \" in JSON stringify output
-      const doubleRefs = [...paramStr.matchAll(/\$\(\\"([^\\"]+)\\"\)/g)].map(m => m[1])
+      const doubleRefs = [...paramStr.matchAll(/\$\(\\"([^\\"]+)\\"\)/g)].map(m => m[1]).filter((r): r is string => r !== undefined)
       const missingRefs = new Set(
         [...singleRefs, ...doubleRefs].filter(ref => !nodeNames.has(ref)),
       )
