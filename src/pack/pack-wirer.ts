@@ -26,38 +26,33 @@ export interface PackWireReport {
   totalErrors: number
 }
 
-// Google Sheets documentId is stored as a ResourceLocator value in n8n params
-function extractSheetDocumentId(params: Record<string, unknown>): string | null {
-  const doc = params['documentId'] as Record<string, unknown> | undefined
-  if (!doc) return null
-  const rl = doc['__rl'] as Record<string, unknown> | undefined
-  if (rl) return (rl['value'] as string | undefined) ?? null
+// Google Sheets documentId is an n8n ResourceLocator: { "__rl": true, "mode": "id", "value": "..." }
+// (__rl is a boolean flag; mode and value are siblings on the documentId object itself)
+export function extractSheetDocumentId(params: Record<string, unknown>): string | null {
+  const doc = params['documentId']
   if (typeof doc === 'string') return doc
+  if (doc && typeof doc === 'object' && !Array.isArray(doc)) {
+    const value = (doc as Record<string, unknown>)['value']
+    return typeof value === 'string' ? value : null
+  }
   return null
 }
 
-function patchSheetDocumentId(
+export function patchSheetDocumentId(
   params: Record<string, unknown>,
   newId: string,
 ): Record<string, unknown> {
-  const doc = params['documentId'] as Record<string, unknown> | undefined
-  if (!doc) return params
-
-  const rl = doc['__rl'] as Record<string, unknown> | undefined
-  if (rl) {
-    return {
-      ...params,
-      documentId: {
-        ...doc,
-        __rl: { ...rl, value: newId, mode: 'id' },
-      },
-    }
+  const doc = params['documentId']
+  const existing = doc && typeof doc === 'object' && !Array.isArray(doc)
+    ? (doc as Record<string, unknown>)
+    : {}
+  return {
+    ...params,
+    documentId: { ...existing, __rl: true, mode: 'id', value: newId },
   }
-
-  return { ...params, documentId: newId }
 }
 
-function findSheetNodes(workflow: N8nWorkflow): Array<{
+export function findSheetNodes(workflow: N8nWorkflow): Array<{
   nodeName: string
   currentDocId: string | null
   nodeIndex: number
@@ -78,7 +73,7 @@ function findSheetNodes(workflow: N8nWorkflow): Array<{
 }
 
 // Match a sheet node to a sheet name by looking for the sheet name in the node's sheetName param
-function resolveSheetName(
+export function resolveSheetName(
   params: Record<string, unknown>,
   mapping: SheetIdMapping,
 ): { sheetName: string; spreadsheetId: string } | null {
@@ -89,13 +84,15 @@ function resolveSheetName(
   if (typeof sheetNameParam === 'string') {
     candidate = sheetNameParam
   } else if (sheetNameParam && typeof sheetNameParam === 'object') {
-    const rl = (sheetNameParam as Record<string, unknown>)['__rl'] as Record<string, unknown> | undefined
-    if (rl) candidate = rl['value'] as string | undefined
+    // ResourceLocator: { __rl: true, mode, value } — value holds the sheet name/id
+    const value = (sheetNameParam as Record<string, unknown>)['value']
+    if (typeof value === 'string') candidate = value
   }
 
   if (candidate) {
     // Direct match
-    if (mapping[candidate]) return { sheetName: candidate, spreadsheetId: mapping[candidate] }
+    const direct = mapping[candidate]
+    if (direct) return { sheetName: candidate, spreadsheetId: direct }
     // Case-insensitive match
     const lower = candidate.toLowerCase()
     for (const [name, id] of Object.entries(mapping)) {
@@ -125,6 +122,16 @@ export async function wirePackSheets(
 
   const results: WireResult[] = []
 
+  // A single client for all workflows. Wiring always needs to READ the deployed
+  // workflow from n8n — even in dry-run — because the pack result doesn't carry
+  // the workflow JSON. Dry-run only skips the write-back.
+  let client: import('../providers/n8n/api-client.js').N8nApiClient | null = null
+  if (n8nBaseUrl && n8nApiKey) {
+    const { N8nApiClient } = await import('../providers/n8n/api-client.js')
+    const { nullLogger } = await import('../utils/logger.js')
+    client = new N8nApiClient(n8nBaseUrl, n8nApiKey, nullLogger)
+  }
+
   for (const wf of pack.workflows) {
     if (wf.error || !wf.workflowId) {
       results.push({
@@ -150,28 +157,22 @@ export async function wirePackSheets(
     }
 
     try {
-      // Fetch current workflow from n8n (or skip if no connection info)
-      let workflow: N8nWorkflow
-
-      if (!dryRun && n8nBaseUrl && n8nApiKey) {
-        const { N8nApiClient } = await import('../providers/n8n/api-client.js')
-        const client = new N8nApiClient(n8nBaseUrl, n8nApiKey)
-        const response = await client.getWorkflow(wf.workflowId)
-        workflow = response as unknown as N8nWorkflow
-      } else {
-        // Dry run or no n8n connection: nothing to fetch, report what would be patched
+      if (!client) {
         result.skipped = true
-        result.skipReason = dryRun ? 'Dry run — no changes made' : 'No n8n connection configured'
-
-        // Still find sheet nodes and report what would be patched
-        const sheetNodes = findSheetNodes({
-          name: wf.name,
-          nodes: [],
-          connections: {},
-        })
-
+        result.skipReason = 'No n8n connection configured — set N8N_BASE_URL and N8N_API_KEY (wiring reads the deployed workflow even in dry-run)'
         results.push(result)
         continue
+      }
+
+      const response = await client.getWorkflow(wf.workflowId)
+      // Build a clean workflow from the response — the raw GET payload carries
+      // read-only fields (id, active, createdAt, versionId, …) that n8n's
+      // PUT /workflows rejects as additional properties.
+      const workflow: N8nWorkflow = {
+        name: response.name,
+        nodes: response.nodes,
+        connections: response.connections,
+        settings: response.settings ?? {},
       }
 
       // Find all Google Sheets nodes
@@ -234,9 +235,7 @@ export async function wirePackSheets(
       }
 
       // Push back to n8n if validation passed and not a dry run
-      if (result.validationPassed && !dryRun && n8nBaseUrl && n8nApiKey) {
-        const { N8nApiClient } = await import('../providers/n8n/api-client.js')
-        const client = new N8nApiClient(n8nBaseUrl, n8nApiKey)
+      if (result.validationPassed && !dryRun) {
         await client.updateWorkflow(wf.workflowId, patchedWorkflow)
         result.pushed = true
       }

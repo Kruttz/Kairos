@@ -1,6 +1,14 @@
 import { describe, it, expect } from 'vitest'
-import { wirePackSheets, formatWireReport } from '../../../src/pack/pack-wirer.js'
+import {
+  wirePackSheets,
+  formatWireReport,
+  extractSheetDocumentId,
+  patchSheetDocumentId,
+  findSheetNodes,
+  resolveSheetName,
+} from '../../../src/pack/pack-wirer.js'
 import type { WorkflowPackResult } from '../../../src/pack/pack-builder.js'
+import type { N8nWorkflow } from '../../../src/types/workflow.js'
 
 function makePack(overrides?: Partial<WorkflowPackResult>): WorkflowPackResult {
   return {
@@ -65,17 +73,17 @@ describe('wirePackSheets', () => {
     expect(report.results[0]!.skipReason).toContain('build error')
   })
 
-  it('returns dry run report without pushing to n8n', async () => {
+  it('skips with a clear reason when no n8n connection is configured (dry run)', async () => {
     const pack = makePack()
     const report = await wirePackSheets(pack, { Contacts: '1sheet' }, {
       dryRun: true,
-      n8nBaseUrl: 'http://localhost:5678',
-      n8nApiKey: 'test-key',
+      // No n8nBaseUrl/n8nApiKey — wiring needs to read the deployed workflow even in dry-run
     })
 
-    // In dry run, we can't fetch from n8n, so the workflow is skipped
     expect(report.dryRun).toBe(true)
     expect(report.totalPushed).toBe(0)
+    expect(report.results[0]!.skipped).toBe(true)
+    expect(report.results[0]!.skipReason).toContain('No n8n connection')
   })
 
   it('reports missing n8n connection correctly in non-dry-run', async () => {
@@ -102,6 +110,110 @@ describe('wirePackSheets', () => {
     expect(report.totalPatched).toBe(0)
     expect(report.totalPushed).toBe(0)
     expect(report.results.length).toBe(2)
+  })
+})
+
+// The real n8n ResourceLocator shape: __rl is a BOOLEAN flag, mode/value are siblings.
+// These tests pin that shape — an earlier implementation treated __rl as a nested
+// object holding value, which silently no-opped the patch.
+describe('extractSheetDocumentId', () => {
+  it('reads value from the real n8n ResourceLocator shape', () => {
+    const params = {
+      documentId: { __rl: true, mode: 'id', value: '1AbCdEfG' },
+    }
+    expect(extractSheetDocumentId(params)).toBe('1AbCdEfG')
+  })
+
+  it('reads a plain string documentId', () => {
+    expect(extractSheetDocumentId({ documentId: '1AbCdEfG' })).toBe('1AbCdEfG')
+  })
+
+  it('returns null when documentId is missing', () => {
+    expect(extractSheetDocumentId({})).toBeNull()
+  })
+
+  it('returns null when the ResourceLocator has no string value', () => {
+    expect(extractSheetDocumentId({ documentId: { __rl: true, mode: 'id' } })).toBeNull()
+  })
+})
+
+describe('patchSheetDocumentId', () => {
+  it('produces the canonical ResourceLocator with __rl as boolean true', () => {
+    const params = {
+      documentId: { __rl: true, mode: 'list', value: 'REPLACE_ME', cachedResultName: 'Old Sheet' },
+      sheetName: { __rl: true, mode: 'name', value: 'Contacts' },
+    }
+    const patched = patchSheetDocumentId(params, '1NewSheetId')
+    const doc = patched['documentId'] as Record<string, unknown>
+
+    expect(doc['__rl']).toBe(true)
+    expect(doc['mode']).toBe('id')
+    expect(doc['value']).toBe('1NewSheetId')
+    // The effective value n8n reads (doc.value) must be the NEW id — nothing buried in a nested object
+    expect(typeof doc['__rl']).toBe('boolean')
+    // Other params untouched
+    expect(patched['sheetName']).toEqual(params.sheetName)
+  })
+
+  it('round-trips: extract after patch returns the new id', () => {
+    const params = { documentId: { __rl: true, mode: 'id', value: 'PLACEHOLDER' } }
+    const patched = patchSheetDocumentId(params, '1RealId')
+    expect(extractSheetDocumentId(patched)).toBe('1RealId')
+  })
+
+  it('converts a plain-string documentId into ResourceLocator format', () => {
+    const patched = patchSheetDocumentId({ documentId: 'PLACEHOLDER' }, '1RealId')
+    const doc = patched['documentId'] as Record<string, unknown>
+    expect(doc['__rl']).toBe(true)
+    expect(doc['value']).toBe('1RealId')
+  })
+
+  it('does not mutate the original params', () => {
+    const params = { documentId: { __rl: true, mode: 'id', value: 'ORIGINAL' } }
+    patchSheetDocumentId(params, '1NewId')
+    expect(params.documentId.value).toBe('ORIGINAL')
+  })
+})
+
+describe('findSheetNodes', () => {
+  it('finds googleSheets and googleSheetsTrigger nodes with their current doc ids', () => {
+    const workflow: N8nWorkflow = {
+      name: 'Test',
+      nodes: [
+        { id: '1', name: 'Trigger', type: 'n8n-nodes-base.googleSheetsTrigger', typeVersion: 1, position: [0, 0], parameters: { documentId: { __rl: true, mode: 'id', value: 'DOC1' } } },
+        { id: '2', name: 'Not Sheets', type: 'n8n-nodes-base.set', typeVersion: 3, position: [0, 0], parameters: {} },
+        { id: '3', name: 'Write Row', type: 'n8n-nodes-base.googleSheets', typeVersion: 4.5, position: [0, 0], parameters: { documentId: { __rl: true, mode: 'id', value: 'DOC2' } } },
+      ],
+      connections: {},
+    }
+    const found = findSheetNodes(workflow)
+    expect(found).toHaveLength(2)
+    expect(found[0]).toMatchObject({ nodeName: 'Trigger', currentDocId: 'DOC1', nodeIndex: 0 })
+    expect(found[1]).toMatchObject({ nodeName: 'Write Row', currentDocId: 'DOC2', nodeIndex: 2 })
+  })
+})
+
+describe('resolveSheetName', () => {
+  it('matches the sheetName ResourceLocator value against the mapping', () => {
+    const params = { sheetName: { __rl: true, mode: 'name', value: 'Contacts' } }
+    const match = resolveSheetName(params, { Contacts: '1abc', Orders: '2def' })
+    expect(match).toEqual({ sheetName: 'Contacts', spreadsheetId: '1abc' })
+  })
+
+  it('matches case-insensitively', () => {
+    const params = { sheetName: { __rl: true, mode: 'name', value: 'contacts' } }
+    const match = resolveSheetName(params, { Contacts: '1abc', Orders: '2def' })
+    expect(match).toEqual({ sheetName: 'Contacts', spreadsheetId: '1abc' })
+  })
+
+  it('falls back to the single mapping entry when the node names no sheet', () => {
+    const match = resolveSheetName({}, { OnlySheet: '1xyz' })
+    expect(match).toEqual({ sheetName: 'OnlySheet', spreadsheetId: '1xyz' })
+  })
+
+  it('returns null when multiple sheets exist and none match', () => {
+    const params = { sheetName: { __rl: true, mode: 'name', value: 'Unknown' } }
+    expect(resolveSheetName(params, { Contacts: '1abc', Orders: '2def' })).toBeNull()
   })
 })
 

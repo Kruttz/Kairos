@@ -109,7 +109,8 @@ export async function fetchLatestTrace(
 ): Promise<ExecutionTrace | null> {
   try {
     const { N8nApiClient } = await import('../providers/n8n/api-client.js')
-    const client = new N8nApiClient(n8nBaseUrl, n8nApiKey)
+    const { nullLogger } = await import('../utils/logger.js')
+    const client = new N8nApiClient(n8nBaseUrl, n8nApiKey, nullLogger)
 
     const executions = await client.getExecutions(workflowId, { limit: 1 })
     if (executions.length === 0) return null

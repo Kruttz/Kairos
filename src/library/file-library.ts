@@ -345,8 +345,11 @@ export class FileLibrary implements IWorkflowLibrary {
       }
     }
 
+    // Require an actual relevance signal (keyword or node-fingerprint overlap).
+    // Outcome/deploy scores alone are > 0 for every entry, so filtering on total
+    // score would return the library's "most reliable" workflows for ANY query.
     const scored = hybridScore(queryTokens, description, shells, docTokenArrays, idf, embeddingData)
-      .filter((m) => m.score > 0)
+      .filter((m) => m.signals.tfidf > 0 || m.signals.nodeFingerprint > 0)
       .sort((a, b) => b.score - a.score)
 
     const clusters = clusterWorkflows(shells)
@@ -359,7 +362,8 @@ export class FileLibrary implements IWorkflowLibrary {
       const m = this.meta.find((m) => m.id === r.workflow.id)
       if (m) m.timesRetrieved = (m.timesRetrieved ?? 0) + 1
     }
-    this.persist()
+    // Fire-and-forget: a retrieval-counter write failure shouldn't fail the search
+    this.persist().catch(() => {})
 
     // Lazy-load full workflow files for the top matches only
     const results = await Promise.all(
@@ -616,7 +620,9 @@ export class FileLibrary implements IWorkflowLibrary {
   }
 
   private persist(): Promise<void> {
-    this.writeQueue = this.writeQueue.then(async () => {
+    // Chain the queue on a settled promise so one failed write can't poison
+    // the chain — the caller still sees the error via the returned promise.
+    const task = this.writeQueue.then(async () => {
       const releaseLock = await this.acquireLock()
       try {
         const indexPath = join(this.dir, 'index.json')
@@ -647,6 +653,7 @@ export class FileLibrary implements IWorkflowLibrary {
         await releaseLock()
       }
     })
-    return this.writeQueue
+    this.writeQueue = task.catch(() => {})
+    return task
   }
 }

@@ -1,12 +1,16 @@
+import { containsKeyword } from './keyword-match.js'
+
+// First match wins — more specific service names come before generic terms.
 const TYPE_KEYWORDS: Array<[string, string]> = [
   ['gmail', 'email'],
   ['imap', 'email'],
   ['smtp', 'email'],
-  [' email', 'email'],
+  ['email', 'email'],
+  ['emails', 'email'],
   ['slack', 'slack'],
   ['telegram', 'messaging'],
   ['discord', 'messaging'],
-  [' sms', 'messaging'],
+  ['sms', 'messaging'],
   ['twilio', 'messaging'],
   ['webhook', 'webhook'],
   ['google sheets', 'data'],
@@ -16,7 +20,7 @@ const TYPE_KEYWORDS: Array<[string, string]> = [
   ['github', 'devops'],
   ['gitlab', 'devops'],
   ['schedule', 'schedule'],
-  [' cron', 'schedule'],
+  ['cron', 'schedule'],
   ['daily', 'schedule'],
   ['weekly', 'schedule'],
   ['hourly', 'schedule'],
@@ -27,23 +31,22 @@ const TYPE_KEYWORDS: Array<[string, string]> = [
   ['mysql', 'database'],
   ['supabase', 'database'],
   ['redis', 'database'],
-  [' database', 'database'],
-  [' llm', 'ai'],
-  [' gpt', 'ai'],
+  ['database', 'database'],
+  ['llm', 'ai'],
+  ['gpt', 'ai'],
   ['claude', 'ai'],
-  [' agent', 'ai'],
+  ['agent', 'ai'],
   ['langchain', 'ai'],
-  [' ai ', 'ai'],
-  [' ai', 'ai'],
+  ['ai', 'ai'],
   ['http request', 'api'],
   ['rest api', 'api'],
-  [' api', 'api'],
+  ['api', 'api'],
 ]
 
 export function inferWorkflowType(description: string): string | null {
-  const lower = ' ' + description.toLowerCase()
+  const lower = description.toLowerCase()
   for (const [keyword, type] of TYPE_KEYWORDS) {
-    if (lower.includes(keyword)) return type
+    if (containsKeyword(lower, keyword)) return type
   }
   return null
 }

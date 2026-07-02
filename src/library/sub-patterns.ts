@@ -146,7 +146,7 @@ export const SUB_PATTERNS: SubPattern[] = [
         node: 'Code',
         param: 'jsCode',
         mustBe: 'Must end with: return [{ json: { field: value, ... } }]',
-        reason: 'n8n requires the array-of-items format. Returning a plain object, a non-array, or omitting the json key silently breaks all downstream $json references (Rule 67).',
+        reason: 'n8n requires the array-of-items format. Returning a plain object, a non-array, or omitting the json key silently breaks all downstream $json references (Rule 103).',
       },
     ],
     commonMistakes: [
@@ -155,7 +155,7 @@ export const SUB_PATTERNS: SubPattern[] = [
       'return items — only valid if items is already in the correct n8n format; never return raw input items without wrapping.',
       'Leaving the jsCode parameter empty or comment-only — fails pre-delivery check 12.',
     ],
-    validatorRuleIds: [67],
+    validatorRuleIds: [103],
     connectionSnippet: `// Correct Code node return:
 return [{ json: { result: computedValue, count: items.length } }];
 
@@ -229,7 +229,7 @@ return items.map(item => ({ json: { processed: true, id: item.json.id } }));`,
       'Using $now directly as a string — it is a DateTime object; call .toISO() or .toFormat(...) to get a string.',
       'Uppercase format tokens: "YYYY" and "DD" are Moment-style — Luxon uses "yyyy" and "dd".',
     ],
-    validatorRuleIds: [24, 25, 26],
+    validatorRuleIds: [92, 93, 112, 122, 125],
     connectionSnippet: `// Luxon — correct patterns:
 $now.toISO()                          // full ISO timestamp
 $now.toFormat('yyyy-MM-dd')           // date string (lowercase tokens)

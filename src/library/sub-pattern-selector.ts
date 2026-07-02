@@ -1,4 +1,5 @@
 import { SUB_PATTERNS, type SubPattern } from './sub-patterns.js'
+import { containsKeyword } from '../utils/keyword-match.js'
 
 const MAX_PATTERNS = 4
 
@@ -7,7 +8,7 @@ export function selectSubPatterns(description: string, max = MAX_PATTERNS): SubP
 
   const scored = SUB_PATTERNS
     .map(pattern => {
-      const score = pattern.intentTags.filter(tag => lower.includes(tag)).length
+      const score = pattern.intentTags.filter(tag => containsKeyword(lower, tag)).length
       return { pattern, score }
     })
     .filter(({ score }) => score > 0)

@@ -142,6 +142,7 @@ This means Kairos works with **any LLM** — Claude, GPT, Gemini, Llama, or anyt
 |------|-------------|
 | `kairos_library` | Browse or search the local Kairos workflow library — returns metadata, node counts, deploy history, and n8n workflow IDs |
 | `kairos_outcome` | Record build outcome against a library entry — feeds the pattern learning system with attempt counts, failed rules, and generation mode |
+| `kairos_record_trace` | Record the most recent n8n execution of a deployed workflow into the library — grounds retrieval in real runtime behavior (stores node names, error types, and item counts only — never data values) |
 
 ---
 
@@ -211,9 +212,11 @@ Tested against 20 workflow prompts of varying complexity (simple triggers, multi
 | Avg generation time | 30.6s | **20.7s** | -32% |
 | Failures | 0 | 0 | — |
 
-The baseline run used Claude with the 124-rule validator and correction loop but no library. The seeded run used the same validator plus a library of 105 workflows (16 organic + 89 ingested from the n8n community). The broader local development library now contains 286+ generated/ingested workflows. Template seeding eliminated the correction loop entirely and cut generation time by a third.
+Both runs used the same Claude model and correction loop; the seeded run added a library of 105 workflows (16 organic + 89 ingested from the n8n community). The broader local development library now contains 286+ generated/ingested workflows. Template seeding eliminated the correction loop entirely and cut generation time by a third.
 
 > **Note:** These results confirm that generated workflows are structurally valid and deployable to n8n. They do not verify runtime execution correctness, credential configuration, or whether the workflow output matches user intent.
+>
+> **Validator version caveat:** these benchmark runs were recorded against an earlier 34-rule version of the validator. The validator has since grown to 124 rules; the benchmark has not yet been re-run against it, so pass rates under the current, stricter rule set may differ.
 
 ---
 
@@ -476,6 +479,13 @@ kairos build-pack "E-commerce store operations" --dry-run
 # Skip confirmation prompt and build immediately
 kairos build-pack "Real estate agency operations" --yes
 
+# Wire deployed pack workflows to real Google Sheet IDs (patches documentId ResourceLocators)
+kairos pack wire my-pack --sheet-ids '{"Contacts": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"}'
+kairos pack wire my-pack --sheet-ids ./sheet-ids.json --dry-run
+
+# Record a deployed workflow's latest n8n execution into the library (improves retrieval)
+kairos trace record <n8n-workflow-id>
+
 # Seed library with n8n community templates
 kairos sync-templates --max 200
 
@@ -643,6 +653,19 @@ After hybrid scoring, results are **reranked by cluster**: workflows are grouped
 - High-scoring matches (>= 0.92) provide direct structural templates
 - Medium matches (>= 0.72) provide reference examples
 - Failure patterns from matched workflows and cluster-level warnings are injected into Claude's prompt
+
+**Optional semantic retrieval (embeddings):** Pass an `embeddingFn` to `FileLibrary` to add cosine similarity as a fifth signal (weights shift to 0.30 TF-IDF / 0.20 fingerprint / 0.25 cosine / 0.15 outcome / 0.10 deploy for entries with cached vectors — entries not yet embedded keep the keyword-only weights). Embeddings are computed lazily during search (a few per call, 2s timeout, silent BM25 fallback) and cached in `~/.kairos/library/embedding-cache.json`. Fully backward-compatible: omit `embeddingFn` and nothing changes.
+
+```ts
+const library = new FileLibrary(undefined, {
+  embeddingFn: async (text) => {
+    const resp = await openai.embeddings.create({ model: 'text-embedding-3-small', input: text })
+    return resp.data[0].embedding
+  },
+})
+```
+
+**Execution trace learning:** After a deployed workflow runs in n8n, record its latest execution with `kairos trace record <n8n-workflow-id>` (CLI) or `kairos_record_trace` (MCP). Kairos stores a privacy-safe trace (status, executed node names, error *types*, item counts — never data values, up to 10 per workflow) and computes a `runtimeReliabilityScore` that blends into the outcome signal (70% generation outcome, 30% runtime reliability). Workflows that actually run reliably in production rank higher in future retrieval.
 
 **Template seeding:** Run `kairos sync-templates` to ingest validated workflows from the n8n community library. Templates are safety-filtered (blocks code/executeCommand/ssh nodes, hardcoded secrets) and tagged with `sourceKind: 'n8n-template'`. In benchmarks, seeding the library with 89 templates improved first-try pass rate from 55% to 100%.
 

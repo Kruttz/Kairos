@@ -97,3 +97,23 @@ describe('formatIntentRequirements', () => {
     expect(text).toContain('MUST include')
   })
 })
+
+// Regression: keywords must match on word boundaries, not substrings.
+// 'ai' is a substring of "email"/"daily"/"wait", which previously caused
+// plain email workflows to classify as ai_processing.
+describe('word-boundary keyword matching', () => {
+  it('does NOT classify a plain email notification as ai_processing', () => {
+    const result = classifyIntent('Send an email to bob when a form is submitted')
+    expect(result?.requirements.intent).not.toBe('ai_processing')
+  })
+
+  it('does not let "daily" or "wait" trigger the ai keyword', () => {
+    const result = classifyIntent('daily reminder to wait for the maintenance window')
+    expect(result?.requirements.intent).not.toBe('ai_processing')
+  })
+
+  it('still classifies genuine AI requests as ai_processing', () => {
+    const result = classifyIntent('use an AI agent with claude to classify support tickets')
+    expect(result?.requirements.intent).toBe('ai_processing')
+  })
+})

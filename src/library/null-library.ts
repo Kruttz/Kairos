@@ -1,4 +1,4 @@
-import type { IWorkflowLibrary, WorkflowMatch, StoredWorkflow, WorkflowMetadataInput, LibraryFilters, SearchOptions, OutcomeData } from './types.js'
+import type { IWorkflowLibrary, WorkflowMatch, StoredWorkflow, WorkflowMetadataInput, LibraryFilters, SearchOptions, OutcomeData, ExecutionTrace } from './types.js'
 import type { N8nWorkflow } from '../types/workflow.js'
 import { generateUUID } from '../utils/uuid.js'
 
@@ -16,6 +16,8 @@ export class NullLibrary implements IWorkflowLibrary {
   async recordDeployment(_id: string): Promise<void> {}
 
   async recordOutcome(_id: string, _outcome: OutcomeData): Promise<void> {}
+
+  async recordTrace(_id: string, _trace: ExecutionTrace): Promise<void> {}
 
   async get(_id: string): Promise<StoredWorkflow | null> {
     return null

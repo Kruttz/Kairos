@@ -1,3 +1,5 @@
+import { containsKeyword } from '../utils/keyword-match.js'
+
 export interface RequiredCategory {
   category: string
   examples: string[]
@@ -237,7 +239,7 @@ export function classifyIntent(description: string): IntentMatch | null {
   let bestMatch: { requirements: IntentRequirements; confidence: number } | null = null
 
   for (const { keywords, ...requirements } of INTENTS) {
-    const matchCount = keywords.filter(kw => lower.includes(kw)).length
+    const matchCount = keywords.filter(kw => containsKeyword(lower, kw)).length
     if (matchCount === 0) continue
 
     const confidence = Math.min(matchCount / 3, 1)  // 3+ keyword matches = max confidence

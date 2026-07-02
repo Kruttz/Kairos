@@ -203,10 +203,15 @@ export function hybridScore(
     const outcome = outcomeScore(w)
     const deploy = Math.min(deployScore(w), 1.5) / 1.5
 
+    // Use embedding weights only when THIS workflow has a cached vector.
+    // Embeddings are computed lazily (a few per search), so during cache warm-up
+    // most entries have no vector — scoring them with cosine=0 under reduced
+    // keyword weights would bias ranking toward whichever entries got embedded
+    // first. Per-workflow fallback keeps un-embedded entries on the BM25 scale.
+    const wv = embeddingData?.workflowVectors.get(w.id)
     let score: number
-    if (embeddingData) {
-      const wv = embeddingData.workflowVectors.get(w.id)
-      const cosine = wv ? cosineSimilarity(embeddingData.queryVector, wv) : 0
+    if (embeddingData && wv) {
+      const cosine = cosineSimilarity(embeddingData.queryVector, wv)
       score = Math.min(
         EMBEDDING_WEIGHTS.tfidf * tfidf +
         EMBEDDING_WEIGHTS.nodeFingerprint * nodeFingerprint +

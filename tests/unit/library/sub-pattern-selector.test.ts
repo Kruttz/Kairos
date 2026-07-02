@@ -66,6 +66,23 @@ describe('selectSubPatterns', () => {
     const results = selectSubPatterns('output parser structured json schema format instructions zod extract fields parse json')
     expect(results[0]?.id).toBe('output-parser')
   })
+
+  // Regression: intent tags must match on word boundaries, not substrings —
+  // 'date' ⊂ "update"/"validate", 'now' ⊂ "know", 'code' ⊂ "encode".
+  it('does not match luxon-datetime on "update" or "validate"', () => {
+    const results = selectSubPatterns('update the record and validate the response')
+    expect(results.map(p => p.id)).not.toContain('luxon-datetime')
+  })
+
+  it('does not match code-node-output on "encode"', () => {
+    const results = selectSubPatterns('encode the payload before sending')
+    expect(results.map(p => p.id)).not.toContain('code-node-output')
+  })
+
+  it('still matches luxon-datetime on a genuine date request', () => {
+    const results = selectSubPatterns('format the date as yyyy-MM-dd for the report')
+    expect(results.map(p => p.id)).toContain('luxon-datetime')
+  })
 })
 
 describe('formatSubPatterns', () => {
