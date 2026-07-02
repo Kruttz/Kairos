@@ -8,6 +8,8 @@ import type { DesignRequest, BuiltPrompt, SystemPromptBlock } from './types.js'
 import { SYSTEM_PROMPT_V1 } from './prompts/v1.js'
 import { scoreToMode } from '../utils/thresholds.js'
 import { RULE_MITIGATIONS, RULE_EXAMPLES } from '../validation/rule-metadata.js'
+import { selectSubPatterns, formatSubPatterns } from '../library/sub-pattern-selector.js'
+import { classifyIntent, formatIntentRequirements } from '../library/intent-map.js'
 
 const CRITICAL_SCORE_THRESHOLD = 0.15
 
@@ -147,6 +149,27 @@ Fix ALL of the above issues in your new response. Do not repeat any of these mis
       }
     }
 
+    if (description && this.profile !== 'minimal') {
+      const intentMatch = classifyIntent(description)
+      if (intentMatch) {
+        const intentText = formatIntentRequirements(intentMatch)
+        if (intentText) blocks.push({ type: 'text', text: intentText })
+      }
+    }
+
+    const refFailureContext = this.profile !== 'minimal' ? this.buildReferenceFailureContext(matches) : null
+    if (refFailureContext) {
+      blocks.push({ type: 'text', text: refFailureContext })
+    }
+
+    if (description && this.profile !== 'minimal') {
+      const subPatterns = selectSubPatterns(description)
+      const subPatternText = formatSubPatterns(subPatterns)
+      if (subPatternText) {
+        blocks.push({ type: 'text', text: subPatternText })
+      }
+    }
+
     const warnings = this.buildFailureWarnings(matches, globalFailureRates, description)
     if (warnings) {
       blocks.push({ type: 'text', text: warnings })
@@ -280,21 +303,69 @@ Fix ALL of the above issues in your new response. Do not repeat any of these mis
       sections.push(`### ${label}\n${lines.join('\n')}`)
     }
 
+    const coveredRules = new Set(patterns.map(p => p.rule))
+    const extraRulesSeen = new Set<number>()
+
     for (const match of matches) {
+      // Surface failurePatterns (from this workflow's own build history)
       const fps = match.workflow.failurePatterns
-      if (!fps?.length) continue
-      const coveredRules = new Set(patterns.map(p => p.rule))
-      const extra = fps.filter(fp => !coveredRules.has(fp.rule))
-      for (const fp of extra) {
-        const remedy = RULE_MITIGATIONS[fp.rule]
-        const remedyStr = remedy ? ` — Fix: ${remedy}` : ''
-        sections.push(`- Rule ${fp.rule}: "${fp.message}"${remedyStr} (seen in similar workflows)`)
+      if (fps?.length) {
+        for (const fp of fps.filter(fp => !coveredRules.has(fp.rule) && !extraRulesSeen.has(fp.rule))) {
+          const remedy = RULE_MITIGATIONS[fp.rule]
+          const remedyStr = remedy ? ` — Fix: ${remedy}` : ''
+          sections.push(`- Rule ${fp.rule}: "${fp.message}"${remedyStr} (seen in similar workflows)`)
+          extraRulesSeen.add(fp.rule)
+        }
+      }
+
+      // Also surface rules from outcomeStats.failedRules (rules that failed when OTHER builds used this as a reference)
+      const stats = match.workflow.outcomeStats
+      if (stats && stats.totalUses > 0) {
+        for (const [ruleStr] of Object.entries(stats.failedRules)) {
+          const rule = parseInt(ruleStr, 10)
+          if (coveredRules.has(rule) || extraRulesSeen.has(rule)) continue
+          const remedy = RULE_MITIGATIONS[rule]
+          const remedyStr = remedy ? ` — Fix: ${remedy}` : ''
+          sections.push(`- Rule ${rule}${remedyStr} (historically problematic when this reference is used)`)
+          extraRulesSeen.add(rule)
+        }
       }
     }
 
     if (sections.length === 0) return null
 
     return `## Known Failure Patterns — AVOID THESE\n\nGrouped by generation stage. Fix these BEFORE outputting your response:\n\n${sections.join('\n\n')}`
+  }
+
+  private buildReferenceFailureContext(matches: WorkflowMatch[]): string | null {
+    const sections: string[] = []
+
+    for (const match of matches.slice(0, 2)) {
+      const stats = match.workflow.outcomeStats
+      if (!stats || stats.totalUses === 0) continue
+
+      const topFailed = Object.entries(stats.failedRules)
+        .map(([rule, count]) => ({ rule: parseInt(rule, 10), count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 3)
+
+      if (topFailed.length === 0) continue
+
+      const shortDesc = match.workflow.description.length > 60
+        ? match.workflow.description.slice(0, 57) + '...'
+        : match.workflow.description
+      const header = `Matched workflow "${shortDesc}" (similarity: ${match.score.toFixed(2)}, used ${stats.totalUses}x as reference):`
+      const ruleLines = topFailed.map(({ rule, count }) => {
+        const remedy = RULE_MITIGATIONS[rule]
+        const remedyStr = remedy ? ` — ${remedy}` : ''
+        return `  - Rule ${rule} failed ${count}x in past builds using this reference${remedyStr}`
+      })
+      sections.push(header + '\n' + ruleLines.join('\n'))
+    }
+
+    if (sections.length === 0) return null
+
+    return `## Reference Workflow Failure History\n\nWhen these matched workflows were used as references, these rules failed most in resulting builds. You MUST avoid repeating them:\n\n${sections.join('\n\n')}`
   }
 
   private buildLegacyWarnings(matches: WorkflowMatch[], globalFailureRates: RuleFailureRate[]): string | null {

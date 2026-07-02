@@ -257,7 +257,7 @@ server.tool(
 
 server.tool(
   'kairos_validate',
-  'Validate n8n workflow JSON against 34 structural rules. Returns pass/fail with specific issues. If validation fails, fix the issues and call this again. Errors block deployment; warnings are advisory.',
+  'Validate n8n workflow JSON against 124 structural rules. Returns pass/fail with specific issues. If validation fails, fix the issues and call this again. Errors block deployment; warnings are advisory.',
   {
     workflow: z.string().describe('The workflow JSON string to validate'),
     kairos_run_id: z.string().optional().describe('Run ID from kairos_prompt — enables telemetry correlation'),
@@ -715,13 +715,47 @@ server.tool(
   },
 )
 
-async function main() {
-  if (!process.env['ANTHROPIC_API_KEY']) {
-    process.stderr.write(
-      '[kairos-mcp] WARNING: ANTHROPIC_API_KEY is not set — kairos_prompt will fail. Set it before using workflow generation tools.\n',
-    )
-  }
+server.tool(
+  'kairos_record_trace',
+  'Record the most recent execution of a deployed n8n workflow into the Kairos library. This improves future retrieval quality by grounding the library in real runtime behavior. Run after a workflow has executed in production.',
+  {
+    n8n_workflow_id: z.string().describe('The n8n workflow ID to fetch the latest execution for'),
+  },
+  async ({ n8n_workflow_id }) => {
+    const client = getApiClient()
+    const executions = await client.getExecutions(n8n_workflow_id, { limit: 1 })
+    if (executions.length === 0) {
+      return mcpText(`No executions found for workflow ${n8n_workflow_id}. Run the workflow in n8n first.`)
+    }
 
+    const detail = await client.getExecution(executions[0]!.id)
+    const { parseExecutionTrace } = await import('./telemetry/execution-tracer.js')
+    const trace = parseExecutionTrace(detail)
+
+    await library.initialize()
+    const all = await library.list()
+    const match = all.find(w => w.n8nWorkflowId === n8n_workflow_id)
+
+    if (!match) {
+      return mcpText(`No library entry found for n8n workflow ${n8n_workflow_id}. Deploy with kairos_deploy first.`)
+    }
+
+    await library.recordTrace(match.id, trace)
+
+    return mcpText(JSON.stringify({
+      recorded: true,
+      libraryId: match.id,
+      workflowDescription: match.description,
+      executionId: trace.executionId,
+      status: trace.status,
+      durationMs: trace.durationMs,
+      executedNodes: trace.executedNodes.length,
+      erroredNodes: trace.erroredNodes.length,
+    }, null, 2))
+  },
+)
+
+async function main() {
   const useHttp = process.argv.includes('--http')
 
   if (useHttp) {

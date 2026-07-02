@@ -231,6 +231,65 @@ describe('PromptBuilder', () => {
     })
   })
 
+  describe('failure-aware retrieval', () => {
+    it('injects reference failure history when matched workflow has outcomeStats failedRules', () => {
+      const match = makeMatch(0.85, {
+        description: 'send email on webhook trigger',
+        outcomeStats: {
+          totalUses: 5,
+          totalAttempts: 8,
+          firstTryPasses: 2,
+          failedRules: { '99': 3, '55': 2 },
+        },
+      })
+      const prompt = builder.build({ description: 'email webhook notification' }, [match])
+      const refBlock = prompt.system.find(b => b.text.includes('Reference Workflow Failure History'))
+      expect(refBlock).toBeDefined()
+      expect(refBlock!.text).toContain('Rule 99')
+      expect(refBlock!.text).toContain('Rule 55')
+      expect(refBlock!.text).toContain('3x')
+      expect(refBlock!.text).toContain('2x')
+    })
+
+    it('skips reference failure history when matched workflow has no outcomeStats', () => {
+      const match = makeMatch(0.85)
+      const prompt = builder.build({ description: 'email notification' }, [match])
+      const refBlock = prompt.system.find(b => b.text.includes('Reference Workflow Failure History'))
+      expect(refBlock).toBeUndefined()
+    })
+
+    it('skips reference failure history when outcomeStats has empty failedRules', () => {
+      const match = makeMatch(0.85, {
+        outcomeStats: { totalUses: 5, totalAttempts: 5, firstTryPasses: 5, failedRules: {} },
+      })
+      const prompt = builder.build({ description: 'email notification' }, [match])
+      const refBlock = prompt.system.find(b => b.text.includes('Reference Workflow Failure History'))
+      expect(refBlock).toBeUndefined()
+    })
+
+    it('reference failure history appears before sub-patterns and failure warnings', () => {
+      const match = makeMatch(0.85, {
+        outcomeStats: { totalUses: 3, totalAttempts: 5, firstTryPasses: 1, failedRules: { '99': 2 } },
+      })
+      // Use a description that triggers a sub-pattern (output parser)
+      const prompt = builder.build({ description: 'extract structured output with output parser and zod schema' }, [match])
+      const refIdx = prompt.system.findIndex(b => b.text.includes('Reference Workflow Failure History'))
+      const subPatternIdx = prompt.system.findIndex(b => b.text.includes('SUB-PATTERN'))
+      expect(refIdx).toBeGreaterThan(-1)
+      if (subPatternIdx !== -1) expect(refIdx).toBeLessThan(subPatternIdx)
+    })
+
+    it('reference failure history is suppressed in minimal profile', () => {
+      const match = makeMatch(0.85, {
+        outcomeStats: { totalUses: 5, totalAttempts: 8, firstTryPasses: 1, failedRules: { '99': 4 } },
+      })
+      const pb = new PromptBuilder('/nonexistent/patterns.json', 'minimal')
+      const prompt = pb.build({ description: 'test' }, [match])
+      const refBlock = prompt.system.find(b => b.text.includes('Reference Workflow Failure History'))
+      expect(refBlock).toBeUndefined()
+    })
+  })
+
   describe('rich pattern rendering', () => {
     let tmpDir: string
     let patternsPath: string

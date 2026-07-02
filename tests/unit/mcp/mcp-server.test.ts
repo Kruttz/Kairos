@@ -92,7 +92,8 @@ describe('Kairos MCP Server', () => {
     expect(names).toContain('kairos_replace')
     expect(names).toContain('kairos_library')
     expect(names).toContain('kairos_outcome')
-    expect(names).toHaveLength(15)
+    expect(names).toContain('kairos_record_trace')
+    expect(names).toHaveLength(16)
   })
 
   it('kairos_prompt returns a prompt even without n8n credentials (graceful fallback)', async () => {

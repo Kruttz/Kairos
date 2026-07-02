@@ -1,6 +1,19 @@
 import type { N8nWorkflow } from '../types/workflow.js'
 import type { CredentialRequirement } from '../types/result.js'
 
+/**
+ * Function that computes a semantic embedding vector for a text string.
+ * Provide this to FileLibrary to enable hybrid (semantic + BM25) retrieval.
+ * If not provided, retrieval falls back to BM25-only (existing behavior).
+ *
+ * Example usage with OpenAI:
+ *   const embedFn = async (text) => {
+ *     const resp = await openai.embeddings.create({ model: 'text-embedding-3-small', input: text })
+ *     return resp.data[0].embedding
+ *   }
+ */
+export type EmbeddingFn = (text: string) => Promise<number[]>
+
 export interface FailurePattern {
   rule: number
   message: string
@@ -41,6 +54,16 @@ export interface OutcomeStats {
   failedRules: Record<string, number>
 }
 
+export interface ExecutionTrace {
+  recordedAt: string
+  executionId: string
+  status: 'success' | 'error' | 'waiting' | 'running' | 'canceled'
+  durationMs: number | null
+  executedNodes: string[]
+  erroredNodes: Array<{ name: string; errorType: string }>
+  itemCount: number
+}
+
 export interface StoredWorkflow {
   id: string
   workflow: N8nWorkflow
@@ -65,6 +88,8 @@ export interface StoredWorkflow {
   timesUsedAsReference?: number
   outcomeStats?: OutcomeStats
   n8nWorkflowId?: string  // n8n instance workflowId if this was deployed
+  executionTraces?: ExecutionTrace[]
+  runtimeReliabilityScore?: number  // 0-1, computed from execution trace history
 }
 
 export interface WorkflowMatch {

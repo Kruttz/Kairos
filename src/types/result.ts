@@ -21,6 +21,8 @@ export interface BuildResult {
   credentialsNeeded: CredentialRequirement[]
   activationRequired: boolean
   generationAttempts: number
+  tokensInput: number
+  tokensOutput: number
   dryRun: boolean
   smokeTest?: SmokeTestResult
 }

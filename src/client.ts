@@ -196,6 +196,8 @@ export class Kairos {
         credentialsNeeded: designResult.credentialsNeeded,
         activationRequired: true,
         generationAttempts: designResult.attempts,
+        tokensInput: designResult.attemptMetadata.reduce((s, m) => s + m.tokensInput, 0),
+        tokensOutput: designResult.attemptMetadata.reduce((s, m) => s + m.tokensOutput, 0),
         dryRun: true,
       }
     }
@@ -205,13 +207,16 @@ export class Kairos {
     // Log the workflow ID immediately — if any post-deploy step fails, this ID
     // lets the user manually locate and clean up the orphaned workflow in n8n.
     this.logger.info('Workflow deployed to n8n', { workflowId: deployed.workflowId, name: deployed.name })
-    this.recordDeploy(deployed.workflowId)
 
     if (options?.activate) {
       await provider.activate(deployed.workflowId)
     }
 
+    // saveToLibrary must run before recordDeploy — recordDeploy chains onto saveQueue
+    // and reads the savedId produced by saveToLibrary. Calling recordDeploy first would
+    // read the previous build's savedId (or null on the first build).
     this.saveToLibrary(workflow, description, designResult, matches, deployed.workflowId)
+    this.recordDeploy(deployed.workflowId)
 
     let smokeTestResult: SmokeTestResult | undefined
     if (options?.smokeTest) {
@@ -249,6 +254,8 @@ export class Kairos {
       credentialsNeeded: designResult.credentialsNeeded,
       activationRequired: !options?.activate,
       generationAttempts: designResult.attempts,
+      tokensInput: totalTokensInput,
+      tokensOutput: totalTokensOutput,
       dryRun: false,
       ...(smokeTestResult !== undefined ? { smokeTest: smokeTestResult } : {}),
     }
@@ -345,6 +352,8 @@ export class Kairos {
       credentialsNeeded: designResult.credentialsNeeded,
       activationRequired: true,
       generationAttempts: designResult.attempts,
+      tokensInput: totalTokensInput,
+      tokensOutput: totalTokensOutput,
       dryRun: false,
     }
   }

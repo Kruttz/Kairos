@@ -4,6 +4,7 @@ import type { DeleteOptions, ExecutionFilter } from '../../types/options.js'
 import type { IProvider } from '../types.js'
 import { GuardError } from '../../errors/guard-error.js'
 import { ProviderError } from '../../errors/provider-error.js'
+import { ApiError } from '../../errors/api-error.js'
 import { N8nApiClient } from './api-client.js'
 import { N8nFieldStripper } from './stripper.js'
 
@@ -102,6 +103,10 @@ export class N8nProvider implements IProvider {
       try {
         executionId = await this.client.triggerManual(workflowId)
       } catch (err) {
+        // 404/405: the /run endpoint doesn't exist on this n8n version or isn't supported
+        if (err instanceof ApiError && (err.statusCode === 404 || err.statusCode === 405)) {
+          return { status: 'not-applicable', triggerType: 'not-applicable' }
+        }
         return { status: 'error', triggerType: 'manual', durationMs: Date.now() - start, error: String(err) }
       }
       try {

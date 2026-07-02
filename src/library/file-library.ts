@@ -10,10 +10,12 @@ import type {
   LibraryFilters,
   SearchOptions,
   OutcomeData,
+  EmbeddingFn,
 } from './types.js'
 import { generateUUID } from '../utils/uuid.js'
 import { scoreToMode } from '../utils/thresholds.js'
 import { hybridScore } from './scorer.js'
+import type { EmbeddingData } from './scorer.js'
 import { clusterWorkflows, rerank } from './cluster.js'
 
 export function tokenize(text: string): string[] {
@@ -74,14 +76,22 @@ function isValidOldEntry(item: unknown): item is StoredWorkflow {
   )
 }
 
+const EMBEDDING_CACHE_FILE = 'embedding-cache.json'
+const EMBEDDING_TIMEOUT_MS = 2_000
+
 export class FileLibrary implements IWorkflowLibrary {
   private readonly dir: string
   private meta: StoredWorkflowMeta[] = []
   private initPromise: Promise<void> | null = null
   private writeQueue: Promise<void> = Promise.resolve()
+  private readonly embeddingFn: EmbeddingFn | undefined
+  private embeddingCache: Map<string, number[]> = new Map()
+  private embeddingCacheLoaded = false
+  private embeddingWriteQueue: Promise<void> = Promise.resolve()
 
-  constructor(dir?: string) {
+  constructor(dir?: string, options?: { embeddingFn?: EmbeddingFn }) {
     this.dir = dir ?? join(homedir(), '.kairos', 'library')
+    this.embeddingFn = options?.embeddingFn
   }
 
   private get workflowsDir(): string {
@@ -238,6 +248,45 @@ export class FileLibrary implements IWorkflowLibrary {
     } as StoredWorkflow
   }
 
+  private get embeddingCachePath(): string {
+    return join(this.dir, EMBEDDING_CACHE_FILE)
+  }
+
+  private async loadEmbeddingCache(): Promise<void> {
+    if (this.embeddingCacheLoaded) return
+    this.embeddingCacheLoaded = true
+    try {
+      const raw = await readFile(this.embeddingCachePath, 'utf-8')
+      const parsed = JSON.parse(raw) as Record<string, number[]>
+      for (const [id, vec] of Object.entries(parsed)) {
+        if (Array.isArray(vec)) this.embeddingCache.set(id, vec)
+      }
+    } catch {
+      // Cache doesn't exist yet — start fresh
+    }
+  }
+
+  private async saveEmbeddingCache(): Promise<void> {
+    const obj: Record<string, number[]> = {}
+    for (const [id, vec] of this.embeddingCache) obj[id] = vec
+    const tmpPath = `${this.embeddingCachePath}.tmp`
+    await writeFile(tmpPath, JSON.stringify(obj), 'utf-8')
+    await rename(tmpPath, this.embeddingCachePath)
+  }
+
+  private async computeEmbedding(text: string): Promise<number[] | null> {
+    if (!this.embeddingFn) return null
+    try {
+      const result = await Promise.race([
+        this.embeddingFn(text),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), EMBEDDING_TIMEOUT_MS)),
+      ])
+      return result
+    } catch {
+      return null
+    }
+  }
+
   async search(description: string, options?: SearchOptions): Promise<WorkflowMatch[]> {
     const filteredMeta = this.meta.filter((m) => m.trustLevel !== 'blocked')
     if (filteredMeta.length === 0) return []
@@ -262,7 +311,41 @@ export class FileLibrary implements IWorkflowLibrary {
       idf.set(token, rawIdf / idfCeiling)  // normalize to [0, 1] regardless of corpus size
     }
 
-    const scored = hybridScore(queryTokens, description, shells, docTokenArrays, idf)
+    // Embedding-based hybrid scoring (optional — falls back to BM25 if fn not provided or times out)
+    let embeddingData: EmbeddingData | undefined
+    if (this.embeddingFn) {
+      await this.loadEmbeddingCache()
+
+      // Lazily compute embeddings for workflows not yet in cache (max 5 per search to cap latency)
+      const uncached = filteredMeta
+        .filter((m) => !this.embeddingCache.has(m.id))
+        .slice(0, 5)
+      if (uncached.length > 0) {
+        const newEntries = await Promise.all(
+          uncached.map(async (m) => {
+            const text = `${m.description} ${m.tags.join(' ')}`
+            const vec = await this.computeEmbedding(text)
+            return { id: m.id, vec }
+          }),
+        )
+        let cacheUpdated = false
+        for (const { id, vec } of newEntries) {
+          if (vec) { this.embeddingCache.set(id, vec); cacheUpdated = true }
+        }
+        if (cacheUpdated) {
+          this.embeddingWriteQueue = this.embeddingWriteQueue.then(() =>
+            this.saveEmbeddingCache().catch(() => {}),
+          )
+        }
+      }
+
+      const queryVector = await this.computeEmbedding(description)
+      if (queryVector) {
+        embeddingData = { queryVector, workflowVectors: this.embeddingCache }
+      }
+    }
+
+    const scored = hybridScore(queryTokens, description, shells, docTokenArrays, idf, embeddingData)
       .filter((m) => m.score > 0)
       .sort((a, b) => b.score - a.score)
 
@@ -401,8 +484,19 @@ export class FileLibrary implements IWorkflowLibrary {
     await this.persist()
   }
 
+  async recordTrace(id: string, trace: import('../library/types.js').ExecutionTrace): Promise<void> {
+    const m = this.meta.find((m) => m.id === id)
+    if (!m) return
+
+    const { mergeTraces, computeRuntimeReliability } = await import('../telemetry/execution-tracer.js')
+    const existing = m.executionTraces ?? []
+    m.executionTraces = mergeTraces(existing, trace)
+    m.runtimeReliabilityScore = computeRuntimeReliability(m.executionTraces)
+    await this.persist()
+  }
+
   async drain(): Promise<void> {
-    await this.writeQueue
+    await Promise.all([this.writeQueue, this.embeddingWriteQueue])
   }
 
   async get(id: string): Promise<StoredWorkflow | null> {

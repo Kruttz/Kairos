@@ -1636,7 +1636,7 @@ export class N8nValidator {
       const docValue = typeof docId === 'object' && docId !== null
         ? ((docId as Record<string, unknown>)['value'] as string | undefined) ?? ''
         : typeof docId === 'string' ? docId : ''
-      if (!docValue || docValue.trim() === '' || docValue.startsWith('={{')) return
+      if (!docValue || docValue.trim() === '' || docValue.startsWith('={{')) continue
 
       // Check if sheetName is a placeholder
       const sheetValue = typeof sheetName === 'object' && sheetName !== null
@@ -2463,7 +2463,7 @@ export class N8nValidator {
       const paramStr = JSON.stringify(node.parameters ?? '')
       if (!paramStr.includes('.toISOString()')) continue
       if (!paramStr.includes('$now') && !paramStr.includes('$today') && !paramStr.includes('DateTime')) continue
-      this.err(
+      this.warn(
         issues, 92,
         `Node "${node.name}" expression calls .toISOString() on a Luxon DateTime — in n8n, $now and $today are Luxon objects, not native JS Date objects. Use .toISO() instead: {{ $now.toISO() }}.`,
         node.id,

@@ -34,6 +34,7 @@ describe('FileLibrary', () => {
   })
 
   afterEach(async () => {
+    await lib.drain()
     await rm(dir, { recursive: true, force: true })
   })
 
@@ -307,6 +308,62 @@ describe('FileLibrary', () => {
       lockExists = true
     } catch { /* expected — lock should be gone */ }
     expect(lockExists).toBe(false)
+  })
+
+  describe('embedding-based hybrid retrieval', () => {
+    it('uses embedding function for search when provided', async () => {
+      let searchCallCount = 0
+      const embeddingFn = async (text: string) => {
+        searchCallCount++
+        if (text.includes('webhook')) return [1, 0, 0]
+        if (text.includes('email')) return [0, 1, 0]
+        return [0.5, 0.5, 0]
+      }
+
+      // Use a fresh isolated dir so the fire-and-forget embedding write doesn't race with afterEach
+      const embDir = join(tmpdir(), `kairos-emb-test-${Date.now()}`)
+      try {
+        const embLib = new FileLibrary(embDir, { embeddingFn })
+        await embLib.initialize()
+        await embLib.save(makeWorkflow('Webhook Handler'), { description: 'webhook receiver' })
+        await embLib.save(makeWorkflow('Email Sender'), { description: 'email sender workflow' })
+
+        const results = await embLib.search('webhook trigger', { limit: 2 })
+        expect(results.length).toBeGreaterThan(0)
+        expect(searchCallCount).toBeGreaterThan(0)
+        await embLib.drain()
+      } finally {
+        await rm(embDir, { recursive: true, force: true }).catch(() => {})
+      }
+    })
+
+    it('falls back to BM25 when no embeddingFn provided', async () => {
+      await lib.save(makeWorkflow('Webhook'), { description: 'webhook handler for forms' })
+      await lib.save(makeWorkflow('Email'), { description: 'send email on event' })
+
+      const results = await lib.search('webhook form', { limit: 2 })
+      expect(results.length).toBeGreaterThan(0)
+      expect(results[0]!.workflow.description).toContain('webhook')
+    })
+
+    it('embedding timeout falls back gracefully to BM25', async () => {
+      const slowEmbeddingFn = async (_text: string): Promise<number[]> => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 10_000))
+        return [1, 0, 0]
+      }
+
+      const embDir = join(tmpdir(), `kairos-slow-emb-${Date.now()}`)
+      try {
+        const slowLib = new FileLibrary(embDir, { embeddingFn: slowEmbeddingFn })
+        await slowLib.initialize()
+        await slowLib.save(makeWorkflow('Test'), { description: 'webhook trigger workflow' })
+
+        const results = await slowLib.search('webhook trigger', { limit: 1 })
+        expect(Array.isArray(results)).toBe(true)
+      } finally {
+        await rm(embDir, { recursive: true, force: true }).catch(() => {})
+      }
+    }, 10_000)
   })
 
   it('breaks stale lock file and proceeds with write', async () => {

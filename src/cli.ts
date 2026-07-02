@@ -13,7 +13,9 @@ Usage:
   kairos build <description> [options]
   kairos build-pack <business context> [options]
   kairos pack export <name> [--handoff]
+  kairos pack wire <name> [--sheet-ids <json-or-path>] [--dry-run]
   kairos validate-pack <name>
+  kairos trace record <n8n-workflow-id>
   kairos replace <n8n-id> <description>
   kairos patterns [options]
   kairos sessions [options]
@@ -38,6 +40,7 @@ Build-pack options:
 Pack options:
   pack export <name>          Print the saved pack as JSON
   pack export <name> --handoff  Generate a client-ready Markdown handoff document
+  pack wire <name>            Patch deployed workflows with real Google Sheet IDs
   validate-pack <name>        Cross-workflow safety check before activation
 
 Patterns options:
@@ -587,6 +590,129 @@ async function handlePackExport(positional: string[], flags: Record<string, stri
   }
 }
 
+async function handlePackWire(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const packName = positional[0]
+  if (!packName) {
+    console.error('Usage: kairos pack wire <pack-name> [--sheet-ids <json-or-path>] [--dry-run]')
+    console.error('')
+    console.error('Examples:')
+    console.error("  kairos pack wire empire-homecare --sheet-ids '{\"Facility Contacts\": \"1BxiMV...\"}'")
+    console.error('  kairos pack wire empire-homecare --sheet-ids ./sheet-ids.json --dry-run')
+    process.exit(1)
+  }
+
+  const dryRun = flags['dry-run'] === true
+  const sheetIdsArg = flags['sheet-ids'] as string | undefined
+
+  let sheetIds: import('./pack/pack-wirer.js').SheetIdMapping = {}
+  if (sheetIdsArg) {
+    try {
+      // Try JSON inline first, then as a file path
+      if (sheetIdsArg.trim().startsWith('{')) {
+        sheetIds = JSON.parse(sheetIdsArg)
+      } else {
+        const { readFile } = await import('node:fs/promises')
+        const content = await readFile(sheetIdsArg, 'utf-8')
+        sheetIds = JSON.parse(content)
+      }
+    } catch {
+      console.error(`Error parsing --sheet-ids: must be valid JSON or a path to a JSON file`)
+      process.exit(1)
+    }
+  }
+
+  const { join } = await import('node:path')
+  const { homedir } = await import('node:os')
+  const { readFile } = await import('node:fs/promises')
+
+  const packPath = join(homedir(), '.kairos', 'packs', `${packName}.json`)
+  let pack: import('./pack/pack-builder.js').WorkflowPackResult
+  try {
+    const content = await readFile(packPath, 'utf-8')
+    pack = JSON.parse(content) as import('./pack/pack-builder.js').WorkflowPackResult
+  } catch {
+    console.error(`Pack not found: ${packPath}`)
+    console.error('Run "kairos build-pack <context>" to create one.')
+    process.exit(1)
+  }
+
+  const n8nBaseUrl = process.env['N8N_BASE_URL']
+  const n8nApiKey = process.env['N8N_API_KEY']
+
+  if (!dryRun && (!n8nBaseUrl || !n8nApiKey)) {
+    console.error('N8N_BASE_URL and N8N_API_KEY are required for pack wire (or use --dry-run to preview).')
+    process.exit(1)
+  }
+
+  const { wirePackSheets, formatWireReport } = await import('./pack/pack-wirer.js')
+  const report = await wirePackSheets(pack, sheetIds, {
+    dryRun,
+    ...(n8nBaseUrl ? { n8nBaseUrl } : {}),
+    ...(n8nApiKey ? { n8nApiKey } : {}),
+  })
+  console.log(formatWireReport(report))
+}
+
+async function handleTrace(positional: string[]): Promise<void> {
+  const subcommand = positional[0]
+  const n8nWorkflowId = positional[1]
+
+  if (subcommand !== 'record' || !n8nWorkflowId) {
+    console.error('Usage: kairos trace record <n8n-workflow-id>')
+    console.error('')
+    console.error('Fetches the most recent execution of the given n8n workflow and')
+    console.error('records it in the Kairos library to improve future retrieval quality.')
+    process.exit(1)
+  }
+
+  const n8nBaseUrl = process.env['N8N_BASE_URL']
+  const n8nApiKey = process.env['N8N_API_KEY']
+  if (!n8nBaseUrl || !n8nApiKey) {
+    console.error('N8N_BASE_URL and N8N_API_KEY are required for trace record.')
+    process.exit(1)
+  }
+
+  console.error(`Fetching latest execution for workflow ${n8nWorkflowId}...`)
+
+  const { fetchLatestTrace } = await import('./telemetry/execution-tracer.js')
+  const trace = await fetchLatestTrace(n8nWorkflowId, n8nBaseUrl, n8nApiKey)
+
+  if (!trace) {
+    console.error('No executions found for this workflow, or could not reach n8n.')
+    process.exit(1)
+  }
+
+  console.error(`Execution ${trace.executionId}: status=${trace.status}, nodes=${trace.executedNodes.length}, errors=${trace.erroredNodes.length}`)
+
+  // Find matching library entry by n8nWorkflowId
+  const { join } = await import('node:path')
+  const { homedir } = await import('node:os')
+  const { FileLibrary } = await import('./library/file-library.js')
+  const lib = new FileLibrary(join(homedir(), '.kairos', 'library'))
+  await lib.initialize()
+
+  const all = await lib.list()
+  const match = all.find(w => w.n8nWorkflowId === n8nWorkflowId)
+
+  if (!match) {
+    console.error(`No library entry found with n8nWorkflowId="${n8nWorkflowId}".`)
+    console.error('Build and deploy a workflow with kairos first to create a library entry.')
+    process.exit(1)
+  }
+
+  await lib.recordTrace(match.id, trace)
+  console.error(`Trace recorded for "${match.description}".`)
+  console.log(JSON.stringify({
+    libraryId: match.id,
+    workflowDescription: match.description,
+    executionId: trace.executionId,
+    status: trace.status,
+    durationMs: trace.durationMs,
+    executedNodes: trace.executedNodes.length,
+    erroredNodes: trace.erroredNodes,
+  }, null, 2))
+}
+
 async function handleValidatePack(positional: string[]): Promise<void> {
   const packName = positional[0]
   if (!packName) {
@@ -805,15 +931,20 @@ async function main(): Promise<void> {
       const subPositional = positional.slice(1)
       if (subcommand === 'export') {
         await handlePackExport(subPositional, flags)
+      } else if (subcommand === 'wire') {
+        await handlePackWire(subPositional, flags)
       } else {
         console.error(`Unknown pack subcommand: ${subcommand ?? '(none)'}`)
-        console.error('Available: kairos pack export <name> [--handoff]')
+        console.error('Available: kairos pack export <name> [--handoff] | kairos pack wire <name> [options]')
         process.exit(1)
       }
       break
     }
     case 'validate-pack':
       await handleValidatePack(positional)
+      break
+    case 'trace':
+      await handleTrace(positional)
       break
     default:
       console.error(`Unknown command: ${command}`)

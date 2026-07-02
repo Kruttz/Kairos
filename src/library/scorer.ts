@@ -107,13 +107,22 @@ function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
 
 function outcomeScore(w: StoredWorkflow): number {
   const stats = w.outcomeStats
-  if (!stats || stats.totalUses === 0) return 0.5
+  const baseScore = (() => {
+    if (!stats || stats.totalUses === 0) return 0.5
+    const passRate = stats.firstTryPasses / stats.totalUses
+    const avgAttempts = stats.totalAttempts / stats.totalUses
+    const attemptPenalty = Math.max(0, 1 - (avgAttempts - 1) * 0.3)
+    return passRate * 0.6 + attemptPenalty * 0.4
+  })()
 
-  const passRate = stats.firstTryPasses / stats.totalUses
-  const avgAttempts = stats.totalAttempts / stats.totalUses
-  const attemptPenalty = Math.max(0, 1 - (avgAttempts - 1) * 0.3)
+  // Blend in runtime reliability if execution traces are available
+  const rtr = w.runtimeReliabilityScore
+  if (rtr != null) {
+    // 70% generation outcome, 30% runtime reliability
+    return baseScore * 0.7 + rtr * 0.3
+  }
 
-  return passRate * 0.6 + attemptPenalty * 0.4
+  return baseScore
 }
 
 function deployScore(w: StoredWorkflow): number {
@@ -129,7 +138,39 @@ export interface ScoredEntry {
     outcome: number
     deploy: number
   }
+  // Top rules that failed in past builds when this workflow was used as a reference.
+  // Derived from outcomeStats.failedRules — sorted by occurrence count descending.
+  topFailedRules: Array<{ rule: number; count: number }>
 }
+
+function extractTopFailedRules(w: StoredWorkflow, limit = 3): Array<{ rule: number; count: number }> {
+  const stats = w.outcomeStats
+  if (!stats || Object.keys(stats.failedRules).length === 0) return []
+  return Object.entries(stats.failedRules)
+    .map(([rule, count]) => ({ rule: parseInt(rule, 10), count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, limit)
+}
+
+export interface EmbeddingData {
+  queryVector: number[]
+  workflowVectors: Map<string, number[]>  // workflowId → embedding vector
+}
+
+export function cosineSimilarity(a: number[], b: number[]): number {
+  if (a.length !== b.length || a.length === 0) return 0
+  let dot = 0, normA = 0, normB = 0
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i]! * b[i]!
+    normA += a[i]! * a[i]!
+    normB += b[i]! * b[i]!
+  }
+  const denom = Math.sqrt(normA) * Math.sqrt(normB)
+  return denom > 0 ? dot / denom : 0
+}
+
+// Weights when embeddings are present — cosine gets 25%, other components reduced proportionally
+const EMBEDDING_WEIGHTS = { tfidf: 0.30, nodeFingerprint: 0.20, cosine: 0.25, outcome: 0.15, deploy: 0.10 }
 
 export function hybridScore(
   queryTokens: string[],
@@ -137,6 +178,7 @@ export function hybridScore(
   workflows: StoredWorkflow[],
   docTokenArrays: string[][],
   idf: Map<string, number>,
+  embeddingData?: EmbeddingData,
 ): ScoredEntry[] {
   const queryFp = extractQueryFingerprint(queryDescription)
   const ceiling = queryTokens.reduce((sum, qt) => sum + (idf.get(qt) ?? 0), 0) || 1
@@ -161,18 +203,33 @@ export function hybridScore(
     const outcome = outcomeScore(w)
     const deploy = Math.min(deployScore(w), 1.5) / 1.5
 
-    const score = Math.min(
-      WEIGHTS.tfidf * tfidf +
-      WEIGHTS.nodeFingerprint * nodeFingerprint +
-      WEIGHTS.outcome * outcome +
-      WEIGHTS.deploy * deploy,
-      1,
-    )
+    let score: number
+    if (embeddingData) {
+      const wv = embeddingData.workflowVectors.get(w.id)
+      const cosine = wv ? cosineSimilarity(embeddingData.queryVector, wv) : 0
+      score = Math.min(
+        EMBEDDING_WEIGHTS.tfidf * tfidf +
+        EMBEDDING_WEIGHTS.nodeFingerprint * nodeFingerprint +
+        EMBEDDING_WEIGHTS.cosine * cosine +
+        EMBEDDING_WEIGHTS.outcome * outcome +
+        EMBEDDING_WEIGHTS.deploy * deploy,
+        1,
+      )
+    } else {
+      score = Math.min(
+        WEIGHTS.tfidf * tfidf +
+        WEIGHTS.nodeFingerprint * nodeFingerprint +
+        WEIGHTS.outcome * outcome +
+        WEIGHTS.deploy * deploy,
+        1,
+      )
+    }
 
     return {
       workflow: w,
       score,
       signals: { tfidf, nodeFingerprint, outcome, deploy },
+      topFailedRules: extractTopFailedRules(w),
     }
   })
 }

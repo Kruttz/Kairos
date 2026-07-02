@@ -3242,12 +3242,12 @@ describe('N8nValidator', () => {
   })
 
   // Rule 92: .toISOString() on Luxon DateTime
-  it('rule 92: errors when expression calls $now.toISOString()', () => {
+  it('rule 92: warns when expression calls $now.toISOString()', () => {
     const w = baseWorkflow()
     w.nodes.push({ id: 'aaaa0092-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [450, 300], parameters: { assignments: { assignments: [{ id: '1', name: 'ts', value: '={{ $now.toISOString() }}', type: 'string' }] } } })
     w.connections['Manual Trigger'] = { main: [[{ node: 'Set', type: 'main', index: 0 }]] }
     const result = validator.validate(w)
-    expect(result.issues.some((i) => i.rule === 92 && i.severity === 'error')).toBe(true)
+    expect(result.issues.some((i) => i.rule === 92 && i.severity === 'warn')).toBe(true)
   })
 
   it('rule 92: errors when expression calls $today.toISOString()', () => {
