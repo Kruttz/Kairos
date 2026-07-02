@@ -285,6 +285,60 @@ describe('FileLibrary', () => {
     expect(all[0]!.description).toBe('send slack notification with attachment') // description updated
   })
 
+  // ── Doc-token cache (R3) ─────────────────────────────────────────────────
+
+  describe('search doc-token cache', () => {
+    it('returns identical, correct results across repeated searches (cache reuse is transparent)', async () => {
+      await lib.save(makeWorkflow('Slack'), { description: 'send a slack message when webhook fires' })
+      await lib.save(makeWorkflow('Email'), { description: 'archive email attachments to google drive' })
+
+      const first = await lib.search('slack message webhook')
+      const second = await lib.search('slack message webhook')
+
+      expect(first.map((m) => m.workflow.id)).toEqual(second.map((m) => m.workflow.id))
+      expect(first[0]!.workflow.description).toContain('slack')
+    })
+
+    it('reflects an updated description after a redeploy (cache invalidated, not stale)', async () => {
+      const id = await lib.save(makeWorkflow('V1'), {
+        description: 'send a slack message when webhook fires',
+        n8nWorkflowId: 'n8n-wf-cache-test',
+      })
+
+      // Populate the doc-token cache for this entry against its ORIGINAL description
+      const before = await lib.search('slack message webhook')
+      expect(before.some((m) => m.workflow.id === id)).toBe(true)
+
+      // Redeploy with a completely different description — same library entry (same n8nWorkflowId)
+      await lib.save(makeWorkflow('V2'), {
+        description: 'archive email attachments to google drive',
+        n8nWorkflowId: 'n8n-wf-cache-test',
+      })
+
+      // If the cache were stale, this would still match on the old "slack/webhook" tokens
+      const afterOld = await lib.search('slack message webhook')
+      expect(afterOld.some((m) => m.workflow.id === id)).toBe(false)
+
+      // And the new keywords should now match — proving fresh tokens were computed
+      const afterNew = await lib.search('archive email attachments google drive')
+      expect(afterNew.some((m) => m.workflow.id === id)).toBe(true)
+    })
+
+    it('does not resurface a pruned entry after its cache is invalidated', async () => {
+      await lib.save(makeWorkflow('Imported'), {
+        description: 'sync airtable records to postgres',
+        sourceKind: 'imported',
+        sourceId: 'hash-cache-prune',
+      })
+      await lib.search('sync airtable records postgres') // populate cache
+
+      await lib.pruneBySource('imported')
+
+      const after = await lib.search('sync airtable records postgres')
+      expect(after).toHaveLength(0)
+    })
+  })
+
   it('recordDeployment sets n8nWorkflowId on the library entry', async () => {
     const id = await lib.save(makeWorkflow('Deployed'), { description: 'deployed workflow' })
     await lib.recordDeployment(id, 'n8n-wf-99')
@@ -421,6 +475,106 @@ describe('FileLibrary', () => {
         await rm(embDir, { recursive: true, force: true }).catch(() => {})
       }
     }, 10_000)
+  })
+
+  describe('backfillEmbeddings', () => {
+    it('no-ops when the library has no embeddingFn configured', async () => {
+      await lib.save(makeWorkflow('A'), { description: 'no embeddings here' })
+      const result = await lib.backfillEmbeddings()
+      expect(result).toEqual({ computed: 0, skipped: 0 })
+    })
+
+    it('computes embeddings for every uncached entry, batched', async () => {
+      const embDir = join(tmpdir(), `kairos-backfill-${Date.now()}`)
+      try {
+        const embeddingFn = async (text: string) => (text.includes('slack') ? [1, 0] : [0, 1])
+        const embLib = new FileLibrary(embDir, { embeddingFn })
+        await embLib.initialize()
+
+        for (let i = 0; i < 5; i++) {
+          const topic = i % 2 === 0 ? 'send a slack message' : 'archive to drive'
+          await embLib.save(makeWorkflow(`WF${i}`), { description: `${topic} (variant ${i})` })
+        }
+
+        const result = await embLib.backfillEmbeddings(2) // batchSize=2, exercises multiple batches over 5 entries
+        expect(result).toEqual({ computed: 5, skipped: 0 })
+
+        // A subsequent search should now use the pre-warmed cache directly (no further computation needed)
+        const results = await embLib.search('slack', { limit: 5 })
+        expect(results.length).toBeGreaterThan(0)
+
+        await embLib.drain()
+      } finally {
+        await rm(embDir, { recursive: true, force: true }).catch(() => {})
+      }
+    })
+
+    it('counts entries as skipped when the embedding function fails or times out', async () => {
+      const embDir = join(tmpdir(), `kairos-backfill-skip-${Date.now()}`)
+      try {
+        const flakyFn = async (text: string) => {
+          if (text.includes('bad')) throw new Error('embedding provider error')
+          return [1, 0]
+        }
+        const embLib = new FileLibrary(embDir, { embeddingFn: flakyFn })
+        await embLib.initialize()
+        await embLib.save(makeWorkflow('Good'), { description: 'good workflow' })
+        await embLib.save(makeWorkflow('Bad'), { description: 'bad workflow' })
+
+        const result = await embLib.backfillEmbeddings()
+        expect(result).toEqual({ computed: 1, skipped: 1 })
+
+        await embLib.drain()
+      } finally {
+        await rm(embDir, { recursive: true, force: true }).catch(() => {})
+      }
+    })
+
+    it('does not re-embed entries already in the cache', async () => {
+      const embDir = join(tmpdir(), `kairos-backfill-recache-${Date.now()}`)
+      try {
+        let callCount = 0
+        const embeddingFn = async (_text: string) => { callCount++; return [1, 0] }
+        const embLib = new FileLibrary(embDir, { embeddingFn })
+        await embLib.initialize()
+        await embLib.save(makeWorkflow('A'), { description: 'workflow a' })
+
+        const first = await embLib.backfillEmbeddings()
+        expect(first.computed).toBe(1)
+        const callsAfterFirst = callCount
+
+        const second = await embLib.backfillEmbeddings()
+        expect(second).toEqual({ computed: 0, skipped: 0 })
+        expect(callCount).toBe(callsAfterFirst) // no new calls — already cached
+
+        await embLib.drain()
+      } finally {
+        await rm(embDir, { recursive: true, force: true }).catch(() => {})
+      }
+    })
+
+    it('recomputes the embedding after a redeploy changes the description (no stale vector)', async () => {
+      const embDir = join(tmpdir(), `kairos-backfill-redeploy-${Date.now()}`)
+      try {
+        const embeddingFn = async (text: string) => (text.includes('slack') ? [1, 0] : [0, 1])
+        const embLib = new FileLibrary(embDir, { embeddingFn })
+        await embLib.initialize()
+
+        await embLib.save(makeWorkflow('V1'), { description: 'send a slack message', n8nWorkflowId: 'wf-redeploy' })
+        await embLib.backfillEmbeddings()
+
+        // Redeploy with an entirely different description — same entry (same n8nWorkflowId)
+        await embLib.save(makeWorkflow('V2'), { description: 'archive to drive', n8nWorkflowId: 'wf-redeploy' })
+
+        // If the old embedding were still cached, this backfill would report nothing to do
+        const result = await embLib.backfillEmbeddings()
+        expect(result).toEqual({ computed: 1, skipped: 0 })
+
+        await embLib.drain()
+      } finally {
+        await rm(embDir, { recursive: true, force: true }).catch(() => {})
+      }
+    })
   })
 
   it('breaks stale lock file and proceeds with write', async () => {

@@ -40,7 +40,8 @@
     "lint": "eslint src --ext .ts",
     "lint:fix": "eslint src --ext .ts --fix",
     "benchmark": "tsx scripts/benchmark.ts",
-    "benchmark:baseline": "tsx scripts/benchmark.ts --no-library --output benchmark-results.json"
+    "benchmark:baseline": "tsx scripts/benchmark.ts --no-library --output benchmark-results.json",
+    "benchmark:search": "tsx scripts/search-bench.ts"
   },
   "keywords": [
     "n8n",

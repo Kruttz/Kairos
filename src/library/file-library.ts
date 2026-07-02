@@ -93,6 +93,11 @@ export class FileLibrary implements IWorkflowLibrary {
   // deleted entry would be resurrected by that merge. Grows unboundedly per-process, but
   // deletions are rare and this resets on restart, so the memory cost is negligible.
   private readonly deletedIds = new Set<string>()
+  // Lazily-populated cache of tokenize(buildSearchCorpus(meta)) per entry id, so search()
+  // doesn't re-tokenize every entry's corpus on every call. Invalidated (deleted) whenever
+  // an entry's description/tags/node-types change (redeploy) or the entry is pruned. Never
+  // persisted — rebuilt lazily from meta, which remains the source of truth.
+  private readonly docTokenCache = new Map<string, string[]>()
 
   constructor(dir?: string, options?: { embeddingFn?: EmbeddingFn }) {
     this.dir = dir ?? join(homedir(), '.kairos', 'library')
@@ -292,6 +297,53 @@ export class FileLibrary implements IWorkflowLibrary {
     }
   }
 
+  /**
+   * Bulk-computes and caches embeddings for every entry not already cached — unlike
+   * search()'s lazy backfill (which only computes ~5 per call to cap query latency),
+   * this processes the whole backlog in bounded batches. Intended for callers who just
+   * did a large import (e.g. local-dir template ingestion) and want the embedding cache
+   * warm immediately rather than over hundreds of subsequent searches. No-ops if the
+   * library wasn't constructed with an embeddingFn.
+   */
+  async backfillEmbeddings(batchSize = 20): Promise<{ computed: number; skipped: number }> {
+    if (!this.embeddingFn) return { computed: 0, skipped: 0 }
+
+    await this.loadEmbeddingCache()
+    const uncached = this.meta.filter((m) => !this.embeddingCache.has(m.id))
+
+    let computed = 0
+    let skipped = 0
+
+    for (let i = 0; i < uncached.length; i += batchSize) {
+      const batch = uncached.slice(i, i + batchSize)
+      const results = await Promise.all(
+        batch.map(async (m) => ({
+          id: m.id,
+          vec: await this.computeEmbedding(`${m.description} ${m.tags.join(' ')}`),
+        })),
+      )
+
+      let batchUpdated = false
+      for (const { id, vec } of results) {
+        if (vec) {
+          this.embeddingCache.set(id, vec)
+          computed++
+          batchUpdated = true
+        } else {
+          skipped++
+        }
+      }
+      if (batchUpdated) {
+        this.embeddingWriteQueue = this.embeddingWriteQueue.then(() =>
+          this.saveEmbeddingCache().catch(() => {}),
+        )
+      }
+    }
+
+    await this.embeddingWriteQueue
+    return { computed, skipped }
+  }
+
   async search(description: string, options?: SearchOptions): Promise<WorkflowMatch[]> {
     const filteredMeta = this.meta.filter((m) => m.trustLevel !== 'blocked')
     if (filteredMeta.length === 0) return []
@@ -303,7 +355,13 @@ export class FileLibrary implements IWorkflowLibrary {
     // Build lightweight shells — no file I/O, all data comes from cached meta
     const shells = filteredMeta.map((m) => this.makeSearchShell(m))
 
-    const docTokenArrays = shells.map((w) => tokenize(buildSearchCorpus(w)))
+    const docTokenArrays = shells.map((w) => {
+      const cached = this.docTokenCache.get(w.id)
+      if (cached) return cached
+      const tokens = tokenize(buildSearchCorpus(w))
+      this.docTokenCache.set(w.id, tokens)
+      return tokens
+    })
     const docTokenSets = docTokenArrays.map((tokens) => new Set(tokens))
 
     const docCount = shells.length
@@ -402,6 +460,11 @@ export class FileLibrary implements IWorkflowLibrary {
       existing.description = metadata.description  // update description on redeploy
       existing.workflowName = workflow.name
       existing.cachedNodeTypes = workflow.nodes.map((n) => n.type)
+      this.docTokenCache.delete(existing.id)  // corpus-affecting fields changed — force re-tokenize on next search
+      // The cached embedding vector describes the OLD description/tags text — without this,
+      // a redeployed entry's embedding goes stale forever, since the lazy backfill in search()
+      // only computes vectors for entries NOT already in the cache.
+      this.embeddingCache.delete(existing.id)
       if (metadata.n8nWorkflowId) existing.n8nWorkflowId = metadata.n8nWorkflowId
       if (metadata.generationAttempts != null) {
         existing.generationAttempts = metadata.generationAttempts
@@ -510,7 +573,11 @@ export class FileLibrary implements IWorkflowLibrary {
 
     const removedIds = toRemove.map((m) => m.id)
     this.meta = this.meta.filter((m) => m.sourceKind !== sourceKind)
-    for (const id of removedIds) this.deletedIds.add(id)
+    for (const id of removedIds) {
+      this.deletedIds.add(id)
+      this.docTokenCache.delete(id)
+      this.embeddingCache.delete(id)
+    }
     await this.persist()
 
     for (const id of removedIds) {
