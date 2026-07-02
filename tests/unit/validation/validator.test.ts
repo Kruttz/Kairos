@@ -4087,4 +4087,76 @@ describe('N8nValidator', () => {
     const result = validator.validate(w)
     expect(result.issues.some((i) => i.rule === 126)).toBe(false)
   })
+
+  // Rule 127: Code node language/param mismatch (Phase 4 — n8n-skills gap analysis)
+  it('rule 127: warns when language is python but code is set in jsCode', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0127-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Code', type: 'n8n-nodes-base.code', typeVersion: 2, position: [450, 300], parameters: { language: 'python', jsCode: 'return [{"json": {}}]' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 127 && i.severity === 'warn')).toBe(true)
+  })
+
+  it('rule 127: warns when pythonCode is set but language is not python', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0127-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Code', type: 'n8n-nodes-base.code', typeVersion: 2, position: [450, 300], parameters: { pythonCode: 'return [{"json": {}}]' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 127 && i.severity === 'warn')).toBe(true)
+  })
+
+  it('rule 127: no warning when language is python and pythonCode is populated', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0127-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Code', type: 'n8n-nodes-base.code', typeVersion: 2, position: [450, 300], parameters: { language: 'python', pythonCode: 'return [{"json": {}}]' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 127)).toBe(false)
+  })
+
+  it('rule 127: no warning for the default JavaScript case (jsCode set, no language)', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0127-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'Code', type: 'n8n-nodes-base.code', typeVersion: 2, position: [450, 300], parameters: { jsCode: 'return [{ json: {} }]' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 127)).toBe(false)
+  })
+
+  it('rule 127: does not fire on non-code nodes', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0127-aaaa-4aaa-aaaa-aaaaaaaaaaae', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [450, 300], parameters: { language: 'python' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 127)).toBe(false)
+  })
+
+  // Rule 128: unwired error-output port (Phase 4 — n8n-skills gap analysis)
+  it('rule 128: warns when continueErrorOutput is set but output index 1 is unwired', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0128-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Risky Call', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], parameters: { method: 'GET', url: 'https://api.example.com', onError: 'continueErrorOutput' } })
+    w.nodes.push({ id: 'aaaa0128-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'On Success', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [650, 300], parameters: {} })
+    w.connections['Risky Call'] = { main: [[{ node: 'On Success', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 128 && i.severity === 'warn')).toBe(true)
+  })
+
+  it('rule 128: no warning when both output ports are wired', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0128-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Risky Call', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], parameters: { method: 'GET', url: 'https://api.example.com', onError: 'continueErrorOutput' } })
+    w.nodes.push({ id: 'aaaa0128-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'On Success', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [650, 250], parameters: {} })
+    w.nodes.push({ id: 'aaaa0128-aaaa-4aaa-aaaa-aaaaaaaaaaae', name: 'On Error', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [650, 400], parameters: {} })
+    w.connections['Risky Call'] = { main: [[{ node: 'On Success', type: 'main', index: 0 }], [{ node: 'On Error', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 128)).toBe(false)
+  })
+
+  it('rule 128: no warning when onError is continueRegularOutput', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0128-aaaa-4aaa-aaaa-aaaaaaaaaaaf', name: 'Risky Call', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], parameters: { method: 'GET', url: 'https://api.example.com', onError: 'continueRegularOutput' } })
+    w.nodes.push({ id: 'aaaa0128-aaaa-4aaa-aaaa-aaaaaaaaaaba', name: 'Next', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [650, 300], parameters: {} })
+    w.connections['Risky Call'] = { main: [[{ node: 'Next', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 128)).toBe(false)
+  })
+
+  it('rule 128: no warning when onError is unset entirely', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0128-aaaa-4aaa-aaaa-aaaaaaaaaabb', name: 'Plain Call', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], parameters: { method: 'GET', url: 'https://api.example.com' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 128)).toBe(false)
+  })
 })

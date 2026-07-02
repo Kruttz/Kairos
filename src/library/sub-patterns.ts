@@ -237,4 +237,61 @@ $now.plus({days: 1}).toISO()          // tomorrow
 $now.minus({days: 7}).toFormat('yyyy-MM-dd')  // 7 days ago
 $now.diff($('Node').first().json.date, 'days').days  // difference in days`,
   },
+
+  {
+    id: 'webhook-body-access',
+    name: 'Webhook Payload Access ($json.body)',
+    description: 'A webhook trigger\'s incoming HTTP request body is nested under a "body" key alongside headers/query/params — not flattened directly onto $json.',
+    intentTags: [
+      'webhook payload', 'webhook data', 'incoming request', 'request body', 'post data',
+      'form data', 'json payload', 'webhook body', 'received data', 'submitted data',
+    ],
+    nodeTypes: [
+      'n8n-nodes-base.webhook',
+    ],
+    wiringNotes: [
+      'The webhook node emits one item per request with sibling top-level keys on json: body (the parsed request payload), headers, query, params.',
+      'Downstream nodes must reference $json.body.fieldName to reach a field the caller submitted — not $json.fieldName.',
+    ],
+    requiredParameters: [],
+    commonMistakes: [
+      'Referencing $json.fieldName directly for a field sent in the request body — it is actually at $json.body.fieldName.',
+      'Confusing $json.query (URL query-string parameters) with $json.body (the POST/PUT/PATCH body) — they are different sibling objects on the same item.',
+      'Assuming the body is already a parsed object when the caller sent raw or non-JSON content — check the webhook node\'s content-type/raw-body handling before assuming a structured object.',
+    ],
+    validatorRuleIds: [],
+    connectionSnippet: `// Downstream node expression referencing a webhook-submitted field:
+{{ $json.body.email }}              // correct — submitted body field
+{{ $json.headers['x-signature'] }}  // request header
+{{ $json.query.token }}             // URL query-string parameter`,
+  },
+
+  {
+    id: 'binary-data-handling',
+    name: 'Binary Data Handling ($binary, binaryPropertyName)',
+    description: 'Binary content (files, images, PDFs, attachments) travels in a separate "binary" object alongside "json" on each item — never inside $json — and nodes that read or write it need an explicit property name.',
+    intentTags: [
+      'binary data', 'file upload', 'file download', 'attachment', 'process image',
+      'upload file', 'download file', 'send attachment', 'binary file', 'pdf file',
+    ],
+    nodeTypes: [],
+    wiringNotes: [
+      'Every item can carry both a json object and a separate binary object: item.binary.<propertyName>.data/mimeType/fileName.',
+      'Nodes that read binary data (S3 upload, Gmail attachment, Google Drive upload, HTTP Request binary body) need a binaryPropertyName parameter pointing at the exact key under item.binary — it is never inferred automatically.',
+      'Different node types default to different property names (commonly "data", sometimes something node-specific) — when chaining a binary-producing node into a binary-consuming node, confirm the names actually match, or add a step to rename.',
+    ],
+    requiredParameters: [],
+    commonMistakes: [
+      'Treating binary content like a JSON field — referencing $json.data for a file, when the actual bytes live under $binary and only metadata (fileName, mimeType) is expression-accessible.',
+      'Leaving binaryPropertyName empty on a binary-consuming node — n8n has nowhere to look and fails at runtime (Rule 57 covers this specifically for HTTP Request binary uploads).',
+      'Assuming a binary property name carries over unchanged between two different node types in the same chain — verify it, or rename explicitly.',
+    ],
+    validatorRuleIds: [57],
+    connectionSnippet: `// Referencing binary metadata in an expression (not the raw bytes):
+{{ $binary.data.fileName }}
+{{ $binary.data.mimeType }}
+
+// A binary-consuming node's parameters must name the exact property:
+"binaryPropertyName": "data"`,
+  },
 ]

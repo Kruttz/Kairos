@@ -120,7 +120,7 @@ n8n-nodes-base.notionTrigger          typeVersion: 1       — cred: notionApi
 @n8n/n8n-nodes-langchain.chatTrigger  typeVersion: 1.1     — pairs with AI Agent
 
 ### Core logic:
-n8n-nodes-base.code                   typeVersion: 2       — params: mode, jsCode
+n8n-nodes-base.code                   typeVersion: 2       — params: mode, language, jsCode (default, language unset or "javaScript"), pythonCode (only used when language: "python" — code in the wrong param is silently ignored)
 n8n-nodes-base.httpRequest            typeVersion: 4.2     — params: method, url, [sendBody, jsonBody, sendHeaders, headerParameters]
 n8n-nodes-base.set                    typeVersion: 3.4     — params: assignments.assignments[{id, name, value, type}]
 n8n-nodes-base.if                     typeVersion: 2.2     — params: conditions.conditions[{id, leftValue, rightValue, operator}], combinator

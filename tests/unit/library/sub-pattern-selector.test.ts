@@ -39,6 +39,18 @@ describe('selectSubPatterns', () => {
     expect(ids).toContain('luxon-datetime')
   })
 
+  it('returns webhook-body-access pattern for webhook payload prompt', () => {
+    const results = selectSubPatterns('receive the webhook payload and extract fields from the request body')
+    const ids = results.map(p => p.id)
+    expect(ids).toContain('webhook-body-access')
+  })
+
+  it('returns binary-data-handling pattern for file attachment prompt', () => {
+    const results = selectSubPatterns('download the attachment file and upload it to cloud storage')
+    const ids = results.map(p => p.id)
+    expect(ids).toContain('binary-data-handling')
+  })
+
   it('returns empty array for unrelated prompt', () => {
     const results = selectSubPatterns('send a Slack message when a new row is added to a Google Sheet')
     expect(results).toHaveLength(0)

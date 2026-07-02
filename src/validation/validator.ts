@@ -153,6 +153,8 @@ export class N8nValidator {
     this.checkRule124(workflow, issues)
     this.checkRule125(workflow, issues)
     this.checkRule126(workflow, issues)
+    this.checkRule127(workflow, issues)
+    this.checkRule128(workflow, issues)
 
     // Enrich issues with nodeType by looking up nodeId
     if (Array.isArray(workflow.nodes)) {
@@ -3266,6 +3268,56 @@ export class N8nValidator {
         this.warn(
           issues, 126,
           `Node "${node.name}" has ID "${node.id}" which is not a valid UUID v4 — n8n requires UUID v4 format (xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx) for all node IDs. Non-UUID IDs may cause issues with execution tracking. Generate a proper UUID v4 for this node.`,
+          node.id,
+        )
+      }
+    }
+  }
+
+  // Rule 127 (WARN): Code node language/param mismatch — jsCode/pythonCode populated for the wrong language
+  private checkRule127(w: N8nWorkflow, issues: ValidationIssue[]): void {
+    if (!Array.isArray(w.nodes)) return
+    for (const node of w.nodes) {
+      if (node.type !== 'n8n-nodes-base.code') continue
+      const params = node.parameters as Record<string, unknown> | undefined
+      if (!params) continue
+      const language = params['language']
+      const jsCode = typeof params['jsCode'] === 'string' ? params['jsCode'].trim() : ''
+      const pythonCode = typeof params['pythonCode'] === 'string' ? params['pythonCode'].trim() : ''
+
+      if (language === 'python' && jsCode !== '' && pythonCode === '') {
+        this.warn(
+          issues, 127,
+          `Node "${node.name}" has language: "python" but code is set in jsCode — n8n runs the pythonCode parameter when language is python, so this code never executes. Move it to pythonCode.`,
+          node.id,
+        )
+      } else if (language !== 'python' && pythonCode !== '' && jsCode === '') {
+        this.warn(
+          issues, 127,
+          `Node "${node.name}" has pythonCode set but language is not "python" — n8n runs the jsCode parameter by default, so this code never executes. Move it to jsCode, or set language: "python".`,
+          node.id,
+        )
+      }
+    }
+  }
+
+  // Rule 128 (WARN): onError "continueErrorOutput" set but the dedicated error output port (index 1) is unwired
+  private checkRule128(w: N8nWorkflow, issues: ValidationIssue[]): void {
+    if (!Array.isArray(w.nodes) || typeof w.connections !== 'object' || w.connections === null) return
+    const connections = w.connections as Record<string, { main?: unknown[][] }>
+
+    for (const node of w.nodes) {
+      const params = node.parameters as Record<string, unknown> | undefined
+      if (params?.['onError'] !== 'continueErrorOutput') continue
+
+      const mainOutputs = connections[node.name]?.main
+      const errorPort = Array.isArray(mainOutputs) ? mainOutputs[1] : undefined
+      const hasErrorConnection = Array.isArray(errorPort) && errorPort.length > 0
+
+      if (!hasErrorConnection) {
+        this.warn(
+          issues, 128,
+          `Node "${node.name}" has onError: "continueErrorOutput", which gives it a second output port for error-path items — but that port (output index 1) has no connection. Every item that errors on this node is silently dropped. Wire output index 1 to an error-handling path, or use "continueRegularOutput" if errors should just pass through the normal output.`,
           node.id,
         )
       }

@@ -4,6 +4,7 @@ export const VALIDATOR_RULE_IDS: number[] = [
   ...Array.from({ length: 63 }, (_, i) => i + 1),  // 1-63
   ...Array.from({ length: 39 }, (_, i) => i + 65), // 65-103 (64 skipped — conflicts with Kairos prompt; 104 deferred)
   ...Array.from({ length: 22 }, (_, i) => i + 105), // 105-126 (104 skipped)
+  127, 128, // Phase 4 (n8n-skills gap analysis): Code language/param mismatch, unwired error-output port
 ]
 
 export const RULE_PIPELINE_STAGES: Record<number, PipelineStage> = {
@@ -131,6 +132,8 @@ export const RULE_PIPELINE_STAGES: Record<number, PipelineStage> = {
   124: 'node_generation',
   125: 'expression_syntax',
   126: 'node_generation',
+  127: 'node_generation',
+  128: 'connection_wiring',
 }
 
 export interface RuleExample {
@@ -379,6 +382,14 @@ export const RULE_EXAMPLES: Record<number, RuleExample> = {
     bad: '"model": "latest"  // not a valid model identifier — API returns "Unknown model"',
     good: '"model": "claude-sonnet-4-6"  // exact model identifier required',
   },
+  127: {
+    bad: '"language": "python", "jsCode": "return [{ json: {} }]"  // ignored — n8n runs pythonCode for Python',
+    good: '"language": "python", "pythonCode": "return [{ \'json\': {} }]"',
+  },
+  128: {
+    bad: '"onError": "continueErrorOutput"  // node has 2 output ports; connections only wire index 0',
+    good: '"Node": { "main": [ [{"node": "OnSuccess", ...}], [{"node": "OnError", ...}] ] }  // index 1 wired too',
+  },
 }
 
 export const RULE_MITIGATIONS: Record<number, string> = {
@@ -506,4 +517,6 @@ export const RULE_MITIGATIONS: Record<number, string> = {
   124: 'Add a return statement to the Code node in runOnceForAllItems mode. Without return, the node emits 0 items. Use: return [{ json: { field: value } }].',
   125: "Replace YYYY with yyyy and DD with dd in Luxon .toFormat() calls. Luxon uses lowercase tokens for calendar year and day-of-month — uppercase YYYY means ISO week year and DD means ordinal day of year.",
   126: 'Replace the node ID with a valid UUID v4 (xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx). Use a UUID generator to create a proper random UUID v4.',
+  127: 'Move the Code node\'s code into the parameter matching its language setting: pythonCode when language is "python", jsCode otherwise. n8n only executes the parameter matching the language setting.',
+  128: 'Wire output index 1 (the error-path port created by onError: "continueErrorOutput") to a node that handles the failure — otherwise every item that errors on this node is silently dropped with nowhere to go.',
 }
