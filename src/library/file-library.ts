@@ -36,7 +36,7 @@ export function buildSearchCorpus(w: StoredWorkflow): string {
 }
 
 const _rawSize = parseInt(process.env['KAIROS_LIBRARY_SIZE'] ?? '500', 10)
-const MAX_LIBRARY_SIZE = Number.isFinite(_rawSize) && _rawSize >= 10 ? _rawSize : 500
+export const MAX_LIBRARY_SIZE = Number.isFinite(_rawSize) && _rawSize >= 10 ? _rawSize : 500
 
 function evictionScore(m: StoredWorkflowMeta): number {
   return (m.deployCount ?? 0) * 3 + (m.timesRetrieved ?? 0) + (m.outcomeStats?.totalUses ?? 0)
@@ -88,6 +88,11 @@ export class FileLibrary implements IWorkflowLibrary {
   private embeddingCache: Map<string, number[]> = new Map()
   private embeddingCacheLoaded = false
   private embeddingWriteQueue: Promise<void> = Promise.resolve()
+  // IDs deleted by this process — persist() merges in on-disk entries it doesn't recognize
+  // as "external" (added by another process); without this, a stale on-disk copy of a just-
+  // deleted entry would be resurrected by that merge. Grows unboundedly per-process, but
+  // deletions are rare and this resets on restart, so the memory cost is negligible.
+  private readonly deletedIds = new Set<string>()
 
   constructor(dir?: string, options?: { embeddingFn?: EmbeddingFn }) {
     this.dir = dir ?? join(homedir(), '.kairos', 'library')
@@ -499,6 +504,22 @@ export class FileLibrary implements IWorkflowLibrary {
     await this.persist()
   }
 
+  async pruneBySource(sourceKind: StoredWorkflow['sourceKind']): Promise<{ removed: string[] }> {
+    const toRemove = this.meta.filter((m) => m.sourceKind === sourceKind)
+    if (toRemove.length === 0) return { removed: [] }
+
+    const removedIds = toRemove.map((m) => m.id)
+    this.meta = this.meta.filter((m) => m.sourceKind !== sourceKind)
+    for (const id of removedIds) this.deletedIds.add(id)
+    await this.persist()
+
+    for (const id of removedIds) {
+      await unlink(this.workflowFilePath(id)).catch(() => {})
+    }
+
+    return { removed: removedIds }
+  }
+
   async drain(): Promise<void> {
     await Promise.all([this.writeQueue, this.embeddingWriteQueue])
   }
@@ -639,7 +660,7 @@ export class FileLibrary implements IWorkflowLibrary {
 
         // Our in-memory state wins for IDs we manage; add any entries added by other processes
         const ourIds = new Set(this.meta.map((m) => m.id))
-        const external = onDisk.filter((m) => !ourIds.has(m.id))
+        const external = onDisk.filter((m) => !ourIds.has(m.id) && !this.deletedIds.has(m.id))
         let merged = [...this.meta, ...external]
         if (merged.length > MAX_LIBRARY_SIZE) {
           merged.sort((a, b) => evictionScore(b) - evictionScore(a))

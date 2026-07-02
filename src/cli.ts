@@ -25,6 +25,8 @@ Usage:
   kairos deactivate <id>
   kairos delete <id> --confirm
   kairos sync-templates [options]
+  kairos sync-templates --from-dir <path> [options]
+  kairos library prune --source <organic|n8n-template|imported> [--dry-run]
 
 Build options:
   --dry-run       Generate and validate without deploying
@@ -52,7 +54,18 @@ Sessions options:
   --json          Output raw JSON instead of summary
 
 Sync options:
-  --max <count>   Maximum templates to fetch (default: 500)
+  --max <count>          Maximum templates to fetch from n8n.io (default: 500)
+  --from-dir <path>      Import from a local directory of workflow JSON files instead of n8n.io
+                          (recurses into subdirectories, accepts bare or {workflow: {...}}-wrapped JSON)
+  --limit <count>        Max entries to select via diversity-aware sampling (default: 1000, --from-dir only)
+  --strict-code-nodes    Block workflows containing code nodes instead of demoting them to "review"
+                          trust (default: review — see docs/plans/repo-integration-plan.md §5.1;
+                          --from-dir only)
+
+Library options:
+  library prune --source <kind>   Remove all library entries with the given sourceKind
+                                   (organic | n8n-template | imported)
+  --dry-run                       Preview what would be removed without deleting anything
 
 Environment variables:
   ANTHROPIC_API_KEY       Anthropic API key (required)
@@ -280,7 +293,93 @@ async function handleDelete(positional: string[], flags: Record<string, string |
   console.log(`Deleted workflow ${id}`)
 }
 
+async function handleLocalImport(dir: string, flags: Record<string, string | boolean>): Promise<void> {
+  const limitRaw = typeof flags['limit'] === 'string' ? parseInt(flags['limit'], 10) : NaN
+  const limit = Number.isNaN(limitRaw) ? 1000 : limitRaw
+  const dryRun = flags['dry-run'] === true
+  const codeNodePolicy = flags['strict-code-nodes'] === true ? 'block' : 'review'
+  const tag = dryRun ? '[DRY RUN] ' : ''
+
+  const library = new FileLibrary()
+  const { LocalImporter } = await import('./templates/local-importer.js')
+  const importer = new LocalImporter(library, CLI_LOGGER)
+
+  // AMENDMENT D: bias diversity selection toward Kairos's own build history rather than
+  // pure round-robin across every integration in the source dataset.
+  const analyzer = PatternAnalyzer.fromEnv()
+  const sessions = await analyzer.getSessions(100_000)
+  const workflowTypeWeights = new Map<string, number>()
+  for (const s of sessions) {
+    if (s.workflowType) workflowTypeWeights.set(s.workflowType, (workflowTypeWeights.get(s.workflowType) ?? 0) + 1)
+  }
+
+  console.error(`${tag}Importing workflows from ${dir} (limit ${limit}, code nodes: ${codeNodePolicy})...`)
+
+  const report = await importer.importFromDirectory(dir, {
+    limit,
+    dryRun,
+    codeNodePolicy,
+    workflowTypeWeights,
+    onProgress: (p) => {
+      if (p.parsed % 100 === 0 && p.parsed > 0) {
+        console.error(`  Progress: ${p.parsed} parsed, ${p.duplicates} dup, ${p.blocked} blocked, ${p.invalid} invalid...`)
+      }
+    },
+  })
+
+  console.error('')
+  console.error(`${tag}Local import complete:`)
+  console.error(`  Files found:     ${report.filesFound}`)
+  console.error(`  Parsed:          ${report.parsed}  (${report.parseErrors} parse errors)`)
+  console.error(`  Duplicates:      ${report.duplicates}`)
+  console.error(`  Blocked:         ${report.blocked} (executeCommand/ssh, secrets, or --strict-code-nodes)`)
+  console.error(`  Review tier:     ${report.reviewed}`)
+  console.error(`  Failed validation: ${report.invalid}`)
+  console.error(`  Candidates:      ${report.candidatesAfterGating}`)
+  console.error(`  Selected:        ${report.selected}`)
+  console.error(`  ${dryRun ? 'Would save' : 'Saved'}:          ${dryRun ? report.selected : report.saved}`)
+  console.error(`  Capacity left:   ${report.capacityAvailable}`)
+  if (report.stoppedReason) {
+    console.error('')
+    console.error(`  ${report.stoppedReason}`)
+  }
+}
+
+async function handleLibraryPrune(flags: Record<string, string | boolean>): Promise<void> {
+  const source = flags['source']
+  const validSources = ['organic', 'n8n-template', 'imported']
+  if (typeof source !== 'string' || !validSources.includes(source)) {
+    console.error('Usage: kairos library prune --source <organic|n8n-template|imported> [--dry-run]')
+    process.exit(1)
+  }
+
+  const dryRun = flags['dry-run'] === true
+  const library = new FileLibrary()
+  await library.initialize()
+
+  if (dryRun) {
+    const all = await library.list()
+    const matching = all.filter((w) => w.sourceKind === source)
+    console.log(`[DRY RUN] Would remove ${matching.length} entr${matching.length === 1 ? 'y' : 'ies'} with sourceKind="${source}".`)
+    for (const w of matching.slice(0, 20)) {
+      console.log(`  - ${w.id}  ${w.description.slice(0, 70)}`)
+    }
+    if (matching.length > 20) console.log(`  ... and ${matching.length - 20} more`)
+    return
+  }
+
+  const result = await library.pruneBySource(source as import('./library/types.js').SourceKind)
+  await library.drain()
+  console.log(`Removed ${result.removed.length} entr${result.removed.length === 1 ? 'y' : 'ies'} with sourceKind="${source}".`)
+}
+
 async function handleSyncTemplates(flags: Record<string, string | boolean>): Promise<void> {
+  const fromDir = flags['from-dir']
+  if (typeof fromDir === 'string') {
+    await handleLocalImport(fromDir, flags)
+    return
+  }
+
   const maxRaw = typeof flags['max'] === 'string' ? parseInt(flags['max'], 10) : NaN
   const max = Number.isNaN(maxRaw) ? 500 : maxRaw
   const library = new FileLibrary()
@@ -946,6 +1045,17 @@ async function main(): Promise<void> {
     case 'trace':
       await handleTrace(positional)
       break
+    case 'library': {
+      const subcommand = positional[0]
+      if (subcommand === 'prune') {
+        await handleLibraryPrune(flags)
+      } else {
+        console.error(`Unknown library subcommand: ${subcommand ?? '(none)'}`)
+        console.error('Available: kairos library prune --source <organic|n8n-template|imported> [--dry-run]')
+        process.exit(1)
+      }
+      break
+    }
     default:
       console.error(`Unknown command: ${command}`)
       console.log(HELP)

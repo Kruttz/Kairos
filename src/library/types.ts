@@ -115,6 +115,7 @@ export interface IWorkflowLibrary {
   recordDeployment(id: string, n8nWorkflowId?: string): Promise<void>
   recordOutcome(id: string, outcome: OutcomeData): Promise<void>
   recordTrace(id: string, trace: ExecutionTrace): Promise<void>
+  pruneBySource(sourceKind: SourceKind): Promise<{ removed: string[] }>
   get(id: string): Promise<StoredWorkflow | null>
   list(filters?: LibraryFilters): Promise<StoredWorkflow[]>
 }

@@ -122,14 +122,24 @@ Fix ALL of the above issues in your new response. Do not repeat any of these mis
 
       if (mode === 'direct' && matches[0]) {
         const match = matches[0]
+        // Imported workflows demoted to "review" trust (e.g. local-dir bulk import — see
+        // docs/plans/repo-integration-plan.md AMENDMENT B) may contain code-node or sticky-note
+        // content written by an unvetted third party. Never inject their full JSON verbatim into
+        // the generation prompt — fall back to the same node-list-only presentation used for
+        // oversized workflows. Reference and scratch modes already only ever show node lists,
+        // so this is the only injection surface that needs the guard.
+        const isUntrustedImport = match.workflow.sourceKind === 'imported' && match.workflow.trustLevel === 'review'
         const json = JSON.stringify(match.workflow.workflow, null, 2)
-        if (json.length > 30_000) {
+        if (isUntrustedImport || json.length > 30_000) {
           const nodes = match.workflow.workflow.nodes
             .map((n) => `  - ${n.name} (${n.type} v${n.typeVersion})`)
             .join('\n')
+          const reason = isUntrustedImport
+            ? 'imported from an unreviewed source, using reference'
+            : 'too large for full JSON, using reference'
           blocks.push({
             type: 'text',
-            text: `## Closely Matched Workflow (score: ${match.score.toFixed(2)}) — too large for full JSON, using reference:\nNodes:\n${nodes}`,
+            text: `## Closely Matched Workflow (score: ${match.score.toFixed(2)}) — ${reason}:\nNodes:\n${nodes}`,
           })
         } else {
           blocks.push({

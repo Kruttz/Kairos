@@ -107,6 +107,43 @@ describe('PromptBuilder', () => {
     expect(warningBlock).toBeUndefined()
   })
 
+  describe('imported+review prompt-injection guard', () => {
+    it('does not inject full workflow JSON for an imported, review-trust direct match', () => {
+      const match = makeMatch(0.95, { sourceKind: 'imported', trustLevel: 'review' }) // >= 0.92 = direct mode
+      const prompt = builder.build({ description: 'test' }, [match])
+      const block = prompt.system.find((b) => b.text.includes('Closely Matched Workflow'))
+      expect(block).toBeDefined()
+      expect(block!.text).not.toContain('"nodes"') // no raw JSON keys present
+      expect(block!.text).toContain('Nodes:')
+      expect(block!.text).toContain('manualTrigger')
+      expect(block!.text).toContain('unreviewed source')
+    })
+
+    it('still injects full JSON for an imported, safe-trust direct match', () => {
+      const match = makeMatch(0.95, { sourceKind: 'imported', trustLevel: 'safe' })
+      const prompt = builder.build({ description: 'test' }, [match])
+      const block = prompt.system.find((b) => b.text.includes('Closely Matched Workflow'))
+      expect(block).toBeDefined()
+      expect(block!.text).toContain('"nodes"')
+    })
+
+    it('still injects full JSON for an organic direct match (no sourceKind)', () => {
+      const match = makeMatch(0.95)
+      const prompt = builder.build({ description: 'test' }, [match])
+      const block = prompt.system.find((b) => b.text.includes('Closely Matched Workflow'))
+      expect(block).toBeDefined()
+      expect(block!.text).toContain('"nodes"')
+    })
+
+    it('does not guard reference-mode matches (they never carry full JSON anyway)', () => {
+      const match = makeMatch(0.8, { sourceKind: 'imported', trustLevel: 'review' }) // reference mode
+      const prompt = builder.build({ description: 'test' }, [match])
+      const block = prompt.system.find((b) => b.text.includes('Similar Workflows From Library'))
+      expect(block).toBeDefined()
+      expect(block!.text).not.toContain('"nodes"')
+    })
+  })
+
   describe('prompt profiles', () => {
     let tmpDir: string
     let patternsPath: string

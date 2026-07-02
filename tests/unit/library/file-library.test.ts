@@ -310,6 +310,63 @@ describe('FileLibrary', () => {
     expect(lockExists).toBe(false)
   })
 
+  // ── pruneBySource ────────────────────────────────────────────────────────
+
+  describe('pruneBySource', () => {
+    it('removes only entries matching the given sourceKind', async () => {
+      const organicId = await lib.save(makeWorkflow('Organic'), { description: 'organic workflow' })
+      const importedId = await lib.save(makeWorkflow('Imported'), {
+        description: 'imported workflow',
+        sourceKind: 'imported',
+        sourceId: 'hash-abc',
+      })
+
+      const result = await lib.pruneBySource('imported')
+
+      expect(result.removed).toEqual([importedId])
+      expect(await lib.get(importedId)).toBeNull()
+      expect(await lib.get(organicId)).not.toBeNull()
+    })
+
+    it('deletes the workflow file for pruned entries', async () => {
+      const importedId = await lib.save(makeWorkflow('Imported'), {
+        description: 'imported workflow',
+        sourceKind: 'imported',
+        sourceId: 'hash-xyz',
+      })
+      await lib.pruneBySource('imported')
+
+      const workflowFilePath = join(dir, 'workflows', `${importedId}.json`)
+      let fileExists = true
+      try {
+        await stat(workflowFilePath)
+      } catch {
+        fileExists = false
+      }
+      expect(fileExists).toBe(false)
+    })
+
+    it('returns an empty removed list when nothing matches', async () => {
+      await lib.save(makeWorkflow('Organic'), { description: 'organic workflow' })
+      const result = await lib.pruneBySource('imported')
+      expect(result.removed).toEqual([])
+    })
+
+    it('persists the removal to index.json', async () => {
+      await lib.save(makeWorkflow('Imported'), {
+        description: 'imported workflow',
+        sourceKind: 'imported',
+        sourceId: 'hash-persist',
+      })
+      await lib.pruneBySource('imported')
+      await lib.drain()
+
+      const indexRaw = await readFile(join(dir, 'index.json'), 'utf-8')
+      const index = JSON.parse(indexRaw) as Array<{ sourceKind?: string }>
+      expect(index.some((m) => m.sourceKind === 'imported')).toBe(false)
+    })
+  })
+
   describe('embedding-based hybrid retrieval', () => {
     it('uses embedding function for search when provided', async () => {
       let searchCallCount = 0

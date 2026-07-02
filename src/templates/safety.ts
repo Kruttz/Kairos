@@ -6,8 +6,17 @@ interface SafetyResult {
   reasons: string[]
 }
 
+export interface SafetyOptions {
+  // 'block' (default) treats a code node as blocked, matching n8n.io template sync behavior.
+  // 'review' demotes a code node alone to the review tier — used by local-dir import, where
+  // code nodes are common in community workflows and are never executed by Kairos (they're
+  // prompt examples only). Secrets, executeCommand, and ssh are ALWAYS blocked regardless.
+  codeNodePolicy?: 'block' | 'review'
+}
+
+const CODE_NODE_TYPE = 'n8n-nodes-base.code'
+
 const BLOCKED_NODE_TYPES = new Set([
-  'n8n-nodes-base.code',
   'n8n-nodes-base.executeCommand',
   'n8n-nodes-base.ssh',
 ])
@@ -42,7 +51,8 @@ function collectExpressionStrings(obj: unknown, out: string[] = []): string[] {
   return out
 }
 
-export function assessTemplateSafety(workflow: N8nWorkflow): SafetyResult {
+export function assessTemplateSafety(workflow: N8nWorkflow, options?: SafetyOptions): SafetyResult {
+  const codeNodePolicy = options?.codeNodePolicy ?? 'block'
   const reasons: string[] = []
   let worst: TrustLevel = 'safe'
 
@@ -53,7 +63,9 @@ export function assessTemplateSafety(workflow: N8nWorkflow): SafetyResult {
   }
 
   for (const node of workflow.nodes) {
-    if (BLOCKED_NODE_TYPES.has(node.type)) {
+    if (node.type === CODE_NODE_TYPE) {
+      escalate(codeNodePolicy === 'review' ? 'review' : 'blocked', `Contains ${node.type} node "${node.name}"`)
+    } else if (BLOCKED_NODE_TYPES.has(node.type)) {
       escalate('blocked', `Contains ${node.type} node "${node.name}"`)
     }
 

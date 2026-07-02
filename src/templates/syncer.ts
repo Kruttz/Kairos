@@ -4,12 +4,13 @@ import type { ILogger } from '../utils/logger.js'
 import type { TemplateSearchResponse, TemplateDetailResponse, SyncProgress } from './types.js'
 import { N8nValidator } from '../validation/validator.js'
 import { assessTemplateSafety } from './safety.js'
+import { cleanMarkdownText } from './text-clean.js'
 
 const N8N_TEMPLATE_API = 'https://api.n8n.io/api/templates'
 const PAGE_SIZE = 50
 const DELAY_BETWEEN_FETCHES_MS = 200
 
-const DEFAULT_SETTINGS: N8nWorkflow['settings'] = {
+export const DEFAULT_SETTINGS: N8nWorkflow['settings'] = {
   executionOrder: 'v1',
   saveManualExecutions: true,
   timezone: 'UTC',
@@ -192,12 +193,6 @@ export class TemplateSyncer {
   }
 
   private cleanDescription(raw: string): string {
-    return raw
-      .replace(/#{1,6}\s*/g, '')
-      .replace(/\*{1,2}([^*]+)\*{1,2}/g, '$1')
-      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim()
-      .slice(0, 500)
+    return cleanMarkdownText(raw)
   }
 }

@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 const TSX = join(__dirname, '../../../node_modules/.bin/tsx')
@@ -210,6 +212,88 @@ describe('CLI — parseArgs / routing', () => {
       })
       expect(r.status).toBe(0)
       expect(r.stdout).toContain('No session history found')
+    })
+  })
+
+  describe('library prune', () => {
+    it('exits with usage error when --source is missing', () => {
+      const r = run(['library', 'prune'])
+      expect(r.status).toBe(1)
+      expect(r.stderr).toContain('Usage: kairos library prune')
+    })
+
+    it('exits with usage error for an invalid --source value', () => {
+      const r = run(['library', 'prune', '--source', 'bogus'])
+      expect(r.status).toBe(1)
+      expect(r.stderr).toContain('Usage: kairos library prune')
+    })
+
+    it('exits with an error for an unknown library subcommand', () => {
+      const r = run(['library', 'nonsense'])
+      expect(r.status).toBe(1)
+      expect(r.stderr).toContain('Unknown library subcommand')
+    })
+
+    it('dry-run reports without mutating anything', () => {
+      const r = run(['library', 'prune', '--source', 'imported', '--dry-run'])
+      expect(r.status).toBe(0)
+      expect(r.stdout).toContain('[DRY RUN]')
+      expect(r.stdout).toContain('sourceKind="imported"')
+    })
+  })
+
+  describe('sync-templates --from-dir', () => {
+    const NO_TELEMETRY = { KAIROS_TELEMETRY: '/tmp/kairos-nonexistent-test-dir-xyz' }
+    let sourceDir: string
+
+    async function makeWorkflowFixture(name: string): Promise<void> {
+      const workflow = {
+        name,
+        nodes: [
+          { id: '00000000-0000-4000-8000-000000000001', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 0], parameters: {} },
+          { id: '00000000-0000-4000-8000-000000000002', name: 'Notify', type: 'n8n-nodes-base.slack', typeVersion: 2, position: [200, 0], parameters: { resource: 'message', operation: 'send', select: 'channel', channelId: { __rl: true, mode: 'id', value: 'C123' }, text: 'hi' }, credentials: { slackOAuth2Api: { id: 'placeholder-id', name: 'Slack' } } },
+        ],
+        connections: { Trigger: { main: [[{ node: 'Notify', type: 'main', index: 0 }]] } },
+        settings: { executionOrder: 'v1' },
+      }
+      await writeFile(join(sourceDir, `${name}.json`), JSON.stringify(workflow), 'utf-8')
+    }
+
+    it('dry-run reports parsed/selected counts for a directory of fixtures without saving', async () => {
+      sourceDir = await mkdtemp(join(tmpdir(), 'kairos-cli-import-'))
+      try {
+        await makeWorkflowFixture('Alpha')
+        const r = run(['sync-templates', '--from-dir', sourceDir, '--dry-run'], NO_TELEMETRY)
+        expect(r.status).toBe(0)
+        expect(r.stderr).toContain('[DRY RUN]')
+        expect(r.stderr).toContain('Files found:     1')
+        expect(r.stderr).toContain('Would save:          1')
+      } finally {
+        await rm(sourceDir, { recursive: true, force: true })
+      }
+    })
+
+    it('reports zero files found for an empty directory', async () => {
+      sourceDir = await mkdtemp(join(tmpdir(), 'kairos-cli-import-empty-'))
+      try {
+        const r = run(['sync-templates', '--from-dir', sourceDir, '--dry-run'], NO_TELEMETRY)
+        expect(r.status).toBe(0)
+        expect(r.stderr).toContain('Files found:     0')
+      } finally {
+        await rm(sourceDir, { recursive: true, force: true })
+      }
+    })
+
+    it('counts unparseable JSON as a parse error', async () => {
+      sourceDir = await mkdtemp(join(tmpdir(), 'kairos-cli-import-broken-'))
+      try {
+        await writeFile(join(sourceDir, 'broken.json'), '{ not json', 'utf-8')
+        const r = run(['sync-templates', '--from-dir', sourceDir, '--dry-run'], NO_TELEMETRY)
+        expect(r.status).toBe(0)
+        expect(r.stderr).toContain('1 parse errors')
+      } finally {
+        await rm(sourceDir, { recursive: true, force: true })
+      }
     })
   })
 })
