@@ -202,21 +202,27 @@ console.log(deployed.workflowId) // now live in n8n
 
 Tested against 20 workflow prompts of varying complexity (simple triggers, multi-step conditional logic, AI agents with memory). Results measure **structural validation pass rate** — whether the generated workflow passes all 124 validator rules, not end-to-end execution correctness.
 
-### Before vs After: Template-Seeded Library
+### Current results (re-run 2026-07-02, 124-rule validator)
 
-| Metric | Baseline (no library) | With library (105 templates) | Delta |
+| Metric | Baseline (no library) | Current library (292 entries) | + 14 imported fixtures |
 |---|---|---|---|
-| **First-try pass rate** | 55% (11/20) | **100% (20/20)** | **+45pp** |
-| Avg attempts | 1.45 | **1.00** | -0.45 |
-| Correction loop usage | 45% | **0%** | -45pp |
-| Avg generation time | 30.6s | **20.7s** | -32% |
-| Failures | 0 | 0 | — |
+| **First-try pass rate** | 100% (20/20) | 100% (20/20) | 100% (20/20) |
+| Avg attempts | 1.00 | 1.00 | 1.00 |
+| Correction loop usage | 0% | 0% | 0% |
+| Avg generation time | 21.0s | 20.7s | 20.6s |
+| Failures | 0 | 0 | 0 |
 
-Both runs used the same Claude model and correction loop; the seeded run added a library of 105 workflows (16 organic + 89 ingested from the n8n community). The broader local development library now contains 286+ generated/ingested workflows. Template seeding eliminated the correction loop entirely and cut generation time by a third.
+**Honest read of this result:** the accumulated system-prompt improvements (node catalog, connection-rule documentation, sub-patterns, intent-to-component mapping) plus the growth from 34 to 124 validator rules have together closed the gap this benchmark used to measure — even the no-library baseline now passes first-try on all 20 prompts. That's a genuinely good outcome, but it also means **this 20-prompt suite has hit a ceiling and no longer discriminates library-seeding's contribution** the way the original 55%→100% result did. The "+ 14 imported fixtures" column confirms the new `sync-templates --from-dir` bulk-import feature (see [Workflow Library & Feedback Loop](#workflow-library--feedback-loop)) doesn't regress quality — it's a null result, not a negative one — but it isn't a real test of importing hundreds or thousands of community workflows; the fixtures were 14 small, hand-authored workflows used only to exercise the import pipeline end-to-end without vendoring any third-party dataset into this repo.
+
+Full results: [`benchmark-results.json`](./benchmark-results.json) (baseline), [`benchmark-seeded-results.json`](./benchmark-seeded-results.json) (current library), [`benchmark-imported-results.json`](./benchmark-imported-results.json) (+ imported fixtures).
+
+**Recommendation for anyone extending this benchmark:** move to a harder prompt set (the full 85-prompt suite in `scripts/benchmark.ts`, or a curated hard subset) to get a signal that isn't already saturated at 100%.
 
 > **Note:** These results confirm that generated workflows are structurally valid and deployable to n8n. They do not verify runtime execution correctness, credential configuration, or whether the workflow output matches user intent.
->
-> **Validator version caveat:** these benchmark runs were recorded against an earlier 34-rule version of the validator. The validator has since grown to 124 rules; the benchmark has not yet been re-run against it, so pass rates under the current, stricter rule set may differ.
+
+### Historical result (34-rule validator, superseded)
+
+The original benchmark — 55% (11/20) baseline vs. 100% (20/20) with a 105-workflow seeded library — was recorded against an earlier 34-rule version of the validator and is kept here for historical context only. It does not reflect current behavior; see the current results above.
 
 ---
 
@@ -489,6 +495,14 @@ kairos trace record <n8n-workflow-id>
 # Seed library with n8n community templates
 kairos sync-templates --max 200
 
+# Bulk-import workflows from a local directory of n8n workflow JSON files
+kairos sync-templates --from-dir ./my-workflows --dry-run
+kairos sync-templates --from-dir ./my-workflows --limit 1000
+
+# Remove library entries by source (e.g. undo a bulk import)
+kairos library prune --source imported --dry-run
+kairos library prune --source imported
+
 # View pattern analysis
 kairos patterns
 kairos patterns --days 60 --json
@@ -667,7 +681,9 @@ const library = new FileLibrary(undefined, {
 
 **Execution trace learning:** After a deployed workflow runs in n8n, record its latest execution with `kairos trace record <n8n-workflow-id>` (CLI) or `kairos_record_trace` (MCP). Kairos stores a privacy-safe trace (status, executed node names, error *types*, item counts — never data values, up to 10 per workflow) and computes a `runtimeReliabilityScore` that blends into the outcome signal (70% generation outcome, 30% runtime reliability). Workflows that actually run reliably in production rank higher in future retrieval.
 
-**Template seeding:** Run `kairos sync-templates` to ingest validated workflows from the n8n community library. Templates are safety-filtered (blocks code/executeCommand/ssh nodes, hardcoded secrets) and tagged with `sourceKind: 'n8n-template'`. In benchmarks, seeding the library with 89 templates improved first-try pass rate from 55% to 100%.
+**Template seeding:** Run `kairos sync-templates` to ingest validated workflows from the n8n community library. Templates are safety-filtered (blocks code/executeCommand/ssh nodes, hardcoded secrets) and tagged with `sourceKind: 'n8n-template'`. Under the 34-rule-era validator, seeding the library with 89 templates improved first-try pass rate from 55% to 100% — the current 124-rule validator plus a stronger system prompt now hits 100% even without a library (see [Benchmark Results](#benchmark-results) for the honest current picture and why the old comparison no longer discriminates).
+
+**Bulk import from a local directory:** `kairos sync-templates --from-dir <path>` ingests any local directory of n8n workflow JSON files (recurses into subdirectories, accepts bare or n8n.io-style `{workflow: {...}}`-wrapped JSON). Each file goes through the same safety + validation gates as template seeding, deduplicates by a structural hash (so re-hosted copies of the same workflow don't pile up), synthesizes a description from any sticky notes on the canvas (falling back to a node-type summary), and selects up to `--limit` (default 1000) entries via diversity-aware sampling — every distinct structural pattern gets a slot before extra slots go to patterns matching your own build history. `code` nodes are demoted to `review` trust rather than blocked outright (pass `--strict-code-nodes` to keep the stricter behavior); imported `review`-trust entries are never injected as full JSON into the generation prompt, only as a reference node list, so an unvetted workflow's contents can't leak arbitrary instructions into a build. Never evicts existing library entries — if the library is already at capacity, the import reports zero capacity and stops rather than displacing what's there. Undo with `kairos library prune --source imported`.
 
 The CLI automatically enables the library — no configuration needed.
 
