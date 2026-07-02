@@ -35,8 +35,13 @@ export function buildSearchCorpus(w: StoredWorkflow): string {
   return `${w.description} ${w.workflow.name} ${w.tags.join(' ')} ${nodeTokens.join(' ')}`
 }
 
-const _rawSize = parseInt(process.env['KAIROS_LIBRARY_SIZE'] ?? '500', 10)
-export const MAX_LIBRARY_SIZE = Number.isFinite(_rawSize) && _rawSize >= 10 ? _rawSize : 500
+// Default raised from 500 to 1500 (2026-07-02) once the search-latency benchmark
+// (scripts/search-bench.ts) confirmed the cost is trivial next to a build()'s LLM
+// round-trip: ~683KB index.json, ~12ms warm search at 1500 entries. Chosen specifically
+// to cover a real organic library plus the Phase-0-approved 1000-entry --from-dir
+// --limit with headroom, without the extra disk cost 2000+ would add for no requested benefit.
+const _rawSize = parseInt(process.env['KAIROS_LIBRARY_SIZE'] ?? '1500', 10)
+export const MAX_LIBRARY_SIZE = Number.isFinite(_rawSize) && _rawSize >= 10 ? _rawSize : 1500
 
 function evictionScore(m: StoredWorkflowMeta): number {
   return (m.deployCount ?? 0) * 3 + (m.timesRetrieved ?? 0) + (m.outcomeStats?.totalUses ?? 0)

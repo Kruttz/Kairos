@@ -77,6 +77,7 @@ Environment variables:
                           minimal: base prompt only, no library context, top 3 patterns
                           standard: full library context, top 10 patterns (default)
                           rich: full library context, top 15 patterns, proactive expression guidance
+  KAIROS_LIBRARY_SIZE     Max library entries before oldest/least-used are evicted (default: 1500)
 `
 
 function getEnvOrExit(name: string): string {

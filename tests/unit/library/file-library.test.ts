@@ -1,9 +1,38 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdir, rm, readFile, writeFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { FileLibrary } from '../../../src/library/file-library.js'
 import type { N8nWorkflow } from '../../../src/types/workflow.js'
+
+describe('MAX_LIBRARY_SIZE default', () => {
+  it('defaults to 1500 when KAIROS_LIBRARY_SIZE is unset', async () => {
+    const prevEnv = process.env['KAIROS_LIBRARY_SIZE']
+    delete process.env['KAIROS_LIBRARY_SIZE']
+    vi.resetModules()
+    try {
+      const { MAX_LIBRARY_SIZE } = await import('../../../src/library/file-library.js')
+      expect(MAX_LIBRARY_SIZE).toBe(1500)
+    } finally {
+      if (prevEnv !== undefined) process.env['KAIROS_LIBRARY_SIZE'] = prevEnv
+      vi.resetModules()
+    }
+  })
+
+  it('still honors an explicit KAIROS_LIBRARY_SIZE override', async () => {
+    const prevEnv = process.env['KAIROS_LIBRARY_SIZE']
+    process.env['KAIROS_LIBRARY_SIZE'] = '250'
+    vi.resetModules()
+    try {
+      const { MAX_LIBRARY_SIZE } = await import('../../../src/library/file-library.js')
+      expect(MAX_LIBRARY_SIZE).toBe(250)
+    } finally {
+      if (prevEnv === undefined) delete process.env['KAIROS_LIBRARY_SIZE']
+      else process.env['KAIROS_LIBRARY_SIZE'] = prevEnv
+      vi.resetModules()
+    }
+  })
+})
 
 function makeWorkflow(name: string): N8nWorkflow {
   return {
