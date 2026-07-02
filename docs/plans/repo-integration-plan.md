@@ -128,6 +128,40 @@ Two items flagged when Phase 1 shipped; both were deliberately *not* fixed then 
 
 *(Space for further additions — append below this line as they're found, don't edit the items above until they're actually resolved.)*
 
+---
+
+## 8a. Judgment Calls — Resolution Plan (2026-07-02)
+
+Jordan asked for this dedicated pass now that Phases 1–3 are done. Same protocol as every phase before it: plan first, tests-first where feasible, all 4 gates before each commit, one commit per item, check in between items rather than batching silently.
+
+### Item 1 — Raise `MAX_LIBRARY_SIZE`'s default (500 → 1500)
+
+- **What:** Change the fallback default in `src/library/file-library.ts` (`parseInt(process.env['KAIROS_LIBRARY_SIZE'] ?? '500', 10)` → `'1500'`, and the two `?? 500` type-guard fallbacks alongside it).
+- **Why:** This is the actual decision the Phase 2 benchmark was built to inform, deliberately not pulled the trigger on inside Phase 2 itself (a shipped-default change deserves its own moment, not to ride in on the PR that built the measuring stick). The data supports it outright: 1500 entries costs 683 KB of `index.json` and ~12ms warm-search / ~21ms cold-search — both trivial next to the multi-second LLM round-trip every `build()` call already makes. 1500 (not 2000) is chosen specifically because it comfortably covers Jordan's current real library (292 entries) *plus* the Phase-0-approved 1000-entry `--limit` for a single bulk import, with headroom left over for organic growth — going to 2000 buys more headroom at a real disk-size cost (1.8 MB at 4000 in the benchmark table) for no benefit anyone has asked for.
+- **How:** Single-line default change plus a scan for any test or doc that hardcodes the old `500` value as an expectation (not just as an example env var).
+- **Where:** `src/library/file-library.ts` lines 38-39 (the two `?? 500` sites already share one `_rawSize` computation, so this is genuinely a one-line change) — confirmed no test in `file-library.test.ts` or `local-importer.test.ts` asserts the literal default value (the capacity-exhaustion test in `local-importer.test.ts` explicitly sets `KAIROS_LIBRARY_SIZE=10` for its own isolated scenario, so it's unaffected by the default changing).
+- **When:** First item, since it's the most consequential and the one the whole Phase 2 benchmark chain exists to unblock.
+- **Methodology / guardrails:** This is a real behavioral change (bigger `index.json` ceiling, marginally slower search for every user by default, not just `--from-dir` users) — but it's bounded, reversible via `KAIROS_LIBRARY_SIZE`, and backed by first-party measurement rather than a guess. Verify: unit test asserting the new default (1500) when the env var is unset; existing env-var-override tests continue to pass unchanged. Update the README wherever the old default is implied. Gates + commit.
+
+### Item 2 — `KAIROS_LIBRARY_DIR` env override for CLI-instantiated `FileLibrary`
+
+- **What:** A new env var, read the same way `KAIROS_TELEMETRY` already is (`getTelemetryOption()` in `cli.ts`), that overrides the directory every CLI-constructed `FileLibrary` points at.
+- **Why:** Every CLI test that touches the library today either avoids real mutation (dry-run only) or would mutate Jordan's actual `~/.kairos/library` if it didn't. This was explicitly called out as untested surface after Phase 1 (`library prune`'s real deletion path, `sync-templates --from-dir`'s real save path) — both were verified via direct `FileLibrary` unit tests instead, which is a legitimate fallback but leaves the CLI *wiring itself* (arg parsing → handler → FileLibrary call) unverified end-to-end.
+- **How:** Add `getLibraryDirOption(): string | undefined` mirroring `getTelemetryOption()`'s shape, then thread it through every `new FileLibrary()` call site in `cli.ts` — there are 7: `createClient()` (line 138), `createDryRunClient()` (151), `handleSyncTemplates()`'s n8n.io path (303), `handleLocalImport()` (357), `handleLibraryPrune()` (385), `handleTrace()` (790 — already passes an explicit path equal to the real default, so this becomes the override-aware version of that same line), `handleInit()` (927).
+- **Where:** `src/cli.ts`, all 7 sites above, plus the `HELP` text's Environment variables section (mirroring the existing `KAIROS_TELEMETRY` line) and the README's environment variable table.
+- **When:** Second item — depends on nothing from item 1, but doing it second keeps the diff reviewable one concern at a time.
+- **Methodology / guardrails:** Once this lands, add the previously-blocked tests: a real (non-dry-run) `library prune` CLI subprocess test and a real (non-dry-run) `sync-templates --from-dir` save-and-verify CLI subprocess test, both pointed at a `KAIROS_LIBRARY_DIR`-overridden temp directory — closing the exact gap this item exists to close, not just adding the plumbing and leaving it unexercised. Gates + commit.
+
+### Item 3 — Benchmark suite tier selection (structural fix, not a re-run)
+
+- **What:** Add machine-readable tier boundaries to `scripts/benchmark.ts`'s `PROMPTS` array (currently only comment-marked) and a `--tier <name>` CLI flag, so a harder subset can be selected without hand-editing the script. Confirmed tier boundaries by direct read: Simple 0-9 (10), Medium 10-24 (15), Complex 25-34 (10), Edge cases 35-44 (10), Real-world 45-54 (10), Stress tests 55-64 (10), Additional 65-84 (20) — sums to 85, matching the known total.
+- **Why:** The ceiling-effect finding from Phase 3 means the default `--count 20` (which only ever runs the Simple tier plus the first 10 of Medium) can no longer discriminate anything. The fix Jordan needs is the *capability* to run a harder slice on demand — not necessarily spending real API money to actually re-run it right now, which is a separate decision under the same budget-approval norm as Phase 3.
+- **How:** Restructure `PROMPTS` from `string[]` to keep the flat array (avoid a risky full rewrite of 85 hand-tuned prompt strings) but add a parallel `TIER_RANGES: Record<string, [number, number]>` constant with the exact boundaries above, plus a `--tier <name>` flag that slices by range instead of `PROMPTS.slice(0, count)` when provided. `--tier all` (or no `--count`/`--tier` at all) runs everything. Keep `--count` working unchanged for backward compatibility with the existing `npm run benchmark` / `benchmark:baseline` scripts.
+- **Where:** `scripts/benchmark.ts` only — no `src/` changes, so this item touches zero production code.
+- **When:** Third — independent of items 1 and 2, lowest risk (a benchmarking dev-tool, not shipped SDK behavior), and naturally the item to close out this pass before Phase 4.
+- **Methodology / guardrails:** **No spend without asking.** Building the `--tier` flag itself costs nothing. Actually running it (even once, on one tier) is real Anthropic API money exactly like Phase 3 — after building the capability, ask Jordan explicitly whether he wants to spend anything to demonstrate it produces a discriminating signal, rather than assuming yes. `scripts/*.ts` isn't covered by `tsc --noEmit` (confirmed during Phase 1 — `tsconfig.json`'s `include` is `["src"]` only), so verification here is a manual `tsx scripts/benchmark.ts --tier complex --no-library` argument-parsing smoke check (no real prompt/API call needed to verify the *slicing logic* — a `--help`-style dry inspection of which prompts would run is enough) rather than the full 4-gate CI protocol (which doesn't apply to `scripts/`). Gates for `src/` still run as a final sanity check that this change touched nothing under `src/`.
+
+
 
 1. **Doc-token caching (R3):** cache `tokenize(buildSearchCorpus(meta))` per entry, invalidated on save. In-memory `Map<id, string[]>` on `FileLibrary` is sufficient; do NOT persist tokens to index.json (bloat).
 2. **Search latency benchmark:** add a micro-benchmark script (`scripts/search-bench.ts`) measuring search at 100/500/1500/4000 entries. Gate any cap-raise on measured numbers, not vibes.
