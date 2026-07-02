@@ -687,7 +687,7 @@ const library = new FileLibrary(undefined, {
 
 The library holds up to `KAIROS_LIBRARY_SIZE` entries (default 1500 — chosen to comfortably fit a real organic library plus a full 1000-entry bulk import with headroom to spare; measured at ~683 KB of `index.json` and ~12ms warm search latency, both negligible next to the multi-second LLM call every build makes). Beyond that, the least-used entries by a composite of deploy count, retrieval count, and outcome usage are evicted to make room for new organic saves (bulk imports never trigger this — see above).
 
-The CLI automatically enables the library — no configuration needed.
+The CLI automatically enables the library — no configuration needed. It defaults to `~/.kairos/library`; override with `KAIROS_LIBRARY_DIR=<path>` (useful for pointing at an isolated directory in tests or scripts without touching your real library).
 
 ---
 

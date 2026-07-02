@@ -73,6 +73,7 @@ Environment variables:
   N8N_API_KEY             n8n API key (required for deploy, optional for --dry-run)
   KAIROS_MODEL            Claude model override (default: claude-sonnet-4-6)
   KAIROS_TELEMETRY        Set to "true" or a directory path to enable telemetry logging
+  KAIROS_LIBRARY_DIR      Override the workflow library directory (default: ~/.kairos/library)
   KAIROS_PROMPT_PROFILE   minimal | standard | rich (default: standard)
                           minimal: base prompt only, no library context, top 3 patterns
                           standard: full library context, top 10 patterns (default)
@@ -128,6 +129,19 @@ function getTelemetryOption(): boolean | string | undefined {
   return undefined
 }
 
+// Overrides the directory every CLI-constructed FileLibrary points at — mirrors
+// getTelemetryOption()'s pattern. Exists so tests can point library-mutating
+// commands (sync-templates, library prune) at an isolated temp directory instead
+// of the real ~/.kairos/library.
+function getLibraryDirOption(): string | undefined {
+  return process.env['KAIROS_LIBRARY_DIR'] || undefined
+}
+
+function createLibrary(): FileLibrary {
+  const dir = getLibraryDirOption()
+  return dir ? new FileLibrary(dir) : new FileLibrary()
+}
+
 function createClient(): Kairos {
   const telemetry = getTelemetryOption()
   return new Kairos({
@@ -136,7 +150,7 @@ function createClient(): Kairos {
     n8nApiKey: getEnvOrExit('N8N_API_KEY'),
     ...(process.env['KAIROS_MODEL'] ? { model: process.env['KAIROS_MODEL'] } : {}),
     ...(telemetry !== undefined ? { telemetry } : {}),
-    library: new FileLibrary(),
+    library: createLibrary(),
     logger: CLI_LOGGER,
   })
 }
@@ -149,7 +163,7 @@ function createDryRunClient(): Kairos {
     ...(process.env['N8N_API_KEY'] ? { n8nApiKey: process.env['N8N_API_KEY'] } : {}),
     ...(process.env['KAIROS_MODEL'] ? { model: process.env['KAIROS_MODEL'] } : {}),
     ...(telemetry !== undefined ? { telemetry } : {}),
-    library: new FileLibrary(),
+    library: createLibrary(),
     logger: CLI_LOGGER,
   })
 }
@@ -301,7 +315,7 @@ async function handleLocalImport(dir: string, flags: Record<string, string | boo
   const codeNodePolicy = flags['strict-code-nodes'] === true ? 'block' : 'review'
   const tag = dryRun ? '[DRY RUN] ' : ''
 
-  const library = new FileLibrary()
+  const library = createLibrary()
   const { LocalImporter } = await import('./templates/local-importer.js')
   const importer = new LocalImporter(library, CLI_LOGGER)
 
@@ -355,7 +369,7 @@ async function handleLibraryPrune(flags: Record<string, string | boolean>): Prom
   }
 
   const dryRun = flags['dry-run'] === true
-  const library = new FileLibrary()
+  const library = createLibrary()
   await library.initialize()
 
   if (dryRun) {
@@ -383,7 +397,7 @@ async function handleSyncTemplates(flags: Record<string, string | boolean>): Pro
 
   const maxRaw = typeof flags['max'] === 'string' ? parseInt(flags['max'], 10) : NaN
   const max = Number.isNaN(maxRaw) ? 500 : maxRaw
-  const library = new FileLibrary()
+  const library = createLibrary()
   const syncer = new TemplateSyncer(library, CLI_LOGGER)
 
   console.error(`Syncing up to ${max} templates from n8n community library...`)
@@ -785,10 +799,7 @@ async function handleTrace(positional: string[]): Promise<void> {
   console.error(`Execution ${trace.executionId}: status=${trace.status}, nodes=${trace.executedNodes.length}, errors=${trace.erroredNodes.length}`)
 
   // Find matching library entry by n8nWorkflowId
-  const { join } = await import('node:path')
-  const { homedir } = await import('node:os')
-  const { FileLibrary } = await import('./library/file-library.js')
-  const lib = new FileLibrary(join(homedir(), '.kairos', 'library'))
+  const lib = createLibrary()
   await lib.initialize()
 
   const all = await lib.list()
@@ -925,7 +936,7 @@ async function handleInit(): Promise<void> {
   console.error('')
   console.error('  Seeding template library...')
 
-  const library = new FileLibrary()
+  const library = createLibrary()
   const logger = {
     debug: () => {},
     info: () => {},

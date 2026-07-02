@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, writeFile, rm, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
@@ -240,6 +240,39 @@ describe('CLI — parseArgs / routing', () => {
       expect(r.stdout).toContain('[DRY RUN]')
       expect(r.stdout).toContain('sourceKind="imported"')
     })
+
+    it('really removes imported entries when pointed at an isolated KAIROS_LIBRARY_DIR', async () => {
+      // Previously blocked: no way to isolate a real (non-dry-run) mutation from
+      // Jordan's actual ~/.kairos/library. KAIROS_LIBRARY_DIR closes that gap.
+      const libDir = await mkdtemp(join(tmpdir(), 'kairos-cli-prune-real-'))
+      const sourceDir = await mkdtemp(join(tmpdir(), 'kairos-cli-prune-src-'))
+      try {
+        const workflow = {
+          name: 'PruneMe',
+          nodes: [{ id: '00000000-0000-4000-8000-000000000003', name: 'Trigger', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 0], parameters: {} }],
+          connections: {},
+          settings: { executionOrder: 'v1' },
+        }
+        await writeFile(join(sourceDir, 'wf.json'), JSON.stringify(workflow), 'utf-8')
+
+        const importResult = run(['sync-templates', '--from-dir', sourceDir], { KAIROS_LIBRARY_DIR: libDir, KAIROS_TELEMETRY: '/tmp/kairos-nonexistent-test-dir-xyz' })
+        expect(importResult.status).toBe(0)
+        expect(importResult.stderr).toContain('Saved:          1')
+
+        const beforeIndex = JSON.parse(await readFile(join(libDir, 'index.json'), 'utf-8')) as Array<{ sourceKind?: string }>
+        expect(beforeIndex.filter((m) => m.sourceKind === 'imported')).toHaveLength(1)
+
+        const pruneResult = run(['library', 'prune', '--source', 'imported'], { KAIROS_LIBRARY_DIR: libDir })
+        expect(pruneResult.status).toBe(0)
+        expect(pruneResult.stdout).toContain('Removed 1 entry')
+
+        const afterIndex = JSON.parse(await readFile(join(libDir, 'index.json'), 'utf-8')) as Array<{ sourceKind?: string }>
+        expect(afterIndex.filter((m) => m.sourceKind === 'imported')).toHaveLength(0)
+      } finally {
+        await rm(libDir, { recursive: true, force: true })
+        await rm(sourceDir, { recursive: true, force: true })
+      }
+    })
   })
 
   describe('sync-templates --from-dir', () => {
@@ -293,6 +326,29 @@ describe('CLI — parseArgs / routing', () => {
         expect(r.stderr).toContain('1 parse errors')
       } finally {
         await rm(sourceDir, { recursive: true, force: true })
+      }
+    })
+
+    it('really saves imported workflows when pointed at an isolated KAIROS_LIBRARY_DIR', async () => {
+      // Previously blocked: no way to run the real (non-dry-run) save path from the
+      // CLI without touching Jordan's actual ~/.kairos/library. KAIROS_LIBRARY_DIR
+      // closes that gap — this exercises the full arg-parse -> handler -> FileLibrary
+      // wiring end to end, not just the LocalImporter unit tests.
+      sourceDir = await mkdtemp(join(tmpdir(), 'kairos-cli-import-real-'))
+      const libDir = await mkdtemp(join(tmpdir(), 'kairos-cli-import-real-lib-'))
+      try {
+        await makeWorkflowFixture('RealSave')
+        const r = run(['sync-templates', '--from-dir', sourceDir], { KAIROS_LIBRARY_DIR: libDir, ...NO_TELEMETRY })
+        expect(r.status).toBe(0)
+        expect(r.stderr).toContain('Saved:          1')
+
+        const index = JSON.parse(await readFile(join(libDir, 'index.json'), 'utf-8')) as Array<{ sourceKind?: string; description?: string }>
+        expect(index).toHaveLength(1)
+        expect(index[0]!.sourceKind).toBe('imported')
+        expect(index[0]!.description).toContain('RealSave')
+      } finally {
+        await rm(sourceDir, { recursive: true, force: true })
+        await rm(libDir, { recursive: true, force: true })
       }
     })
   })
