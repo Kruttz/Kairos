@@ -2718,6 +2718,22 @@ describe('N8nValidator', () => {
     expect(result.issues.some((i) => i.rule === 66)).toBe(false)
   })
 
+  it('rule 66: no error when URL is a mixed literal+expression prefixed with "="', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0066-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'HTTP', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], parameters: { method: 'GET', url: "=https://{{ $json.shop_domain }}.myshopify.com/admin/api/2024-01/checkouts.json" } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'HTTP', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 66)).toBe(false)
+  })
+
+  it('rule 66: still errors when "=" prefixed URL has a literal prefix but no protocol', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0066-aaaa-4aaa-aaaa-aaaaaaaaaaae', name: 'HTTP', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], parameters: { method: 'GET', url: "=api.example.com/{{ $json.path }}" } })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'HTTP', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 66 && i.severity === 'error')).toBe(true)
+  })
+
   // Rule 67: Code node references non-existent node
   it('rule 67: warns when code references a node that does not exist', () => {
     const w = baseWorkflow()

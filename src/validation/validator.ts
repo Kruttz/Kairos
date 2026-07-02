@@ -1904,8 +1904,12 @@ export class N8nValidator {
       const params = node.parameters as Record<string, unknown> | undefined
       const url = params?.['url']
       if (typeof url !== 'string') continue
-      if (url.startsWith('={{') || url.startsWith('{{') || url.trim() === '') continue
-      if (!/^https?:\/\//i.test(url)) {
+      // n8n prefixes dynamic-value fields with "=" (e.g. "=https://{{ expr }}.com/path");
+      // strip that marker before checking the protocol so mixed literal+expression URLs
+      // aren't false-flagged as missing a protocol.
+      const effective = url.startsWith('=') ? url.slice(1) : url
+      if (effective.startsWith('{{') || effective.trim() === '') continue
+      if (!/^https?:\/\//i.test(effective)) {
         this.err(
           issues, 66,
           `Node "${node.name}" HTTP Request URL "${url}" is missing a protocol prefix — n8n requires a full URL starting with https:// or http://.`,
