@@ -5,10 +5,23 @@
  * Usage:
  *   ANTHROPIC_API_KEY=... N8N_API_KEY=... N8N_BASE_URL=... \
  *     npx tsx scripts/benchmark.ts [--count 20] [--output results.json] [--no-library] [--compare baseline.json]
+ *     npx tsx scripts/benchmark.ts --tier complex [--output results.json]
  *
  * Flags:
  *   --no-library   Run without library (NullLibrary) for baseline measurement
  *   --compare      Compare results against a previous run's JSON file
+ *   --tier <name>  Run only one difficulty tier instead of the first --count prompts.
+ *                  One of: simple | medium | complex | edge | realworld | stress |
+ *                  additional | all. Overrides --count when both are given.
+ *
+ *                  As of 2026-07-02 the default --count 20 (the "simple" tier plus
+ *                  the first 10 of "medium") scores 100% first-try under every
+ *                  library configuration tested — it's saturated and no longer
+ *                  discriminates. Use --tier complex (or --tier all) to get a
+ *                  signal that isn't already at the ceiling. See
+ *                  docs/plans/repo-integration-plan.md, judgment call 3, for why
+ *                  this flag exists and why it wasn't paired with an actual re-run
+ *                  in the same commit (that's separate spend, ask first).
  *
  * All runs are dry-run (no deployment). Telemetry is written to ~/.kairos/telemetry/
  */
@@ -116,6 +129,32 @@ const PROMPTS = [
   'Receive a webhook with geographic coordinates, look up the nearest store via API, calculate distance, and return directions',
 ]
 
+// Machine-readable boundaries matching the comment-marked sections above (verified
+// by direct count: 10+15+10+10+10+10+20 = 85, matching PROMPTS.length). [start, end)
+// half-open ranges into PROMPTS.
+const TIER_RANGES: Record<string, [number, number]> = {
+  simple: [0, 10],
+  medium: [10, 25],
+  complex: [25, 35],
+  edge: [35, 45],
+  realworld: [45, 55],
+  stress: [55, 65],
+  additional: [65, 85],
+  all: [0, 85],
+}
+
+function selectPrompts(count: number, tier?: string): string[] {
+  if (tier) {
+    const range = TIER_RANGES[tier]
+    if (!range) {
+      const known = Object.keys(TIER_RANGES).join(', ')
+      throw new Error(`Unknown --tier "${tier}". Valid values: ${known}`)
+    }
+    return PROMPTS.slice(range[0], range[1])
+  }
+  return PROMPTS.slice(0, count)
+}
+
 interface BenchmarkResult {
   prompt: string
   success: boolean
@@ -145,7 +184,11 @@ interface BenchmarkSummary {
   libraryUsed: boolean
 }
 
-async function runBenchmark(count: number, outputPath?: string, useLibrary = true, comparePath?: string): Promise<void> {
+async function runBenchmark(count: number, outputPath?: string, useLibrary = true, comparePath?: string, tier?: string): Promise<void> {
+  // Validate --tier before the API key check so a typo fails fast without needing
+  // real credentials to discover it.
+  const prompts = selectPrompts(count, tier)
+
   const ANTHROPIC_API_KEY = process.env['ANTHROPIC_API_KEY']
   const N8N_API_KEY = process.env['N8N_API_KEY']
   const N8N_BASE_URL = process.env['N8N_BASE_URL'] ?? 'https://your-instance.app.n8n.cloud'
@@ -163,7 +206,6 @@ async function runBenchmark(count: number, outputPath?: string, useLibrary = tru
     ...(useLibrary ? { library: new FileLibrary() } : {}),
   })
 
-  const prompts = PROMPTS.slice(0, count)
   const results: BenchmarkResult[] = []
 
   console.log(`Kairos SDK Benchmark — ${prompts.length} prompts (dry run)`)
@@ -299,8 +341,10 @@ const output = outputArg !== -1 ? process.argv[outputArg + 1] : undefined
 const noLibrary = process.argv.includes('--no-library')
 const compareArg = process.argv.indexOf('--compare')
 const compare = compareArg !== -1 ? process.argv[compareArg + 1] : undefined
+const tierArg = process.argv.indexOf('--tier')
+const tier = tierArg !== -1 ? process.argv[tierArg + 1] : undefined
 
-runBenchmark(count, output, !noLibrary, compare).catch((err) => {
+runBenchmark(count, output, !noLibrary, compare, tier).catch((err) => {
   console.error('Benchmark failed:', err)
   process.exit(1)
 })
