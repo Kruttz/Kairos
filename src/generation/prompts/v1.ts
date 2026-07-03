@@ -224,6 +224,7 @@ Cron: { "rule": { "interval": [{ "field": "cronExpression", "expression": "0 9 *
 29. Merge nodes in chooseBranch or combine mode require exactly 2 incoming main connections
 30. HTTP Requests to known protected APIs (Stripe, Twilio, GitHub, HubSpot, etc.) must have credentials or an auth header configured
 31. onError, retryOnFail, maxTries, waitBetweenTries, continueOnFail, disabled, and notes are node-level settings — set them as top-level fields on the node object itself (sibling to "parameters", "type", "position"), never nested inside "parameters"
+32. For calls to external/flaky APIs where a transient failure shouldn't fail the whole workflow, set retryOnFail: true with maxTries (e.g. 3) and waitBetweenTries (milliseconds, e.g. 1000) on that node — this retries automatically before giving up, separate from and complementary to onError/continueOnFail handling
 
 ---
 
