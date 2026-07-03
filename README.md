@@ -372,6 +372,23 @@ console.log(pack.sheetsColumns)   // Google Sheets required per sheet
 console.log(pack.testChecklist)   // per-workflow test steps
 ```
 
+### `validatePack(pack)` + `generateHandoff(pack)`
+
+Check a built pack for issues, and generate a client-ready handoff document:
+
+```ts
+import { validatePack, generateHandoff } from '@kairos-sdk/core'
+
+const issues = validatePack(pack)
+// [{ type: 'duplicate_name' | 'blocking_assumption' | 'unsafe_activation' | 'schedule_conflict',
+//    severity: 'error' | 'warning', message: string, workflows?: string[] }, ...]
+const errors = issues.filter(i => i.severity === 'error')
+if (errors.length === 0) {
+  const handoffMarkdown = generateHandoff(pack)
+  // Status, blocking issues, workflows, credentials needed, Google Sheets, setup/testing/activation checklists
+}
+```
+
 ---
 
 ### Workflow management
@@ -430,6 +447,7 @@ import {
   ValidationError,
   ApiError,
   GuardError,
+  DeployActivationError,
 } from '@kairos-sdk/core'
 
 try {
@@ -443,6 +461,11 @@ try {
     // Attempt metadata and warned rules are also available
     console.log(err.attemptMetadata)  // per-attempt timing, tokens, issues
     console.log(err.warnedRules)      // which pattern rules were warned about
+  } else if (err instanceof DeployActivationError) {
+    // Workflow deployed successfully to n8n, but activation failed — the workflow
+    // exists and is recoverable. Kairos never deletes it automatically; you decide
+    // whether to activate it manually later or clean it up.
+    console.error(`Workflow ${err.workflowId} deployed but didn't activate:`, err.message)
   } else if (err instanceof GenerationError) {
     // Anthropic API call failed (auth, quota, timeout)
     console.error(err.message, err.cause)
@@ -464,6 +487,7 @@ try {
 | `ProviderError` | Network/auth failure talking to n8n |
 | `ApiError` | n8n returned a 4xx or 5xx (carries `.statusCode`) |
 | `GuardError` | Input validation failed (empty description) or `delete()` called without `{ confirm: true }` |
+| `DeployActivationError` | Workflow was deployed successfully but activation failed (carries `.workflowId` — recoverable, never auto-deleted) |
 
 ---
 
@@ -491,6 +515,15 @@ kairos build-pack "Real estate agency operations" --yes
 kairos pack wire my-pack --sheet-ids '{"Contacts": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"}'
 kairos pack wire my-pack --sheet-ids ./sheet-ids.json --dry-run
 
+# Check a pack for duplicate names, unresolved blocking assumptions, failed
+# deploys, and schedule conflicts before activating it
+kairos validate-pack my-pack
+
+# Print the saved pack as JSON, or generate a client-ready Markdown handoff
+# (status, blocking issues, credentials needed, setup/testing/activation checklists)
+kairos pack export my-pack
+kairos pack export my-pack --handoff
+
 # Record a deployed workflow's latest n8n execution into the library (improves retrieval)
 kairos trace record <n8n-workflow-id>
 
@@ -500,6 +533,10 @@ kairos sync-templates --max 200
 # Bulk-import workflows from a local directory of n8n workflow JSON files
 kairos sync-templates --from-dir ./my-workflows --dry-run
 kairos sync-templates --from-dir ./my-workflows --limit 1000
+
+# Fetch live node types/typeVersions from your n8n instance so build/build-pack
+# validate against what your instance actually supports, not just the built-in registry
+kairos sync-nodes
 
 # Remove library entries by source (e.g. undo a bulk import)
 kairos library prune --source imported --dry-run
