@@ -154,5 +154,96 @@ describe('validatePack()', () => {
       expect(types).toContain('blocking_assumption')
       expect(types).toContain('unsafe_activation')
     })
+
+    it('reports schedule_conflict alongside the other three types without interference', () => {
+      const DAILY_9AM = [{ field: 'days', daysInterval: 1, triggerAtHour: 9 }]
+      const pack = makePack({
+        workflows: [
+          makeWorkflow({ name: 'Dup' }),
+          makeWorkflow({ name: 'Dup' }),
+          makeWorkflow({ name: 'Failed', deployed: false, workflowId: null, error: 'failed' }),
+          makeWorkflow({ name: 'SchedA', scheduleIntervals: [DAILY_9AM] }),
+          makeWorkflow({ name: 'SchedB', scheduleIntervals: [DAILY_9AM] }),
+        ],
+        assumptions: [{ type: 'blocking', text: 'Missing data' }],
+      })
+      const issues = validatePack(pack)
+      const types = issues.map(i => i.type)
+      expect(types).toContain('duplicate_name')
+      expect(types).toContain('blocking_assumption')
+      expect(types).toContain('unsafe_activation')
+      expect(types).toContain('schedule_conflict')
+    })
+  })
+
+  describe('schedule conflicts', () => {
+    const DAILY_9AM = [{ field: 'days', daysInterval: 1, triggerAtHour: 9 }]
+    const DAILY_5PM = [{ field: 'days', daysInterval: 1, triggerAtHour: 17 }]
+
+    it('flags two workflows with an identical schedule as a warning', () => {
+      const pack = makePack({
+        workflows: [
+          makeWorkflow({ name: 'A', scheduleIntervals: [DAILY_9AM] }),
+          makeWorkflow({ name: 'B', scheduleIntervals: [DAILY_9AM] }),
+        ],
+      })
+      const issues = validatePack(pack)
+      const issue = issues.find(i => i.type === 'schedule_conflict')
+      expect(issue).toBeDefined()
+      expect(issue!.severity).toBe('warning')
+      expect(issue!.workflows).toEqual(['A', 'B'])
+      expect(issue!.message).toContain('A')
+      expect(issue!.message).toContain('B')
+    })
+
+    it('does not flag two workflows with different schedules', () => {
+      const pack = makePack({
+        workflows: [
+          makeWorkflow({ name: 'A', scheduleIntervals: [DAILY_9AM] }),
+          makeWorkflow({ name: 'B', scheduleIntervals: [DAILY_5PM] }),
+        ],
+      })
+      const issues = validatePack(pack)
+      expect(issues.filter(i => i.type === 'schedule_conflict')).toHaveLength(0)
+    })
+
+    it('does not crash or flag when a workflow has no schedule trigger at all', () => {
+      const pack = makePack({
+        workflows: [
+          makeWorkflow({ name: 'A', scheduleIntervals: [DAILY_9AM] }),
+          makeWorkflow({ name: 'B' }), // no scheduleIntervals set
+        ],
+      })
+      const issues = validatePack(pack)
+      expect(issues.filter(i => i.type === 'schedule_conflict')).toHaveLength(0)
+    })
+
+    it('does not crash or flag on a pre-migration pack entirely missing the field', () => {
+      const pack = makePack({
+        workflows: [makeWorkflow({ name: 'A' }), makeWorkflow({ name: 'B' })],
+      })
+      const issues = validatePack(pack)
+      expect(issues.filter(i => i.type === 'schedule_conflict')).toHaveLength(0)
+    })
+
+    it('does not flag a single workflow with two internally-identical triggers', () => {
+      const pack = makePack({
+        workflows: [makeWorkflow({ name: 'Solo', scheduleIntervals: [DAILY_9AM, DAILY_9AM] })],
+      })
+      const issues = validatePack(pack)
+      expect(issues.filter(i => i.type === 'schedule_conflict')).toHaveLength(0)
+    })
+
+    it('still flags a conflict when interval objects have differently-ordered keys', () => {
+      const reordered = [{ triggerAtHour: 9, daysInterval: 1, field: 'days' }]
+      const pack = makePack({
+        workflows: [
+          makeWorkflow({ name: 'A', scheduleIntervals: [DAILY_9AM] }),
+          makeWorkflow({ name: 'B', scheduleIntervals: [reordered] }),
+        ],
+      })
+      const issues = validatePack(pack)
+      expect(issues.filter(i => i.type === 'schedule_conflict')).toHaveLength(1)
+    })
   })
 })

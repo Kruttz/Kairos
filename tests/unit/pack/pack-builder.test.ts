@@ -38,12 +38,12 @@ function makeMockAnthropic(responseText: string) {
   }
 }
 
-function makeMockKairos(overrides: Partial<{ workflowId: string; generationAttempts: number }> = {}): Kairos {
+function makeMockKairos(overrides: Partial<{ workflowId: string; generationAttempts: number; workflow: unknown }> = {}): Kairos {
   return {
     build: vi.fn().mockResolvedValue({
       workflowId: overrides.workflowId ?? 'wf-123',
       name: 'Test Workflow',
-      workflow: {},
+      workflow: overrides.workflow ?? {},
       credentialsNeeded: [{ service: 'Gmail', credentialType: 'gmailOAuth2', description: 'Gmail OAuth2' }],
       activationRequired: false,
       generationAttempts: overrides.generationAttempts ?? 1,
@@ -213,6 +213,64 @@ describe('PackBuilder', () => {
       expect(result.workflows[1]!.deployed).toBe(false)
       expect(result.workflows[1]!.error).toBe('n8n connection refused')
       expect(result.status).toBe('needs_attention')
+    })
+
+    it('populates scheduleIntervals from the built workflow\'s scheduleTrigger nodes', async () => {
+      const scheduledWorkflow = {
+        name: 'Weekly Newsletter',
+        nodes: [
+          {
+            id: 'sched-1', name: 'Schedule', type: 'n8n-nodes-base.scheduleTrigger', typeVersion: 1.2,
+            position: [0, 0], parameters: { rule: { interval: [{ field: 'days', daysInterval: 1, triggerAtHour: 9 }] } },
+          },
+        ],
+        connections: {},
+      }
+      builder = new PackBuilder({
+        anthropicApiKey: 'sk-ant-test',
+        kairos: makeMockKairos({ workflow: scheduledWorkflow }),
+      })
+      ;(builder as unknown as Record<string, unknown>)['client'] = makeMockAnthropic(
+        JSON.stringify(MOCK_PLAN_RESPONSE)
+      )
+
+      const plan = { ...MOCK_PLAN_RESPONSE, businessContext: 'Test DME' }
+      const result = await builder.build(plan)
+
+      expect(result.workflows[0]!.scheduleIntervals).toEqual([[{ daysInterval: 1, field: 'days', triggerAtHour: 9 }]])
+    })
+
+    it('omits scheduleIntervals when the built workflow has no schedule trigger', async () => {
+      const plan = { ...MOCK_PLAN_RESPONSE, businessContext: 'Test DME' }
+      const result = await builder.build(plan)
+      expect(result.workflows[0]!.scheduleIntervals).toBeUndefined()
+    })
+
+    it('omits scheduleIntervals on a workflow that failed to build', async () => {
+      const failingKairos = {
+        build: vi.fn()
+          .mockResolvedValueOnce({
+            workflowId: 'wf-ok',
+            name: 'OK',
+            workflow: {},
+            credentialsNeeded: [],
+            activationRequired: false,
+            generationAttempts: 1,
+            dryRun: false,
+          })
+          .mockRejectedValueOnce(new Error('n8n connection refused')),
+        drain: vi.fn().mockResolvedValue(undefined),
+      } as unknown as Kairos
+
+      builder = new PackBuilder({ anthropicApiKey: 'sk-ant-test', kairos: failingKairos })
+      ;(builder as unknown as Record<string, unknown>)['client'] = makeMockAnthropic(
+        JSON.stringify(MOCK_PLAN_RESPONSE)
+      )
+
+      const plan = { ...MOCK_PLAN_RESPONSE, businessContext: 'Test DME' }
+      const result = await builder.build(plan)
+
+      expect(result.workflows[1]!.scheduleIntervals).toBeUndefined()
     })
 
     it('generates a slug pack name from business context', async () => {

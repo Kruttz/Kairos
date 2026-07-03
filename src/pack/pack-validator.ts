@@ -1,4 +1,5 @@
 import type { WorkflowPackResult } from './pack-builder.js'
+import { scheduleSignature } from '../utils/schedule-intervals.js'
 
 export interface PackValidationIssue {
   type: 'duplicate_name' | 'blocking_assumption' | 'unsafe_activation' | 'schedule_conflict'
@@ -46,6 +47,28 @@ export function validatePack(pack: WorkflowPackResult): PackValidationIssue[] {
       severity: 'error',
       message: `Workflow "${wf.name}" failed to deploy: ${wf.error ?? 'unknown error'}`,
       workflows: [wf.name],
+    })
+  }
+
+  // Schedule conflicts: multiple workflows sharing an identical schedule-trigger config
+  const scheduleGroups = new Map<string, string[]>()
+  for (const wf of pack.workflows) {
+    const intervalSets = wf.scheduleIntervals ?? []
+    for (const intervals of intervalSets) {
+      const sig = scheduleSignature(intervals)
+      if (sig === null) continue
+      const names = scheduleGroups.get(sig) ?? []
+      if (!names.includes(wf.name)) names.push(wf.name)
+      scheduleGroups.set(sig, names)
+    }
+  }
+  for (const names of scheduleGroups.values()) {
+    if (names.length < 2) continue
+    issues.push({
+      type: 'schedule_conflict',
+      severity: 'warning',
+      message: `Workflows share an identical schedule trigger: ${names.join(', ')} — verify this is intentional (resource contention or API rate limits may collide)`,
+      workflows: names,
     })
   }
 

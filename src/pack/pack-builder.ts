@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { Kairos } from '../client.js'
 import type { CredentialRequirement } from '../types/result.js'
+import { extractScheduleIntervals } from '../utils/schedule-intervals.js'
 
 export type AssumptionType = 'safe' | 'needs_confirmation' | 'blocking'
 export type PackStatus = 'draft' | 'blocked' | 'ready_for_test' | 'ready_for_activation' | 'active' | 'needs_attention'
@@ -32,6 +33,14 @@ export interface PackWorkflowResult {
   generationAttempts: number
   credentialsNeeded: CredentialRequirement[]
   error?: string
+  /**
+   * Normalized rule.interval arrays from every scheduleTrigger node in this
+   * workflow (one entry per trigger node), used by validatePack() to detect
+   * cross-workflow schedule conflicts. Absent on workflows that errored
+   * before a workflow JSON was produced, on workflows with no schedule
+   * trigger, and on packs persisted before this field existed.
+   */
+  scheduleIntervals?: unknown[][]
 }
 
 export interface WorkflowPackResult {
@@ -193,6 +202,8 @@ export class PackBuilder {
           credentialMap.set(cred.service, { service: cred.service, credentialType: cred.credentialType })
         }
 
+        const scheduleIntervals = extractScheduleIntervals(result.workflow)
+
         results.push({
           name: wf.name,
           purpose: wf.purpose,
@@ -200,6 +211,7 @@ export class PackBuilder {
           deployed: !result.dryRun,
           generationAttempts: result.generationAttempts,
           credentialsNeeded: result.credentialsNeeded,
+          ...(scheduleIntervals.length > 0 ? { scheduleIntervals } : {}),
         })
       } catch (err) {
         results.push({
