@@ -4234,4 +4234,61 @@ describe('N8nValidator', () => {
     const result = validator.validate(w)
     expect(result.issues.some((i) => i.rule === 129)).toBe(false)
   })
+
+  // Rule 130: AWS S3 / Slack file upload missing binaryPropertyName (Phase 4 judgment call #2 — Rule 57's pattern, extended)
+  it('rule 130: warns when AWS S3 file upload has empty binaryPropertyName', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0130-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Upload to S3', type: 'n8n-nodes-base.awsS3', typeVersion: 2, position: [450, 300], parameters: { resource: 'file', operation: 'upload', binaryData: true, binaryPropertyName: '' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 130 && i.severity === 'warn')).toBe(true)
+  })
+
+  it('rule 130: no warning when AWS S3 file upload has binaryPropertyName set', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0130-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Upload to S3', type: 'n8n-nodes-base.awsS3', typeVersion: 2, position: [450, 300], parameters: { resource: 'file', operation: 'upload', binaryData: true, binaryPropertyName: 'data' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 130)).toBe(false)
+  })
+
+  it('rule 130: no warning for AWS S3 when binaryData toggle is false (text content, not binary)', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0130-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Upload to S3', type: 'n8n-nodes-base.awsS3', typeVersion: 2, position: [450, 300], parameters: { resource: 'file', operation: 'upload', binaryData: false, fileContent: 'hello' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 130)).toBe(false)
+  })
+
+  it('rule 130: warns when Slack file upload (typeVersion 2.2+) has empty binaryPropertyName, no toggle needed', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0130-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'Upload to Slack', type: 'n8n-nodes-base.slack', typeVersion: 2.2, position: [450, 300], parameters: { resource: 'file', operation: 'upload', binaryPropertyName: '' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 130 && i.severity === 'warn')).toBe(true)
+  })
+
+  it('rule 130: no warning when Slack file upload (typeVersion 2.2+) has binaryPropertyName set', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0130-aaaa-4aaa-aaaa-aaaaaaaaaaae', name: 'Upload to Slack', type: 'n8n-nodes-base.slack', typeVersion: 2.2, position: [450, 300], parameters: { resource: 'file', operation: 'upload', binaryPropertyName: 'data' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 130)).toBe(false)
+  })
+
+  it('rule 130: no warning for Slack typeVersion 2 (legacy) when binaryData toggle is unset (defaults to text, not binary)', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0130-aaaa-4aaa-aaaa-aaaaaaaaaaaf', name: 'Upload to Slack', type: 'n8n-nodes-base.slack', typeVersion: 2, position: [450, 300], parameters: { resource: 'file', operation: 'upload', binaryPropertyName: '' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 130)).toBe(false)
+  })
+
+  it('rule 130: warns for Slack typeVersion 2 (legacy) when binaryData toggle is true and binaryPropertyName is empty', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0130-aaaa-4aaa-aaaa-aaaaaaaaaaba', name: 'Upload to Slack', type: 'n8n-nodes-base.slack', typeVersion: 2, position: [450, 300], parameters: { resource: 'file', operation: 'upload', binaryData: true, binaryPropertyName: '' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 130 && i.severity === 'warn')).toBe(true)
+  })
+
+  it('rule 130: does not fire for other resource/operation combos', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0130-aaaa-4aaa-aaaa-aaaaaaaaaabb', name: 'Post Message', type: 'n8n-nodes-base.slack', typeVersion: 2.2, position: [450, 300], parameters: { resource: 'message', operation: 'post' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 130)).toBe(false)
+  })
 })

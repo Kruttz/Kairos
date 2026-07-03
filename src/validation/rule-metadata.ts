@@ -6,6 +6,7 @@ export const VALIDATOR_RULE_IDS: number[] = [
   ...Array.from({ length: 22 }, (_, i) => i + 105), // 105-126 (104 skipped)
   127, 128, // Phase 4 (n8n-skills gap analysis): Code language/param mismatch, unwired error-output port
   129, // Phase 5 (node property-schema enrichment): resource/operation value doesn't exist for the node type
+  130, // Phase 4 judgment call #2: AWS S3 / Slack file upload missing binaryPropertyName (Rule 57's pattern, extended)
 ]
 
 export const RULE_PIPELINE_STAGES: Record<number, PipelineStage> = {
@@ -136,6 +137,7 @@ export const RULE_PIPELINE_STAGES: Record<number, PipelineStage> = {
   127: 'node_generation',
   128: 'connection_wiring',
   129: 'node_generation',
+  130: 'node_generation',
 }
 
 export interface RuleExample {
@@ -396,6 +398,10 @@ export const RULE_EXAMPLES: Record<number, RuleExample> = {
     bad: '"resource": "channels"  // n8n-nodes-base.slack has no "channels" resource (it\'s "channel")',
     good: '"resource": "channel", "operation": "create"',
   },
+  130: {
+    bad: '"resource": "file", "operation": "upload", "binaryPropertyName": ""',
+    good: '"resource": "file", "operation": "upload", "binaryPropertyName": "data"',
+  },
 }
 
 export const RULE_MITIGATIONS: Record<number, string> = {
@@ -526,4 +532,5 @@ export const RULE_MITIGATIONS: Record<number, string> = {
   127: 'Move the Code node\'s code into the parameter matching its language setting: pythonCode when language is "python", jsCode otherwise. n8n only executes the parameter matching the language setting.',
   128: 'Wire output index 1 (the error-path port created by onError: "continueErrorOutput") to a node that handles the failure — otherwise every item that errors on this node is silently dropped with nowhere to go.',
   129: 'Use one of this node type\'s actual valid resource/operation values (see the warning message for the exact list) — the value set does not exist for this node type.',
+  130: 'Set binaryPropertyName to the name of the binary property from the upstream node (e.g. "data", "attachment") — AWS S3 and Slack file uploads cannot locate the binary data without it.',
 }

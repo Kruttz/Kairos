@@ -157,6 +157,7 @@ export class N8nValidator {
     this.checkRule127(workflow, issues)
     this.checkRule128(workflow, issues)
     this.checkRule129(workflow, issues)
+    this.checkRule130(workflow, issues)
 
     // Enrich issues with nodeType by looking up nodeId
     if (Array.isArray(workflow.nodes)) {
@@ -3350,6 +3351,42 @@ export class N8nValidator {
         this.warn(
           issues, 129,
           `Node "${node.name}" (${node.type}) sets operation: "${operation}", which is not a valid operation for this node type. Valid operations: ${catalogEntry.operations.join(', ')}.`,
+          node.id,
+        )
+      }
+    }
+  }
+
+  // Rule 130 (WARN): AWS S3 / Slack file upload missing binaryPropertyName
+  // Same safe, narrow shape as Rule 57 (HTTP Request), extended to the other binary-
+  // upload nodes confirmed against the real n8n-nodes-base package to use an identical
+  // "toggle + required string property name" convention (unlike HTTP Request, these
+  // two use binaryPropertyName consistently — no typeVersion-specific rename).
+  private checkRule130(w: N8nWorkflow, issues: ValidationIssue[]): void {
+    if (!Array.isArray(w.nodes)) return
+    for (const node of w.nodes) {
+      const params = node.parameters as Record<string, unknown> | undefined
+      if (!params) continue
+      if (params['resource'] !== 'file' || params['operation'] !== 'upload') continue
+
+      let requiresBinaryToggle = false
+      if (node.type === 'n8n-nodes-base.awsS3') {
+        requiresBinaryToggle = true
+      } else if (node.type === 'n8n-nodes-base.slack') {
+        // typeVersion 2.2+ always uploads from a binary property (no toggle); 2/2.1
+        // gate binaryPropertyName behind a "Binary File" boolean first.
+        requiresBinaryToggle = node.typeVersion < 2.2
+      } else {
+        continue
+      }
+
+      if (requiresBinaryToggle && params['binaryData'] !== true) continue
+
+      const propName = params['binaryPropertyName']
+      if (!propName || (typeof propName === 'string' && propName.trim() === '')) {
+        this.warn(
+          issues, 130,
+          `Node "${node.name}" (${node.type}) uploads a file but binaryPropertyName is empty — n8n cannot locate the binary data to upload. Set it to the property name from the upstream node (commonly "data").`,
           node.id,
         )
       }
