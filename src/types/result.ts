@@ -4,7 +4,7 @@ export interface CredentialRequirement {
   description: string
 }
 
-export type SmokeTestStatus = 'passed' | 'failed' | 'error' | 'skipped' | 'not-applicable'
+export type SmokeTestStatus = 'passed' | 'failed' | 'error' | 'not-applicable'
 
 export interface SmokeTestResult {
   status: SmokeTestStatus
