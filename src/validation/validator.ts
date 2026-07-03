@@ -1712,11 +1712,15 @@ export class N8nValidator {
       if (params['sendBody'] !== true) continue
       const contentType = params['contentType'] ?? params['bodyContentType']
       if (contentType !== 'binaryData') continue
-      const propName = params['binaryPropertyName'] ?? params['binaryProperty']
+      // typeVersion 3+ (what Kairos generates — see safeTypeVersions) names this
+      // parameter inputDataFieldName; only typeVersion 1/2 used binaryPropertyName/
+      // binaryProperty (confirmed against the real n8n-nodes-base package — the two
+      // versions are genuinely different parameter names, not aliases of each other).
+      const propName = params['inputDataFieldName'] ?? params['binaryPropertyName'] ?? params['binaryProperty']
       if (!propName || (typeof propName === 'string' && propName.trim() === '')) {
         this.warn(
           issues, 57,
-          `Node "${node.name}" sends binary data but binaryPropertyName is empty — n8n cannot locate the binary data to upload. Set it to the property name from the upstream node (commonly "data" or "attachment").`,
+          `Node "${node.name}" sends binary data but the binary field name is empty — n8n cannot locate the binary data to upload. Set inputDataFieldName (typeVersion 3+) or binaryPropertyName (typeVersion 1-2) to the property name from the upstream node (commonly "data" or "attachment").`,
           node.id,
         )
       }

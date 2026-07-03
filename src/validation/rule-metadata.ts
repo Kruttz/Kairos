@@ -281,8 +281,8 @@ export const RULE_EXAMPLES: Record<number, RuleExample> = {
     good: '// Add an IF node after with condition: $json.error exists → handle error branch',
   },
   57: {
-    bad: '"sendBody": true, "contentType": "binaryData", "binaryPropertyName": ""',
-    good: '"sendBody": true, "contentType": "binaryData", "binaryPropertyName": "data"',
+    bad: '"sendBody": true, "contentType": "binaryData", "inputDataFieldName": ""  // typeVersion 3+',
+    good: '"sendBody": true, "contentType": "binaryData", "inputDataFieldName": "data"  // typeVersion 3+ (use "binaryPropertyName" instead for typeVersion 1-2)',
   },
   58: {
     bad: '"credentials": { "gmailOAuth": { "id": "x", "name": "Gmail" } }  // wrong key for Gmail node',
@@ -455,7 +455,7 @@ export const RULE_MITIGATIONS: Record<number, string> = {
   54: 'Add credentials to the HTTP Request node or configure authentication — calls to known protected APIs (Stripe, Twilio, GitHub, etc.) require auth to succeed',
   55: 'Replace the "Sheet1" placeholder with the actual tab name from your Google Spreadsheet',
   56: 'Add an IF node immediately after the continueOnFail node that checks $json.error — without it, failures are silently swallowed and the workflow log shows success',
-  57: 'Set binaryPropertyName to the name of the binary property from the upstream node (e.g. "data", "attachment", "file") — n8n cannot find the binary data without it',
+  57: 'Set inputDataFieldName (HTTP Request typeVersion 3+) or binaryPropertyName (typeVersion 1-2) to the name of the binary property from the upstream node (e.g. "data", "attachment", "file") — n8n cannot find the binary data without it',
   58: 'Use the correct credential type key for the node type — wrong keys silently fail at runtime. See the credential type reference in the system prompt.',
   59: 'Set webhook authentication to "Header Auth" or "Basic Auth" — without it anyone who knows the URL can trigger the workflow.',
   60: 'Change the schedule interval to something less frequent — a minute field of "*" or minutesInterval=1 fires every minute and floods execution history.',

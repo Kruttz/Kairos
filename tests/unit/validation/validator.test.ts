@@ -2481,7 +2481,7 @@ describe('N8nValidator', () => {
 
   // ── Rule 57: HTTP Request binary upload missing binaryPropertyName ─────────
 
-  it('rule 57: warns when binary upload has empty binaryPropertyName', () => {
+  it('rule 57: warns when binary upload has empty inputDataFieldName (typeVersion 3+ field name)', () => {
     const w = baseWorkflow()
     w.nodes.push({
       id: 'aaaa0057-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
@@ -2489,20 +2489,50 @@ describe('N8nValidator', () => {
       type: 'n8n-nodes-base.httpRequest',
       typeVersion: 4.2,
       position: [450, 300],
-      parameters: { url: 'https://api.example.com/upload', method: 'POST', sendBody: true, contentType: 'binaryData', binaryPropertyName: '' },
+      parameters: { url: 'https://api.example.com/upload', method: 'POST', sendBody: true, contentType: 'binaryData', inputDataFieldName: '' },
     })
     w.connections['Manual Trigger'] = { main: [[{ node: 'Upload File', type: 'main', index: 0 }]] }
     const result = validator.validate(w)
     expect(result.issues.some((i) => i.rule === 57)).toBe(true)
   })
 
-  it('rule 57: no warning when binaryPropertyName is set', () => {
+  it('rule 57: no warning when inputDataFieldName is set (typeVersion 3+ field name)', () => {
     const w = baseWorkflow()
     w.nodes.push({
       id: 'aaaa0057-aaaa-4aaa-aaaa-aaaaaaaaaaab',
       name: 'Upload File',
       type: 'n8n-nodes-base.httpRequest',
       typeVersion: 4.2,
+      position: [450, 300],
+      parameters: { url: 'https://api.example.com/upload', method: 'POST', sendBody: true, contentType: 'binaryData', inputDataFieldName: 'data' },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Upload File', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 57)).toBe(false)
+  })
+
+  it('rule 57: warns when binary upload has neither inputDataFieldName nor binaryPropertyName set (regression — the field name differs by typeVersion, checked wrong field name entirely before this fix)', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0057-aaaa-4aaa-aaaa-aaaaaaaaaaad',
+      name: 'Upload File',
+      type: 'n8n-nodes-base.httpRequest',
+      typeVersion: 4.2,
+      position: [450, 300],
+      parameters: { url: 'https://api.example.com/upload', method: 'POST', sendBody: true, contentType: 'binaryData' },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Upload File', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 57)).toBe(true)
+  })
+
+  it('rule 57: no warning when legacy binaryPropertyName is set (typeVersion 1-2 field name fallback)', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0057-aaaa-4aaa-aaaa-aaaaaaaaaaae',
+      name: 'Upload File',
+      type: 'n8n-nodes-base.httpRequest',
+      typeVersion: 2,
       position: [450, 300],
       parameters: { url: 'https://api.example.com/upload', method: 'POST', sendBody: true, contentType: 'binaryData', binaryPropertyName: 'data' },
     })
