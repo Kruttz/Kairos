@@ -41,7 +41,8 @@
     "lint:fix": "eslint src --ext .ts --fix",
     "benchmark": "tsx scripts/benchmark.ts",
     "benchmark:baseline": "tsx scripts/benchmark.ts --no-library --output benchmark-results.json",
-    "benchmark:search": "tsx scripts/search-bench.ts"
+    "benchmark:search": "tsx scripts/search-bench.ts",
+    "generate:node-catalog": "tsx scripts/generate-node-catalog.ts"
   },
   "keywords": [
     "n8n",
@@ -84,11 +85,13 @@
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.36.0",
+    "@n8n/n8n-nodes-langchain": "^2.28.4",
     "@types/node": "^20.0.0",
     "@typescript-eslint/eslint-plugin": "^8.62.0",
     "@typescript-eslint/parser": "^8.62.0",
     "eslint": "^10.6.0",
     "msw": "^2.0.0",
+    "n8n-nodes-base": "^2.15.1",
     "tsup": "^8.0.0",
     "tsx": "^4.22.4",
     "typescript": "^5.3.0",

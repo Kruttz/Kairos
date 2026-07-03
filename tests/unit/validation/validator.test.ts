@@ -4159,4 +4159,40 @@ describe('N8nValidator', () => {
     const result = validator.validate(w)
     expect(result.issues.some((i) => i.rule === 128)).toBe(false)
   })
+
+  // Rule 129: resource/operation value doesn't exist for the node type (Phase 5 — generated node catalog)
+  it('rule 129: warns when resource is not valid for the node type', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0129-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Slack', type: 'n8n-nodes-base.slack', typeVersion: 2.2, position: [450, 300], parameters: { resource: 'channels', operation: 'create' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 129 && i.severity === 'warn' && i.message.includes('"channels"'))).toBe(true)
+  })
+
+  it('rule 129: warns when operation is not valid for the node type', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0129-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Slack', type: 'n8n-nodes-base.slack', typeVersion: 2.2, position: [450, 300], parameters: { resource: 'channel', operation: 'destroy' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 129 && i.severity === 'warn' && i.message.includes('"destroy"'))).toBe(true)
+  })
+
+  it('rule 129: no warning when resource and operation are both valid', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0129-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Slack', type: 'n8n-nodes-base.slack', typeVersion: 2.2, position: [450, 300], parameters: { resource: 'channel', operation: 'create' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 129)).toBe(false)
+  })
+
+  it('rule 129: no warning for a node type with no generated catalog entry', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0129-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'Set', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [450, 300], parameters: { resource: 'anything', operation: 'anything' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 129)).toBe(false)
+  })
+
+  it('rule 129: no warning when resource/operation params are not set', () => {
+    const w = baseWorkflow()
+    w.nodes.push({ id: 'aaaa0129-aaaa-4aaa-aaaa-aaaaaaaaaaae', name: 'Slack', type: 'n8n-nodes-base.slack', typeVersion: 2.2, position: [450, 300], parameters: {} })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 129)).toBe(false)
+  })
 })

@@ -2,6 +2,7 @@ import type { N8nWorkflow, N8nNode } from '../types/workflow.js'
 import type { ValidationIssue, ValidationResult } from './types.js'
 import { NodeRegistry, DEFAULT_REGISTRY } from './registry.js'
 import { FORBIDDEN_ON_CREATE } from '../providers/n8n/types.js'
+import { NODE_OPERATION_CATALOG } from './node-catalog-generated.js'
 
 const AI_CONNECTION_TYPES = [
   'ai_languageModel',
@@ -155,6 +156,7 @@ export class N8nValidator {
     this.checkRule126(workflow, issues)
     this.checkRule127(workflow, issues)
     this.checkRule128(workflow, issues)
+    this.checkRule129(workflow, issues)
 
     // Enrich issues with nodeType by looking up nodeId
     if (Array.isArray(workflow.nodes)) {
@@ -3318,6 +3320,35 @@ export class N8nValidator {
         this.warn(
           issues, 128,
           `Node "${node.name}" has onError: "continueErrorOutput", which gives it a second output port for error-path items — but that port (output index 1) has no connection. Every item that errors on this node is silently dropped. Wire output index 1 to an error-handling path, or use "continueRegularOutput" if errors should just pass through the normal output.`,
+          node.id,
+        )
+      }
+    }
+  }
+
+  // Rule 129 (WARN): node's resource/operation value doesn't exist in the real n8n schema for its type
+  private checkRule129(w: N8nWorkflow, issues: ValidationIssue[]): void {
+    if (!Array.isArray(w.nodes)) return
+    for (const node of w.nodes) {
+      const catalogEntry = NODE_OPERATION_CATALOG[node.type]
+      if (!catalogEntry) continue // no generated data for this node type — nothing to check against
+      const params = node.parameters as Record<string, unknown> | undefined
+      if (!params) continue
+
+      const resource = params['resource']
+      if (typeof resource === 'string' && catalogEntry.resources.length > 0 && !catalogEntry.resources.includes(resource)) {
+        this.warn(
+          issues, 129,
+          `Node "${node.name}" (${node.type}) sets resource: "${resource}", which is not a valid resource for this node type. Valid resources: ${catalogEntry.resources.join(', ')}.`,
+          node.id,
+        )
+      }
+
+      const operation = params['operation']
+      if (typeof operation === 'string' && catalogEntry.operations.length > 0 && !catalogEntry.operations.includes(operation)) {
+        this.warn(
+          issues, 129,
+          `Node "${node.name}" (${node.type}) sets operation: "${operation}", which is not a valid operation for this node type. Valid operations: ${catalogEntry.operations.join(', ')}.`,
           node.id,
         )
       }

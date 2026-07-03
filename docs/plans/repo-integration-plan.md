@@ -251,10 +251,29 @@ Retroactively logged per Jordan's instruction to keep tracking judgment calls fo
 
 *(Space for further Phase 4 additions — append below this line, don't edit the two items above until resolved.)*
 
-## 10. Phase 5 (deferred) — Node property-schema enrichment
+## 10. Phase 5 (ACTIVE as of 2026-07-02 — was deferred) — Node property-schema enrichment
 
 n8n-mcp's depth comes from extracting property schemas from n8n packages (2,063 nodes, 99% property coverage). Kairos's `DEFAULT_REGISTRY` has ~70 nodes with mostly-empty `requiredParams`, and `kairos_sync` gets only shallow data from the public `/node-types` API. The enrichment path: a build-time script that installs `n8n-nodes-base` + `@n8n/n8n-nodes-langchain` as dev-deps and extracts `{type, requiredParams, credentialType, operations}` into a generated registry file. This would power stronger per-node validation and richer prompt catalogs.
-**Deferred because:** meaningful engineering; the live-instance sync already covers "does this node exist here"; and Phases 1-4 have better effort/reward. Revisit when validator telemetry shows param-level failures Kairos can't currently catch.
+**Originally deferred because:** meaningful engineering; the live-instance sync already covers "does this node exist here"; and Phases 1-4 have better effort/reward. Was gated on "revisit when validator telemetry shows param-level failures Kairos can't currently catch."
+
+**Status update (2026-07-02):** Jordan reviewed the gate and explicitly chose to proceed anyway, with eyes open that the gate condition is not currently met by real telemetry (checked during Phase 4: 137 builds, only Rules 17/14 active, neither is a param-level gap this would close) — this is a deliberate override, not a discovery that the gate was actually satisfied. Benefit is therefore unverified until shipped and compared against future telemetry; being built as real, tested infrastructure regardless. Same protocol as every phase before it: investigate the real shape first (this phase's plan was written without ever having inspected `n8n-nodes-base`'s actual node-definition format), then implement one step at a time, tests first where feasible, all 4 gates, commit.
+
+**PoC finding that narrowed scope (2026-07-02):** Installed `n8n-nodes-base@2.15.1` + `@n8n/n8n-nodes-langchain@2.28.4` as devDependencies (1716 packages, 122 vulnerabilities in transitive deps — dev-only, not shipped, no `npm audit` gate in CI so this doesn't break anything, but it's a real cost worth naming). Confirmed the extraction mechanism itself works: each package's `package.json` has an authoritative `n8n.nodes` manifest (438 files) and `n8n.credentials` (392 files) — the same list n8n's own core uses to load nodes — and `require()`-ing a compiled `.node.js` file and instantiating the exported class correctly resolves composed/spread property fragments that a static text/AST parse would miss.
+
+However, a PoC extraction against 4 real nodes (Webhook, Slack, HTTP Request, Set) showed the plan's assumed `requiredParams`/`credentialType` extraction is **unreliable, not just incomplete**:
+- Webhook's only statically-`required: true` field was `responseBinaryPropertyName` — gated by `displayOptions.show.responseData: ['binaryData']`, a rarely-used option. `httpMethod`/`path` aren't marked required at all (webhook auto-generates a path if omitted).
+- Slack, HTTP Request, and Set all returned **zero** required params — n8n validates `url`, channel, etc. at runtime (`getNodeParameter` throwing on empty), not via the static schema.
+- Webhook's `credentials` array has 5+ entries (`httpBasicAuth`, `httpHeaderAuth`, `jwtAuth`, ...) each gated by `displayOptions.show.authentication: [...]` — naively picking the first entry is actively wrong (default `authentication` is `'none'`).
+
+Getting `requiredParams`/`credentialType` right would require a real `displayOptions` conditional-resolver evaluated against a concrete parameter state — a materially bigger, different task than "extract a field," and even done well it wouldn't beat Kairos's existing hand-tuned Rules 29/30/etc. for the nodes that matter most.
+
+**Decision (Jordan, 2026-07-02): narrow scope now, full scope tracked as a follow-on.** Ship what's reliably extractable without conditional resolution — `resource`/`operation` enum catalogs (valid values + descriptions, not gated by the required-params problem) and a full node-existence/type list across all 438+ node files, for richer prompt-catalog coverage beyond the ~70 hand-curated `DEFAULT_REGISTRY` entries. Explicitly does **not** attempt `requiredParams`/`credentialType` extraction in this pass.
+
+### Phase 5 judgment call — OPEN, full-scope resolver tracked for later (2026-07-02)
+
+**What:** Build the `displayOptions` conditional-resolver so `requiredParams`/`credentialType` extraction is actually correct (resolved against a concrete parameter state), not just present. Not attempted in the narrow-scope pass — deliberately deferred, not forgotten.
+**Why deferred:** Materially bigger engineering than the narrow scope — real conditional-logic evaluation, not mechanical extraction — and its value is still unverified against real telemetry (same open question as the phase overall).
+**When:** After the narrow-scope Phase 5 work ships and Jordan has had a chance to see what it produces in practice. Explicit per Jordan: "remember the full one for when you are done. After you are done we will talk about doing the rest and what is needed for us to do the rest."
 
 ## 11. Non-goals
 

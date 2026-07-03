@@ -5,6 +5,7 @@ export const VALIDATOR_RULE_IDS: number[] = [
   ...Array.from({ length: 39 }, (_, i) => i + 65), // 65-103 (64 skipped — conflicts with Kairos prompt; 104 deferred)
   ...Array.from({ length: 22 }, (_, i) => i + 105), // 105-126 (104 skipped)
   127, 128, // Phase 4 (n8n-skills gap analysis): Code language/param mismatch, unwired error-output port
+  129, // Phase 5 (node property-schema enrichment): resource/operation value doesn't exist for the node type
 ]
 
 export const RULE_PIPELINE_STAGES: Record<number, PipelineStage> = {
@@ -134,6 +135,7 @@ export const RULE_PIPELINE_STAGES: Record<number, PipelineStage> = {
   126: 'node_generation',
   127: 'node_generation',
   128: 'connection_wiring',
+  129: 'node_generation',
 }
 
 export interface RuleExample {
@@ -390,6 +392,10 @@ export const RULE_EXAMPLES: Record<number, RuleExample> = {
     bad: '"onError": "continueErrorOutput"  // node has 2 output ports; connections only wire index 0',
     good: '"Node": { "main": [ [{"node": "OnSuccess", ...}], [{"node": "OnError", ...}] ] }  // index 1 wired too',
   },
+  129: {
+    bad: '"resource": "channels"  // n8n-nodes-base.slack has no "channels" resource (it\'s "channel")',
+    good: '"resource": "channel", "operation": "create"',
+  },
 }
 
 export const RULE_MITIGATIONS: Record<number, string> = {
@@ -519,4 +525,5 @@ export const RULE_MITIGATIONS: Record<number, string> = {
   126: 'Replace the node ID with a valid UUID v4 (xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx). Use a UUID generator to create a proper random UUID v4.',
   127: 'Move the Code node\'s code into the parameter matching its language setting: pythonCode when language is "python", jsCode otherwise. n8n only executes the parameter matching the language setting.',
   128: 'Wire output index 1 (the error-path port created by onError: "continueErrorOutput") to a node that handles the failure — otherwise every item that errors on this node is silently dropped with nowhere to go.',
+  129: 'Use one of this node type\'s actual valid resource/operation values (see the warning message for the exact list) — the value set does not exist for this node type.',
 }
