@@ -32,6 +32,7 @@ import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { readCatalogCache, writeCatalogCache } from './utils/node-catalog-cache.js'
+import { coalesceAsync } from './utils/coalesce-async.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8')) as { version: string }
@@ -141,9 +142,19 @@ function getCatalogCachePath(): string {
   return join(base, 'node-catalog-cache.json')
 }
 
+// Coalesces concurrent autoSync() calls (e.g. overlapping kairos_prompt requests, or
+// kairos_prompt racing kairos_sync) into a single in-flight sync instead of each caller
+// triggering its own redundant network fetch to n8n. Correct for kairos_sync's "force
+// fresh" reset too: if it nulled lastSync while a sync was already in flight, that
+// in-flight sync still produces fresh data once it resolves.
+const runSyncOnce = coalesceAsync(performSync)
+
 async function autoSync(): Promise<SyncResult | null> {
   if (lastSync) return lastSync
+  return runSyncOnce()
+}
 
+async function performSync(): Promise<SyncResult | null> {
   // Try disk cache before hitting the network
   const cachePath = getCatalogCachePath()
   const cached = await readCatalogCache(cachePath)
