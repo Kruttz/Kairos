@@ -317,7 +317,7 @@ server.tool(
 
 server.tool(
   'kairos_deploy',
-  'Deploy a validated workflow to n8n. Pass the workflow JSON that passed kairos_validate. Strips server-assigned fields automatically. Requires N8N_BASE_URL and N8N_API_KEY.',
+  'Deploy a validated workflow to n8n. Pass the workflow JSON that passed kairos_validate. Strips server-assigned fields automatically. Requires N8N_BASE_URL and N8N_API_KEY. Call kairos_prompt first and pass its kairos_run_id here for telemetry and pattern learning.',
   {
     workflow: z.string().describe('The validated workflow JSON string to deploy'),
     activate: z.boolean().default(false).describe('Activate the workflow immediately after deployment'),
@@ -368,10 +368,13 @@ server.tool(
 
     const session = kairos_run_id ? mcpSessions.get(kairos_run_id) : undefined
 
-    // Warn when kairos_run_id is provided but no matching session exists — telemetry will be skipped
-    const missingSessionWarning = (kairos_run_id && !session)
-      ? `\n\nNote: kairos_run_id "${kairos_run_id}" was provided but no active session was found. This usually means kairos_deploy was called without a prior kairos_prompt call, or the session expired. Telemetry and pattern learning for this build were skipped.`
-      : ''
+    // Warn when there's no session to learn from — distinguish "never called kairos_prompt"
+    // from "called it, but the session didn't resolve" since they need different remediation.
+    const missingSessionWarning = !kairos_run_id
+      ? `\n\nNote: no kairos_run_id was provided. Call kairos_prompt first and pass its kairos_run_id here — that enables telemetry and pattern learning for this build. Deploying without it still works, but Kairos won't learn from this build's outcome.`
+      : !session
+        ? `\n\nNote: kairos_run_id "${kairos_run_id}" was provided but no active session was found. This usually means the session expired or the ID is invalid. Telemetry and pattern learning for this build were skipped.`
+        : ''
 
     // Save to library (n8nWorkflowId enables dedup on future redeployment)
     await library.initialize()
@@ -412,7 +415,7 @@ server.tool(
 
 server.tool(
   'kairos_replace',
-  'Replace an existing n8n workflow with a new version. Validates before updating. Use kairos_prompt → kairos_validate → kairos_replace for iteration on existing workflows.',
+  'Replace an existing n8n workflow with a new version. Validates before updating. Use kairos_prompt → kairos_validate → kairos_replace for iteration on existing workflows, and pass kairos_prompt\'s kairos_run_id here for telemetry and pattern learning.',
   {
     workflow_id: z.string().describe('The n8n workflow ID to replace'),
     workflow: z.string().describe('The validated workflow JSON string'),
@@ -449,9 +452,11 @@ server.tool(
     const response = await client.updateWorkflow(workflow_id, stripped)
 
     const session = kairos_run_id ? mcpSessions.get(kairos_run_id) : undefined
-    const missingSessionWarning = (kairos_run_id && !session)
-      ? `\n\nNote: kairos_run_id "${kairos_run_id}" was provided but no active session was found.`
-      : ''
+    const missingSessionWarning = !kairos_run_id
+      ? `\n\nNote: no kairos_run_id was provided. Call kairos_prompt first and pass its kairos_run_id here — that enables telemetry and pattern learning for this build. Replacing without it still works, but Kairos won't learn from this build's outcome.`
+      : !session
+        ? `\n\nNote: kairos_run_id "${kairos_run_id}" was provided but no active session was found. This usually means the session expired or the ID is invalid. Telemetry and pattern learning for this build were skipped.`
+        : ''
 
     // Save to library — D4 dedup updates the existing entry rather than creating a duplicate
     await library.initialize()

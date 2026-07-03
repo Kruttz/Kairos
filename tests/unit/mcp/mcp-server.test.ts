@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { spawn, type ChildProcess } from 'child_process'
 import { resolve } from 'path'
+import { createServer, type Server } from 'node:http'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const SERVER_PATH = resolve(__dirname, '../../../dist/mcp-server.js')
 
@@ -384,5 +388,146 @@ describe('Kairos MCP Server — role modes', () => {
     // deploy mode doesn't auto-allow — still requires explicit ALLOW_DEPLOY=true
     expect(result.isError).toBe(true)
     expect(content.error).toContain('KAIROS_MCP_ALLOW_DEPLOY')
+  }, 15_000)
+})
+
+describe('Kairos MCP Server — H6 missing-session warning wording', () => {
+  let mockN8n: Server
+  let mockN8nUrl: string
+  let telemetryDir: string
+
+  const VALID_WORKFLOW = JSON.stringify({
+    name: 'Test Workflow',
+    nodes: [{
+      id: '550e8400-e29b-41d4-a716-446655440099',
+      type: 'n8n-nodes-base.webhook',
+      typeVersion: 2,
+      name: 'Webhook',
+      position: [250, 300],
+      parameters: { httpMethod: 'POST', path: 'h6-test' },
+    }],
+    connections: {},
+    settings: { executionOrder: 'v1' },
+  })
+
+  beforeAll(async () => {
+    telemetryDir = await mkdtemp(join(tmpdir(), 'kairos-mcp-h6-'))
+    mockN8n = createServer((req, res) => {
+      if (req.method === 'GET' && req.url === '/api/v1/node-types') {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ data: [] }))
+        return
+      }
+      if (req.method === 'POST' && req.url === '/api/v1/workflows') {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ id: 'wf-h6-test', name: 'Test Workflow' }))
+        return
+      }
+      res.writeHead(404)
+      res.end()
+    })
+    await new Promise<void>((r) => mockN8n.listen(0, '127.0.0.1', r))
+    const addr = mockN8n.address()
+    if (addr === null || typeof addr === 'string') throw new Error('mock server failed to bind')
+    mockN8nUrl = `http://127.0.0.1:${addr.port}`
+  })
+
+  afterAll(async () => {
+    await new Promise<void>((r) => mockN8n.close(() => r()))
+    await rm(telemetryDir, { recursive: true, force: true })
+  })
+
+  function startServerWithMockN8n(): McpClient {
+    const proc = spawn('node', [SERVER_PATH], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        N8N_BASE_URL: mockN8nUrl,
+        N8N_API_KEY: 'test-key',
+        KAIROS_MCP_ALLOW_DEPLOY: 'true',
+        KAIROS_TELEMETRY: telemetryDir,
+      },
+    })
+    let buffer = ''
+    const responses = new Map<number, Record<string, unknown>>()
+    const waiters = new Map<number, (v: Record<string, unknown>) => void>()
+    proc.stdout!.on('data', (data: Buffer) => {
+      buffer += data.toString()
+      const lines = buffer.split('\n')
+      buffer = lines.pop()!
+      for (const line of lines) {
+        if (!line.trim()) continue
+        const parsed = JSON.parse(line) as Record<string, unknown>
+        const id = parsed['id'] as number
+        responses.set(id, parsed)
+        waiters.get(id)?.(parsed)
+        waiters.delete(id)
+      }
+    })
+    return {
+      proc,
+      send(msg: object) { proc.stdin!.write(JSON.stringify(msg) + '\n') },
+      waitForResponse(id: number): Promise<Record<string, unknown>> {
+        const existing = responses.get(id)
+        if (existing) return Promise.resolve(existing)
+        return new Promise((resolve) => { waiters.set(id, resolve) })
+      },
+      close() { proc.kill() },
+    }
+  }
+
+  async function initClient(client: McpClient): Promise<void> {
+    client.send({ jsonrpc: '2.0', id: 0, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1.0' } } })
+    await client.waitForResponse(0)
+  }
+
+  it('warns that no kairos_run_id was provided when it is omitted entirely', async () => {
+    const c = startServerWithMockN8n()
+    await initClient(c)
+    c.send({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'kairos_deploy', arguments: { workflow: VALID_WORKFLOW } } })
+    const resp = await c.waitForResponse(1)
+    const result = resp['result'] as { content: Array<{ text: string }> }
+    c.close()
+
+    expect(result.content[0].text).toContain('no kairos_run_id was provided')
+    expect(result.content[0].text).toContain('Call kairos_prompt first')
+  }, 15_000)
+
+  it('still warns with the existing wording when kairos_run_id is provided but unresolved', async () => {
+    const c = startServerWithMockN8n()
+    await initClient(c)
+    c.send({
+      jsonrpc: '2.0', id: 1, method: 'tools/call',
+      params: { name: 'kairos_deploy', arguments: { workflow: VALID_WORKFLOW, kairos_run_id: 'nonexistent-run-id' } },
+    })
+    const resp = await c.waitForResponse(1)
+    const result = resp['result'] as { content: Array<{ text: string }> }
+    c.close()
+
+    expect(result.content[0].text).toContain('no active session was found')
+    expect(result.content[0].text).not.toContain('no kairos_run_id was provided')
+  }, 15_000)
+
+  it('does not warn when a real session from kairos_prompt is passed through', async () => {
+    const c = startServerWithMockN8n()
+    await initClient(c)
+
+    c.send({
+      jsonrpc: '2.0', id: 1, method: 'tools/call',
+      params: { name: 'kairos_prompt', arguments: { description: 'Test webhook workflow for H6' } },
+    })
+    const promptResp = await c.waitForResponse(1)
+    const promptResult = promptResp['result'] as { content: Array<{ text: string }> }
+    const promptContent = JSON.parse(promptResult.content[0].text) as { kairos_run_id: string }
+
+    c.send({
+      jsonrpc: '2.0', id: 2, method: 'tools/call',
+      params: { name: 'kairos_deploy', arguments: { workflow: VALID_WORKFLOW, kairos_run_id: promptContent.kairos_run_id } },
+    })
+    const deployResp = await c.waitForResponse(2)
+    const deployResult = deployResp['result'] as { content: Array<{ text: string }> }
+    c.close()
+
+    expect(deployResult.content[0].text).not.toContain('Note:')
   }, 15_000)
 })
