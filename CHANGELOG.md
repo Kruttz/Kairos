@@ -2,9 +2,9 @@
 
 All notable changes to `@kairos-sdk/core` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); dates are publish dates from npm.
 
-## [Unreleased]
+## [0.9.0] - 2026-07-03
 
-Everything below is committed locally as of this entry but **not yet pushed to GitHub or published to npm** — a deliberate checkpoint (see `docs/plans/repo-integration-plan.md` for the full session log). Grouped by theme, not commit-by-commit.
+Grouped by theme, not commit-by-commit.
 
 ### Repo-integration effort (Phases 1–5)
 - Bulk local workflow import (`kairos sync-templates --from-dir`)
