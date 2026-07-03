@@ -664,13 +664,15 @@ Kairos uses a **hybrid retrieval** pipeline with four scoring signals, weighted 
 | Outcome history | 0.20 | First-try pass rate and avg attempts when this workflow was used as a source — proven templates rank higher |
 | Deploy frequency | 0.15 | How often a workflow has been deployed — a proxy for usefulness |
 
+These weights are overridable via `KAIROS_WEIGHT_TFIDF` / `KAIROS_WEIGHT_JACCARD` / `KAIROS_WEIGHT_OUTCOME` / `KAIROS_WEIGHT_DEPLOY` — set any subset, unset ones keep their default, and the full set is renormalized to sum to 1.
+
 After hybrid scoring, results are **reranked by cluster**: workflows are grouped by node fingerprint pattern (e.g., webhook→slack, scheduleTrigger→httpRequest→gmail), and cluster-level success stats boost or penalize candidates. Clusters with high failure rates on specific rules surface those as warnings.
 
 - High-scoring matches (>= 0.92) provide direct structural templates
 - Medium matches (>= 0.72) provide reference examples
 - Failure patterns from matched workflows and cluster-level warnings are injected into Claude's prompt
 
-**Optional semantic retrieval (embeddings):** Pass an `embeddingFn` to `FileLibrary` to add cosine similarity as a fifth signal (weights shift to 0.30 TF-IDF / 0.20 fingerprint / 0.25 cosine / 0.15 outcome / 0.10 deploy for entries with cached vectors — entries not yet embedded keep the keyword-only weights). Embeddings are computed lazily during search (a few per call, 2s timeout, silent BM25 fallback) and cached in `~/.kairos/library/embedding-cache.json`. Fully backward-compatible: omit `embeddingFn` and nothing changes.
+**Optional semantic retrieval (embeddings):** Pass an `embeddingFn` to `FileLibrary` to add cosine similarity as a fifth signal (weights shift to 0.30 TF-IDF / 0.20 fingerprint / 0.25 cosine / 0.15 outcome / 0.10 deploy for entries with cached vectors — entries not yet embedded keep the keyword-only weights). This set is separately overridable via the same `KAIROS_WEIGHT_*` vars plus `KAIROS_WEIGHT_COSINE` for the embedding-only term. Embeddings are computed lazily during search (a few per call, 2s timeout, silent BM25 fallback) and cached in `~/.kairos/library/embedding-cache.json`. Fully backward-compatible: omit `embeddingFn` and nothing changes.
 
 ```ts
 const library = new FileLibrary(undefined, {

@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { hybridScore, cosineSimilarity } from '../../../src/library/scorer.js'
+import { describe, it, expect, afterEach, vi } from 'vitest'
+import { hybridScore, cosineSimilarity, loadWeights } from '../../../src/library/scorer.js'
 import { tokenize, buildSearchCorpus } from '../../../src/library/file-library.js'
 import type { StoredWorkflow } from '../../../src/library/types.js'
 
@@ -231,5 +231,86 @@ describe('hybridScore', () => {
 
     const results = hybridScore(queryTokens, query, workflows, docTokenArrays, idf)
     expect(results[0]!.score).toBeLessThanOrEqual(1)
+  })
+})
+
+const WEIGHT_ENV_VARS = ['KAIROS_WEIGHT_TFIDF', 'KAIROS_WEIGHT_JACCARD', 'KAIROS_WEIGHT_COSINE', 'KAIROS_WEIGHT_OUTCOME', 'KAIROS_WEIGHT_DEPLOY']
+
+describe('loadWeights', () => {
+  afterEach(() => {
+    for (const key of WEIGHT_ENV_VARS) delete process.env[key]
+  })
+
+  it('returns the exact defaults when no weight env vars are set', () => {
+    const defaults = { tfidf: 0.35, nodeFingerprint: 0.30, outcome: 0.20, deploy: 0.15 }
+    expect(loadWeights(defaults)).toEqual(defaults)
+  })
+
+  it('overrides one key and renormalizes the rest to sum to 1', () => {
+    process.env['KAIROS_WEIGHT_TFIDF'] = '0.7'
+    const result = loadWeights({ tfidf: 0.35, nodeFingerprint: 0.30, outcome: 0.20, deploy: 0.15 })
+    const sum = result.tfidf + result.nodeFingerprint + result.outcome + result.deploy
+    expect(sum).toBeCloseTo(1, 10)
+    // tfidf should now dominate relative to its old 0.35 share
+    expect(result.tfidf).toBeGreaterThan(0.35)
+  })
+
+  it('falls back to the default for an invalid or negative value', () => {
+    process.env['KAIROS_WEIGHT_TFIDF'] = '-1'
+    process.env['KAIROS_WEIGHT_JACCARD'] = '0.5'
+    const defaults = { tfidf: 0.35, nodeFingerprint: 0.30, outcome: 0.20, deploy: 0.15 }
+    const result = loadWeights(defaults)
+    // tfidf ignored the negative override and used its default (0.35) before normalizing,
+    // while nodeFingerprint's override (0.5) took effect
+    const total = defaults.tfidf + 0.5 + defaults.outcome + defaults.deploy
+    expect(result.tfidf).toBeCloseTo(defaults.tfidf / total, 10)
+    expect(result.nodeFingerprint).toBeCloseTo(0.5 / total, 10)
+  })
+
+  it('applies the same override/normalize/fallback behavior to the embedding weight shape (including cosine)', () => {
+    process.env['KAIROS_WEIGHT_COSINE'] = '0.6'
+    const defaults = { tfidf: 0.30, nodeFingerprint: 0.20, cosine: 0.25, outcome: 0.15, deploy: 0.10 }
+    const result = loadWeights(defaults)
+    const sum = result.tfidf + result.nodeFingerprint + result.cosine + result.outcome + result.deploy
+    expect(sum).toBeCloseTo(1, 10)
+    expect(result.cosine).toBeGreaterThan(defaults.cosine)
+  })
+
+  it('returns the exact embedding defaults when no weight env vars are set', () => {
+    const defaults = { tfidf: 0.30, nodeFingerprint: 0.20, cosine: 0.25, outcome: 0.15, deploy: 0.10 }
+    expect(loadWeights(defaults)).toEqual(defaults)
+  })
+})
+
+describe('module-level WEIGHTS/EMBEDDING_WEIGHTS pick up env vars at real startup', () => {
+  afterEach(() => {
+    for (const key of WEIGHT_ENV_VARS) delete process.env[key]
+    vi.resetModules()
+  })
+
+  it('a fresh import of scorer.js computes WEIGHTS from KAIROS_WEIGHT_TFIDF set before load', async () => {
+    process.env['KAIROS_WEIGHT_TFIDF'] = '0.7'
+    vi.resetModules()
+    const fresh = await import('../../../src/library/scorer.js')
+
+    const expected = loadWeights({ tfidf: 0.35, nodeFingerprint: 0.30, outcome: 0.20, deploy: 0.15 })
+    expect(fresh.WEIGHTS.tfidf).toBeCloseTo(expected.tfidf, 10)
+    expect(fresh.WEIGHTS.tfidf).toBeGreaterThan(0.35)
+  })
+
+  it('a fresh import of scorer.js computes EMBEDDING_WEIGHTS from KAIROS_WEIGHT_COSINE set before load', async () => {
+    process.env['KAIROS_WEIGHT_COSINE'] = '0.6'
+    vi.resetModules()
+    const fresh = await import('../../../src/library/scorer.js')
+
+    expect(fresh.EMBEDDING_WEIGHTS.cosine).toBeGreaterThan(0.25)
+  })
+
+  it('a fresh import with no weight env vars set matches the hardcoded defaults', async () => {
+    vi.resetModules()
+    const fresh = await import('../../../src/library/scorer.js')
+
+    expect(fresh.WEIGHTS).toEqual({ tfidf: 0.35, nodeFingerprint: 0.30, outcome: 0.20, deploy: 0.15 })
+    expect(fresh.EMBEDDING_WEIGHTS).toEqual({ tfidf: 0.30, nodeFingerprint: 0.20, cosine: 0.25, outcome: 0.15, deploy: 0.10 })
   })
 })

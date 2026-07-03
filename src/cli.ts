@@ -79,6 +79,14 @@ Environment variables:
                           standard: full library context, top 10 patterns (default)
                           rich: full library context, top 15 patterns, proactive expression guidance
   KAIROS_LIBRARY_SIZE     Max library entries before oldest/least-used are evicted (default: 1500)
+  KAIROS_WEIGHT_TFIDF     Retrieval weight: keyword/TF-IDF relevance (default: 0.35)
+  KAIROS_WEIGHT_JACCARD   Retrieval weight: node-type overlap / Jaccard similarity (default: 0.30)
+  KAIROS_WEIGHT_OUTCOME   Retrieval weight: past build outcome success (default: 0.20)
+  KAIROS_WEIGHT_DEPLOY    Retrieval weight: deployment popularity (default: 0.15)
+  KAIROS_WEIGHT_COSINE    Retrieval weight: embedding cosine similarity, only applies once a
+                          workflow has a cached embedding vector (default: 0.25)
+                          All KAIROS_WEIGHT_* values are normalized to sum to 1 — set any
+                          subset, unset ones keep their default before normalization.
 `
 
 function getEnvOrExit(name: string): string {

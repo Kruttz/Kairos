@@ -1,34 +1,41 @@
 import type { StoredWorkflow } from './types.js'
 
-function loadWeights() {
-  const raw = {
-    tfidf: parseFloat(process.env['KAIROS_WEIGHT_TFIDF'] ?? ''),
-    nodeFingerprint: parseFloat(process.env['KAIROS_WEIGHT_JACCARD'] ?? ''),
-    outcome: parseFloat(process.env['KAIROS_WEIGHT_OUTCOME'] ?? ''),
-    deploy: parseFloat(process.env['KAIROS_WEIGHT_DEPLOY'] ?? ''),
-  }
-  const defaults = { tfidf: 0.35, nodeFingerprint: 0.30, outcome: 0.20, deploy: 0.15 }
-  const anySet = Object.values(raw).some((v) => !isNaN(v) && v >= 0)
-  if (!anySet) return defaults
-
-  // Use provided values (default 0 for unspecified), then normalize to sum=1
-  const w = {
-    tfidf: !isNaN(raw.tfidf) && raw.tfidf >= 0 ? raw.tfidf : defaults.tfidf,
-    nodeFingerprint: !isNaN(raw.nodeFingerprint) && raw.nodeFingerprint >= 0 ? raw.nodeFingerprint : defaults.nodeFingerprint,
-    outcome: !isNaN(raw.outcome) && raw.outcome >= 0 ? raw.outcome : defaults.outcome,
-    deploy: !isNaN(raw.deploy) && raw.deploy >= 0 ? raw.deploy : defaults.deploy,
-  }
-  const total = w.tfidf + w.nodeFingerprint + w.outcome + w.deploy
-  if (total <= 0) return defaults
-  return {
-    tfidf: w.tfidf / total,
-    nodeFingerprint: w.nodeFingerprint / total,
-    outcome: w.outcome / total,
-    deploy: w.deploy / total,
-  }
+// Env var name for each scoring dimension. Shared across both weight sets below —
+// KAIROS_WEIGHT_TFIDF tunes "how much keyword relevance matters" the same way whether
+// or not embeddings are in play; only `cosine` is embedding-only.
+const ENV_VAR_BY_KEY: Record<string, string> = {
+  tfidf: 'KAIROS_WEIGHT_TFIDF',
+  nodeFingerprint: 'KAIROS_WEIGHT_JACCARD',
+  cosine: 'KAIROS_WEIGHT_COSINE',
+  outcome: 'KAIROS_WEIGHT_OUTCOME',
+  deploy: 'KAIROS_WEIGHT_DEPLOY',
 }
 
-const WEIGHTS = loadWeights()
+/**
+ * Reads KAIROS_WEIGHT_* env var overrides for each key in `defaults`, falling back
+ * per-key to the default when unset/invalid/negative, then normalizes the result to
+ * sum to 1. Returns `defaults` unchanged if no relevant env var is set at all.
+ */
+export function loadWeights<T extends Record<string, number>>(defaults: T): T {
+  const keys = Object.keys(defaults) as Array<keyof T & string>
+  const raw = Object.fromEntries(
+    keys.map((k) => [k, parseFloat(process.env[ENV_VAR_BY_KEY[k] ?? ''] ?? '')]),
+  ) as Record<keyof T & string, number>
+
+  const anySet = keys.some((k) => !isNaN(raw[k]) && raw[k] >= 0)
+  if (!anySet) return defaults
+
+  // Use provided values (falling back to default per-key), then normalize to sum=1
+  const w = Object.fromEntries(
+    keys.map((k) => [k, !isNaN(raw[k]) && raw[k] >= 0 ? raw[k] : defaults[k]]),
+  ) as Record<keyof T & string, number>
+
+  const total = keys.reduce((sum, k) => sum + w[k], 0)
+  if (total <= 0) return defaults
+  return Object.fromEntries(keys.map((k) => [k, w[k] / total])) as T
+}
+
+export const WEIGHTS = loadWeights({ tfidf: 0.35, nodeFingerprint: 0.30, outcome: 0.20, deploy: 0.15 })
 
 const NODE_KEYWORDS: Record<string, string[]> = {
   slack: ['slack', 'slackApi'],
@@ -170,7 +177,7 @@ export function cosineSimilarity(a: number[], b: number[]): number {
 }
 
 // Weights when embeddings are present — cosine gets 25%, other components reduced proportionally
-const EMBEDDING_WEIGHTS = { tfidf: 0.30, nodeFingerprint: 0.20, cosine: 0.25, outcome: 0.15, deploy: 0.10 }
+export const EMBEDDING_WEIGHTS = loadWeights({ tfidf: 0.30, nodeFingerprint: 0.20, cosine: 0.25, outcome: 0.15, deploy: 0.10 })
 
 export function hybridScore(
   queryTokens: string[],
