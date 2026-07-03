@@ -17,6 +17,7 @@ import type { ILogger } from './utils/logger.js'
 import { scoreToMode } from './utils/thresholds.js'
 import { GuardError } from './errors/guard-error.js'
 import { ValidationError } from './errors/validation-error.js'
+import { DeployActivationError } from './errors/deploy-activation-error.js'
 import { inferWorkflowType } from './utils/workflow-type.js'
 import { generateUUID } from './utils/uuid.js'
 import { homedir } from 'node:os'
@@ -209,7 +210,16 @@ export class Kairos {
     this.logger.info('Workflow deployed to n8n', { workflowId: deployed.workflowId, name: deployed.name })
 
     if (options?.activate) {
-      await provider.activate(deployed.workflowId)
+      try {
+        await provider.activate(deployed.workflowId)
+      } catch (err) {
+        throw new DeployActivationError(
+          `Workflow ${deployed.workflowId} ("${deployed.name}") was deployed successfully but activation failed. ` +
+          `The workflow exists in n8n but is inactive — see err.workflowId to locate or clean it up.`,
+          deployed.workflowId,
+          err,
+        )
+      }
     }
 
     // saveToLibrary must run before recordDeploy — recordDeploy chains onto saveQueue

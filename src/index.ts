@@ -26,6 +26,7 @@ export {
   ProviderError,
   ApiError,
   GuardError,
+  DeployActivationError,
 } from './errors/index.js'
 
 export type {
