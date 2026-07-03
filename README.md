@@ -144,6 +144,30 @@ This means Kairos works with **any LLM** — Claude, GPT, Gemini, Llama, or anyt
 | `kairos_outcome` | Record build outcome against a library entry — feeds the pattern learning system with attempt counts, failed rules, and generation mode |
 | `kairos_record_trace` | Record the most recent n8n execution of a deployed workflow into the library — grounds retrieval in real runtime behavior (stores node names, error types, and item counts only — never data values) |
 
+### MCP Permissions & Security
+
+Kairos's MCP server blocks destructive operations by default — deploying, activating, and deleting workflows all require an explicit opt-in, independent of whether an n8n connection is configured. This is deliberate: an MCP host that can talk to your n8n instance shouldn't be able to touch production automation without you saying so.
+
+**Role modes** — `KAIROS_MCP_MODE` (default: `deploy`):
+
+| Mode | Behavior |
+|---|---|
+| `readonly` | Blocks `kairos_deploy`, `kairos_replace`, `kairos_activate`, `kairos_delete` unconditionally — overrides the `ALLOW_*` flags below entirely |
+| `validate` | Same as `readonly` — read/validate/search tools work, all write operations are blocked |
+| `deploy` (default) | Write operations are *possible*, but each one still needs its own explicit `ALLOW_*` flag below — `deploy` mode does not auto-enable anything by itself |
+
+**Per-action opt-in flags** (only relevant in `deploy` mode — `readonly`/`validate` block these regardless):
+
+| Variable | Enables |
+|---|---|
+| `KAIROS_MCP_ALLOW_DEPLOY` | `kairos_deploy`, `kairos_replace` — set to exactly `true` |
+| `KAIROS_MCP_ALLOW_ACTIVATE` | `kairos_activate`, and the `activate: true` option on `kairos_deploy` |
+| `KAIROS_MCP_ALLOW_DELETE` | `kairos_delete` |
+
+**Optional shared-secret auth:** set `KAIROS_MCP_SECRET` and every write-capable tool call must include a matching `kairos_secret` argument, or it's rejected as unauthorized — useful if the server is reachable by more than just your own trusted agent.
+
+**HTTP transport:** `kairos-mcp --http` (default port 3000, override with `KAIROS_MCP_PORT`) runs over `StreamableHTTPServerTransport` instead of stdio. The transport itself does not add authentication beyond `KAIROS_MCP_SECRET` above — if you expose it over a network rather than binding to localhost, put it behind your own auth/reverse proxy, the same way you would any other unauthenticated local service.
+
 ---
 
 ## Use as SDK
@@ -164,6 +188,26 @@ npm install @kairos-sdk/core @anthropic-ai/sdk
 - **SDK:** An [Anthropic API key](https://console.anthropic.com) — the SDK calls Claude internally
 - **MCP:** No Anthropic key needed — your host LLM does the generation
 - An n8n instance with API access enabled (Cloud or self-hosted) — required for both SDK and MCP (Kairos syncs your instance's node types for accurate generation)
+
+---
+
+## Environment Variables Reference
+
+Every `KAIROS_*` variable Kairos reads, in one place (the CLI's own `--help` output has a shorter version of the same list; MCP-specific vars are covered in more depth under [MCP Permissions & Security](#mcp-permissions--security)):
+
+| Variable | Applies to | Effect |
+|---|---|---|
+| `KAIROS_MODEL` | SDK, CLI | Claude model override (default: `claude-sonnet-4-6`) |
+| `KAIROS_TELEMETRY` | SDK, CLI, MCP | `true` for the default directory, or a path — enables JSONL telemetry logging |
+| `KAIROS_LIBRARY_DIR` | CLI | Override the workflow library directory (default: `~/.kairos/library`) |
+| `KAIROS_LIBRARY_SIZE` | SDK, CLI, MCP | Max library entries before oldest/least-used are evicted (default: `1500`) |
+| `KAIROS_PROMPT_PROFILE` | SDK, CLI, MCP | `minimal` \| `standard` \| `rich` (default: `standard`) — how much library context and pattern guidance gets injected into the generation prompt |
+| `KAIROS_REGISTRY_STRICT` | SDK, CLI, MCP | Set to `true` to warn on any node `typeVersion` above the registry's known-safe range. Default (unset/`false`) is lenient — a version higher than the known max is treated as a newer n8n release, not an error |
+| `KAIROS_WEIGHT_TFIDF` / `KAIROS_WEIGHT_JACCARD` / `KAIROS_WEIGHT_OUTCOME` / `KAIROS_WEIGHT_DEPLOY` / `KAIROS_WEIGHT_COSINE` | SDK, CLI, MCP | Retrieval scoring weights — see [How retrieval works](#workflow-library--feedback-loop) |
+| `KAIROS_MCP_MODE` | MCP | `readonly` \| `validate` \| `deploy` (default) — see [MCP Permissions & Security](#mcp-permissions--security) |
+| `KAIROS_MCP_ALLOW_DEPLOY` / `KAIROS_MCP_ALLOW_ACTIVATE` / `KAIROS_MCP_ALLOW_DELETE` | MCP | Per-action opt-in for write operations — see [MCP Permissions & Security](#mcp-permissions--security) |
+| `KAIROS_MCP_SECRET` | MCP | Optional shared secret required on write-capable tool calls |
+| `KAIROS_MCP_PORT` | MCP | HTTP transport port when running `kairos-mcp --http` (default: `3000`) |
 
 ---
 
@@ -292,8 +336,104 @@ The 128-rule validator is the core of what makes Kairos reliable. In baseline te
 | 32 | warn | Set nodes have at least one field assignment in `assignments.assignments` (typeVersion 3.x) |
 | 33 | warn | Schedule triggers have at least one rule in `rule.interval` |
 | 34 | warn | Webhook paths are relative — no spaces, no leading slash, no protocol prefix |
+| 35 | warn | Email-sending node with no duplicate-prevention signal |
+| 36 | warn | Code node output field names don't match downstream $json references (camelCase vs snake_case) |
+| 37 | warn | New Date() called on external data without a custom date parsing helper |
+| 38 | warn | Multiple parallel AI HTTP calls merge into same downstream node |
+| 39 | warn | Deprecated Claude model name in use |
+| 40 | warn | __rl resource locator field has wrong shape (plain string instead of {__rl, mode, value}) |
+| 41 | warn | HTTP Request has body content but sendBody is not true |
+| 42 | warn | SplitInBatches output 0 ("done") loops back into the batch node — outputs likely reversed |
+| 43 | warn | IF/Filter node condition uses string operator instead of {type, operation} object (typeVersion 2+) |
+| 44 | warn | Google Sheets append/update with columnMappingMode "defineBelow" but empty fieldsUi |
+| 45 | error | AI Agent / chain node has no ai_languageModel sub-node connected |
+| 46 | warn | HTTP Request has hardcoded API key / token in header values |
+| 47 | warn | Switch node has output route(s) with no downstream connections |
+| 48 | warn | Deprecated OpenAI model name in use |
+| 49 | warn | ExecuteWorkflow node has no workflowId set |
+| 50 | warn | AI Agent promptType "auto" with no chatTrigger or formTrigger upstream |
+| 51 | warn | Wait node in webhook-resume mode with no resumeUrl sent downstream |
+| 52 | warn | SQL injection risk — SQL query built with template literal + $json field in Code node |
+| 53 | warn | Merge node mode incompatible with its incoming connection count |
+| 54 | warn | HTTP Request to known protected API domain without credentials or auth headers |
+| 55 | warn | Google Sheets sheetName is a placeholder literal when documentId is a real ID |
+| 56 | warn | Node has continueOnFail but no immediate downstream error check on $json.error |
+| 57 | warn | HTTP Request binary upload with missing or empty binaryPropertyName |
+| 58 | warn | Wrong credential type key for the node type |
+| 59 | warn | Webhook node has no authentication configured |
+| 60 | warn | ScheduleTrigger fires every minute (cron minute=* or minutesInterval=1) |
+| 61 | warn | ToolWorkflow sub-node missing description |
+| 62 | warn | MemoryBufferWindow without chatTrigger and no sessionKey (shared memory) |
+| 63 | error | Duplicate webhook path+httpMethod in the same workflow |
+| 65 | error | SplitInBatches batchSize <= 0 |
+| 66 | error | HTTP Request URL missing protocol prefix (not http:// or https://) |
+| 67 | warn | Code node $('NodeName') references a node not in the workflow |
+| 68 | warn | Google Calendar create event missing timezone |
+| 69 | warn | Gmail send node missing subject |
+| 70 | warn | Set node v1 with keepOnlySet=true drops all upstream fields |
+| 71 | warn | ToolWorkflow source=database missing workflowId |
+| 72 | warn | Code node calls JSON.parse() without a try/catch |
+| 73 | warn | AI tool sub-nodes (toolCode, toolHttpRequest, etc.) missing description |
+| 74 | warn | Multiple memoryBufferWindow nodes share the same static sessionKey |
+| 75 | warn | EmailSend node missing toAddresses, subject, or message |
+| 76 | warn | Telegram sendMessage missing chatId |
+| 77 | warn | Code node in runOnceForAllItems mode uses $json without $input.all() |
+| 78 | warn | Workflow has no errorWorkflow configured in settings |
+| 79 | warn | HTTP Request URL contains "webhook-test" (test URL that expires) |
+| 80 | warn | Set node v3+ has assignments but includeOtherInputFields is not enabled |
+| 81 | error | ExecuteWorkflow calls the current workflow (infinite loop) |
+| 82 | warn | Workflow has multiple SplitInBatches nodes (nested loop risk) |
+| 83 | error | ToolWorkflow source=parameter has no inline workflow nodes |
+| 84 | error | ToolWorkflow source=parameter inline workflow missing executeWorkflowTrigger entry point |
+| 85 | warn | HTTP Request has both a credential and a manual Authorization header |
+| 86 | error | ScheduleTrigger cronExpression has wrong number of fields |
+| 87 | warn | Merge combineByPosition with an upstream Filter node (item count mismatch) |
+| 88 | warn | Telegram sendMessage missing text |
+| 89 | error | ChainRetrievalQa missing ai_retriever sub-node |
+| 90 | error | RespondToWebhook exists but no webhook has responseMode="responseNode" |
+| 91 | warn | Filter node has empty conditions (Rule 31 handles IF node; this handles Filter) |
+| 92 | warn | Expression calls .toISOString() on a Luxon DateTime ($now/$today) |
+| 93 | warn | Expression calls .format() (Moment.js API) instead of .toFormat() (Luxon API) |
+| 94 | warn | ToolCode AI tool node has no executable code |
+| 95 | error | ToolHttpRequest AI tool has no URL defined |
+| 96 | warn | AI Agent/chain has multiple ai_languageModel sub-nodes (n8n only uses index 0) |
+| 97 | error | VectorStore node missing ai_embedding sub-node |
+| 98 | error | OutputParserStructured has no JSON schema |
+| 99 | warn | ChainLlm with output parser connected but {format_instructions} missing from prompt |
+| 100 | error | Postgres / MySQL executeQuery node has empty SQL query |
+| 101 | warn | FormTrigger has no form fields defined |
+| 102 | error | SplitOut node missing fieldToSplitOut parameter |
+| 103 | warn | Code node returns array items without the required json wrapper |
+| 105 | error | LM model parameter set to a non-routable alias ("latest", "default", etc.) |
+| 106 | warn | Switch fallbackOutput is enabled but the fallback output port has no downstream connection |
+| 107 | warn | Trigger node expression references $json (no upstream data at trigger time) |
+| 108 | warn | Aggregate node in field-specific mode with no fields to aggregate |
+| 109 | warn | Airtable create/update/upsert node with no field mappings |
+| 110 | warn | Agent with promptType="define" but text is empty |
+| 111 | warn | Ai_languageModel connection targets a non-agent/chain node |
+| 112 | error | Luxon .add() or .subtract() used in expressions (Moment.js methods) |
+| 113 | warn | IF node with unconnected true or false output branch |
+| 114 | warn | $('NodeName') in expressions references a node that does not exist |
+| 115 | warn | SplitInBatches output 1 (loop body) has no path that loops back |
+| 116 | error | LM sub-node using a model name from the wrong provider |
+| 117 | warn | Google Calendar create event missing start or end time |
+| 118 | warn | Redis node missing key (propertyName) for key-based operations |
+| 119 | error | Supabase node missing tableId |
+| 120 | warn | Gmail reply operation missing messageId |
+| 121 | warn | SplitOut fieldToSplitOut contains a dot (dot-path navigation attempt) |
+| 122 | warn | Luxon .plus() or .minus() called with positional (n, 'unit') arguments |
+| 123 | warn | HTTP Request sendQuery=true but queryParameters is empty |
+| 124 | warn | Code node in runOnceForAllItems mode has no return statement |
+| 125 | warn | Luxon uppercase YYYY or DD tokens in .toFormat() calls |
+| 126 | warn | Node ID does not match UUID v4 format |
+| 127 | warn | Code node language/param mismatch — jsCode/pythonCode populated for the wrong language |
+| 128 | warn | OnError "continueErrorOutput" set but the dedicated error output port (index 1) is unwired |
+| 129 | warn | Node's resource/operation value doesn't exist in the real n8n schema for its type |
+| 130 | warn | AWS S3 / Slack file upload missing binaryPropertyName |
 
 Errors block deployment. Warnings are recorded and fed back into the prompt for future builds.
+
+*(All 128 rules — generated from `src/validation/validator.ts` via `npx tsx scripts/generate-rules-table.ts`; run it again and re-paste after adding or changing a rule. `tests/unit/docs-drift.test.ts` fails CI if this table's rule-ID set ever falls out of sync with the code.)*
 
 ---
 
@@ -310,6 +450,7 @@ Errors block deployment. Warnings are recorded and fed back into the prompt for 
 | `logger` | `ILogger` | | Custom logger (default: silent) |
 | `telemetry` | `boolean \| string` | | Enable JSONL telemetry logging (`true` for default dir, or a path) |
 | `library` | `IWorkflowLibrary` | | Workflow library for learning loop (default: `NullLibrary`, CLI uses `FileLibrary`) |
+| `nodeRegistry` | `NodeRegistry` | | Override the node-type registry used during validation — e.g. one synced from a live n8n instance via `kairos sync-nodes`. Defaults to the built-in static registry |
 
 ---
 
@@ -546,6 +687,13 @@ kairos library prune --source imported
 kairos patterns
 kairos patterns --days 60 --json
 
+# View recent build sessions (description, attempts, matched library entries)
+kairos sessions
+kairos sessions --limit 50 --json
+
+# Regenerate an existing n8n workflow from a new description (re-validates, preserves workflow ID)
+kairos replace <n8n-workflow-id> "updated description of what this workflow should do"
+
 # Manage workflows
 kairos list
 kairos get <workflow-id>
@@ -752,13 +900,15 @@ const kairos = new Kairos({
 
 ## Supported n8n Node Types
 
-Kairos knows about 60+ n8n nodes out of the box, including:
+Kairos's built-in static registry (`DEFAULT_REGISTRY`) knows about 67 n8n node types out of the box, including:
 
 - **Triggers:** Webhook, Schedule, Chat, Manual, Email, GitHub, Telegram
 - **Core:** HTTP Request, Set, If, Switch, Merge, Code, Wait
 - **Apps:** Slack, Gmail, Google Sheets, Notion, Airtable, GitHub, Telegram
 - **Data:** PostgreSQL, Redis, S3, Execute SQL
 - **AI (LangChain):** Agent, OpenAI Chat Model, Anthropic Claude Model, Buffer Memory, Tool Workflow, Vector Store Retriever
+
+Beyond the static registry, `src/validation/node-catalog-generated.ts` is a separately-generated *existence* catalog covering ~300 node types' valid `resource`/`operation` values (see the note under [Validator Rules](#validator-rules)), and `kairos sync-nodes` (or `kairos_sync` in MCP mode) pulls in the exact node types and typeVersions your live n8n instance actually has, beyond either built-in list.
 
 ---
 
