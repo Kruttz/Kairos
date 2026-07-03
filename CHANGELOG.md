@@ -38,6 +38,13 @@ Everything below is committed locally as of this entry but **not yet pushed to G
 - Fixed by (1) adding `n8n-core` as a devDependency so the requires actually resolve, verified via a full isolated reproduction — 288 node types extracted, matching the current catalog's count exactly, byte-identical resource/operation data; and (2) making the generator report the real error message per file, grouped and deduplicated, instead of swallowing it into an indistinguishable skip count
 - Currently-committed catalog (built against the still-pinned `n8n-nodes-base@2.15.1`) was never affected — this was caught before any version bump was taken, not after
 
+### n8n-nodes-base 2.15.1 → 2.28.4, @n8n/n8n-nodes-langchain 2.28.4 → 2.28.5
+Deferred from the fix above until it could be taken deliberately rather than as a side effect. Diffed the full catalog before and after (297 node types either way — zero added/removed node types, only value changes within 7 existing ones):
+- **GitHub** gains real PR management coverage: `pullRequest` resource plus `close`/`merge`/`reopen`/`editComment`/`getDiff`/`getMembers`/`getPatch` — previously, Rule 129 would have rejected a valid "merge this pull request" workflow as invalid
+- **NocoDB** substantially expanded: `base`/`linkrow` resources, `count`/`link`/`list`/`search`/`unlink`/`upload`/`upsert` operations
+- Smaller additions: LoneScale (`company`/`contact` resources, `enrich`/`search`/`source`), Phantombuster (`launchSync`), Telegram (`sendMessageDraft`/`sendRichMessage`/`sendRichMessageDraft`)
+- Odoo's `note` resource renamed to `activity`; Pipedrive loses the `dealActivity` resource (the one place coverage narrows, not widens) — confirmed via repo-wide grep that neither is referenced anywhere in Kairos's library, tests, or patterns
+
 ## [0.8.0] - 2026-07-02
 Full audit pass: fixed `pack-wirer`'s `__rl` resource-locator shape, an unstripped PUT field, word-boundary intent matching, and a library write-queue poisoning bug.
 
