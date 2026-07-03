@@ -2458,7 +2458,7 @@ describe('N8nValidator', () => {
   it('rule 56: warns when continueOnFail node has no downstream error check', () => {
     const w = baseWorkflow()
     w.nodes.push(
-      { id: 'aaaa0056-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Call API', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], parameters: { url: 'https://api.example.com/data', onError: 'continueRegularOutput' } },
+      { id: 'aaaa0056-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Call API', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], onError: 'continueRegularOutput', parameters: { url: 'https://api.example.com/data' } },
       { id: 'aaaa0056-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'Process', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [670, 300], parameters: { assignments: { assignments: [{ id: 'a1', name: 'status', value: 'ok', type: 'string' }] } } },
     )
     w.connections['Manual Trigger'] = { main: [[{ node: 'Call API', type: 'main', index: 0 }]] }
@@ -2470,7 +2470,7 @@ describe('N8nValidator', () => {
   it('rule 56: no warning when downstream node checks $json.error', () => {
     const w = baseWorkflow()
     w.nodes.push(
-      { id: 'aaaa0056-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Call API', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], parameters: { url: 'https://api.example.com/data', onError: 'continueRegularOutput' } },
+      { id: 'aaaa0056-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Call API', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], onError: 'continueRegularOutput', parameters: { url: 'https://api.example.com/data' } },
       { id: 'aaaa0056-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'Check Error', type: 'n8n-nodes-base.if', typeVersion: 2.2, position: [670, 300], parameters: { conditions: { combinator: 'and', conditions: [{ id: 'c1', leftValue: '={{ $json.error }}', rightValue: '', operator: { type: 'string', operation: 'exists' } }] } } },
     )
     w.connections['Manual Trigger'] = { main: [[{ node: 'Call API', type: 'main', index: 0 }]] }
@@ -4127,7 +4127,7 @@ describe('N8nValidator', () => {
   // Rule 128: unwired error-output port (Phase 4 — n8n-skills gap analysis)
   it('rule 128: warns when continueErrorOutput is set but output index 1 is unwired', () => {
     const w = baseWorkflow()
-    w.nodes.push({ id: 'aaaa0128-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Risky Call', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], parameters: { method: 'GET', url: 'https://api.example.com', onError: 'continueErrorOutput' } })
+    w.nodes.push({ id: 'aaaa0128-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Risky Call', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], onError: 'continueErrorOutput', parameters: { method: 'GET', url: 'https://api.example.com' } })
     w.nodes.push({ id: 'aaaa0128-aaaa-4aaa-aaaa-aaaaaaaaaaab', name: 'On Success', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [650, 300], parameters: {} })
     w.connections['Risky Call'] = { main: [[{ node: 'On Success', type: 'main', index: 0 }]] }
     const result = validator.validate(w)
@@ -4136,7 +4136,7 @@ describe('N8nValidator', () => {
 
   it('rule 128: no warning when both output ports are wired', () => {
     const w = baseWorkflow()
-    w.nodes.push({ id: 'aaaa0128-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Risky Call', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], parameters: { method: 'GET', url: 'https://api.example.com', onError: 'continueErrorOutput' } })
+    w.nodes.push({ id: 'aaaa0128-aaaa-4aaa-aaaa-aaaaaaaaaaac', name: 'Risky Call', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], onError: 'continueErrorOutput', parameters: { method: 'GET', url: 'https://api.example.com' } })
     w.nodes.push({ id: 'aaaa0128-aaaa-4aaa-aaaa-aaaaaaaaaaad', name: 'On Success', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [650, 250], parameters: {} })
     w.nodes.push({ id: 'aaaa0128-aaaa-4aaa-aaaa-aaaaaaaaaaae', name: 'On Error', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [650, 400], parameters: {} })
     w.connections['Risky Call'] = { main: [[{ node: 'On Success', type: 'main', index: 0 }], [{ node: 'On Error', type: 'main', index: 0 }]] }
@@ -4146,7 +4146,7 @@ describe('N8nValidator', () => {
 
   it('rule 128: no warning when onError is continueRegularOutput', () => {
     const w = baseWorkflow()
-    w.nodes.push({ id: 'aaaa0128-aaaa-4aaa-aaaa-aaaaaaaaaaaf', name: 'Risky Call', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], parameters: { method: 'GET', url: 'https://api.example.com', onError: 'continueRegularOutput' } })
+    w.nodes.push({ id: 'aaaa0128-aaaa-4aaa-aaaa-aaaaaaaaaaaf', name: 'Risky Call', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], onError: 'continueRegularOutput', parameters: { method: 'GET', url: 'https://api.example.com' } })
     w.nodes.push({ id: 'aaaa0128-aaaa-4aaa-aaaa-aaaaaaaaaaba', name: 'Next', type: 'n8n-nodes-base.set', typeVersion: 3.4, position: [650, 300], parameters: {} })
     w.connections['Risky Call'] = { main: [[{ node: 'Next', type: 'main', index: 0 }]] }
     const result = validator.validate(w)
@@ -4156,6 +4156,15 @@ describe('N8nValidator', () => {
   it('rule 128: no warning when onError is unset entirely', () => {
     const w = baseWorkflow()
     w.nodes.push({ id: 'aaaa0128-aaaa-4aaa-aaaa-aaaaaaaaaabb', name: 'Plain Call', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], parameters: { method: 'GET', url: 'https://api.example.com' } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 128)).toBe(false)
+  })
+
+  it('rule 128: reads onError from the top-level node field, not from parameters (regression — onError is a real n8n INode field, not a node parameter)', () => {
+    const w = baseWorkflow()
+    // Wrong shape: onError nested inside parameters. Real n8n never puts it there
+    // (confirmed against n8n-workflow's INode interface), so this must not trigger.
+    w.nodes.push({ id: 'aaaa0128-aaaa-4aaa-aaaa-aaaaaaaaaabc', name: 'Misplaced', type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, position: [450, 300], parameters: { method: 'GET', url: 'https://api.example.com', onError: 'continueErrorOutput' } })
     const result = validator.validate(w)
     expect(result.issues.some((i) => i.rule === 128)).toBe(false)
   })

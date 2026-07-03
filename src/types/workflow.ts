@@ -44,6 +44,7 @@ export interface N8nNode {
   notes?: string
   notesInFlow?: boolean
   continueOnFail?: boolean
+  onError?: 'continueRegularOutput' | 'continueErrorOutput' | 'stopWorkflow'
   retryOnFail?: boolean
   maxTries?: number
   waitBetweenTries?: number

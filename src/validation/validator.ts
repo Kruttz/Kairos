@@ -1663,9 +1663,7 @@ export class N8nValidator {
     const connections = w.connections as Record<string, Record<string, unknown[][]>>
 
     for (const node of w.nodes) {
-      const params = node.parameters as Record<string, unknown> | undefined
-      if (!params) continue
-      const onError = params['onError'] as string | undefined
+      const onError = node.onError
       if (onError !== 'continueRegularOutput' && onError !== 'continueErrorOutput') continue
 
       // Get immediate downstream nodes (one hop only)
@@ -3309,8 +3307,7 @@ export class N8nValidator {
     const connections = w.connections as Record<string, { main?: unknown[][] }>
 
     for (const node of w.nodes) {
-      const params = node.parameters as Record<string, unknown> | undefined
-      if (params?.['onError'] !== 'continueErrorOutput') continue
+      if (node.onError !== 'continueErrorOutput') continue
 
       const mainOutputs = connections[node.name]?.main
       const errorPort = Array.isArray(mainOutputs) ? mainOutputs[1] : undefined
