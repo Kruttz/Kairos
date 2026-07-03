@@ -4,6 +4,10 @@ import { Kairos } from './client.js'
 import { FileLibrary } from './library/file-library.js'
 import { TemplateSyncer } from './templates/syncer.js'
 import { PatternAnalyzer } from './telemetry/pattern-analyzer.js'
+import { N8nApiClient } from './providers/n8n/api-client.js'
+import { NodeSyncer } from './validation/node-syncer.js'
+import type { NodeRegistry } from './validation/registry.js'
+import { getCatalogCachePath, readCatalogCache, writeCatalogCache } from './utils/node-catalog-cache.js'
 
 const HELP = `
 Kairos SDK — LLM-powered n8n workflow generation
@@ -26,6 +30,7 @@ Usage:
   kairos delete <id> --confirm
   kairos sync-templates [options]
   kairos sync-templates --from-dir <path> [options]
+  kairos sync-nodes
   kairos library prune --source <organic|n8n-template|imported> [--dry-run]
 
 Build options:
@@ -150,27 +155,38 @@ function createLibrary(): FileLibrary {
   return dir ? new FileLibrary(dir) : new FileLibrary()
 }
 
-function createClient(): Kairos {
+async function loadNodeRegistry(): Promise<NodeRegistry | undefined> {
   const telemetry = getTelemetryOption()
+  const cachePath = getCatalogCachePath(typeof telemetry === 'string' ? telemetry : undefined)
+  const cached = await readCatalogCache(cachePath)
+  return cached?.registry
+}
+
+async function createClient(): Promise<Kairos> {
+  const telemetry = getTelemetryOption()
+  const nodeRegistry = await loadNodeRegistry()
   return new Kairos({
     anthropicApiKey: getEnvOrExit('ANTHROPIC_API_KEY'),
     n8nBaseUrl: getEnvOrExit('N8N_BASE_URL'),
     n8nApiKey: getEnvOrExit('N8N_API_KEY'),
     ...(process.env['KAIROS_MODEL'] ? { model: process.env['KAIROS_MODEL'] } : {}),
     ...(telemetry !== undefined ? { telemetry } : {}),
+    ...(nodeRegistry ? { nodeRegistry } : {}),
     library: createLibrary(),
     logger: CLI_LOGGER,
   })
 }
 
-function createDryRunClient(): Kairos {
+async function createDryRunClient(): Promise<Kairos> {
   const telemetry = getTelemetryOption()
+  const nodeRegistry = await loadNodeRegistry()
   return new Kairos({
     anthropicApiKey: getEnvOrExit('ANTHROPIC_API_KEY'),
     ...(process.env['N8N_BASE_URL'] ? { n8nBaseUrl: process.env['N8N_BASE_URL'] } : {}),
     ...(process.env['N8N_API_KEY'] ? { n8nApiKey: process.env['N8N_API_KEY'] } : {}),
     ...(process.env['KAIROS_MODEL'] ? { model: process.env['KAIROS_MODEL'] } : {}),
     ...(telemetry !== undefined ? { telemetry } : {}),
+    ...(nodeRegistry ? { nodeRegistry } : {}),
     library: createLibrary(),
     logger: CLI_LOGGER,
   })
@@ -184,7 +200,7 @@ async function handleBuild(positional: string[], flags: Record<string, string | 
   }
 
   const isDryRun = flags['dry-run'] === true
-  const kairos = isDryRun ? createDryRunClient() : createClient()
+  const kairos = isDryRun ? await createDryRunClient() : await createClient()
   const start = Date.now()
 
   console.error(`Generating workflow...`)
@@ -224,7 +240,7 @@ async function handleReplace(positional: string[]): Promise<void> {
     process.exit(1)
   }
 
-  const kairos = createClient()
+  const kairos = await createClient()
   const start = Date.now()
   console.error(`Replacing workflow ${id}...`)
 
@@ -243,7 +259,7 @@ async function handleReplace(positional: string[]): Promise<void> {
 }
 
 async function handleList(): Promise<void> {
-  const kairos = createClient()
+  const kairos = await createClient()
   const workflows = await kairos.list()
   await kairos.drain()
 
@@ -266,7 +282,7 @@ async function handleGet(positional: string[]): Promise<void> {
     process.exit(1)
   }
 
-  const kairos = createClient()
+  const kairos = await createClient()
   const workflow = await kairos.get(id)
   await kairos.drain()
   console.log(JSON.stringify(workflow, null, 2))
@@ -279,7 +295,7 @@ async function handleActivate(positional: string[]): Promise<void> {
     process.exit(1)
   }
 
-  const kairos = createClient()
+  const kairos = await createClient()
   await kairos.activate(id)
   await kairos.drain()
   console.log(`Activated workflow ${id}`)
@@ -292,7 +308,7 @@ async function handleDeactivate(positional: string[]): Promise<void> {
     process.exit(1)
   }
 
-  const kairos = createClient()
+  const kairos = await createClient()
   await kairos.deactivate(id)
   await kairos.drain()
   console.log(`Deactivated workflow ${id}`)
@@ -310,7 +326,7 @@ async function handleDelete(positional: string[], flags: Record<string, string |
     process.exit(1)
   }
 
-  const kairos = createClient()
+  const kairos = await createClient()
   await kairos.delete(id, { confirm: true })
   await kairos.drain()
   console.log(`Deleted workflow ${id}`)
@@ -426,6 +442,27 @@ async function handleSyncTemplates(flags: Record<string, string | boolean>): Pro
   console.error(`  Review:     ${result.reviewed} (saved but flagged for review)`)
   console.error(`  Duplicates: ${result.skippedDuplicate} (already in library)`)
   console.error(`  Paid:       ${result.skippedPaid} (skipped)`)
+}
+
+async function handleSyncNodes(): Promise<void> {
+  const baseUrl = getEnvOrExit('N8N_BASE_URL')
+  const apiKey = getEnvOrExit('N8N_API_KEY')
+  const client = new N8nApiClient(baseUrl, apiKey, CLI_LOGGER)
+
+  console.error('Fetching node types from your n8n instance...')
+  const nodeTypes = await client.getNodeTypes()
+  if (nodeTypes.length === 0) {
+    console.error('No node types returned — registry not updated. Check N8N_BASE_URL/N8N_API_KEY.')
+    process.exit(1)
+  }
+
+  const result = new NodeSyncer().sync(nodeTypes)
+  const telemetry = getTelemetryOption()
+  const cachePath = getCatalogCachePath(typeof telemetry === 'string' ? telemetry : undefined)
+  await writeCatalogCache(cachePath, result)
+
+  console.error(`Synced ${result.nodeCount} node types (${result.newNodes} new beyond the built-in registry).`)
+  console.error(`Cached to ${cachePath} — build/validate will use it for the next 24h, or until you run sync-nodes again.`)
 }
 
 async function handlePatterns(flags: Record<string, string | boolean>): Promise<void> {
@@ -625,7 +662,7 @@ async function handleBuildPack(positional: string[], flags: Record<string, strin
   const anthropicKey = getEnvOrExit('ANTHROPIC_API_KEY')
   const { PackBuilder } = await import('./pack/pack-builder.js')
   const isDryRun = flags['dry-run'] === true
-  const kairos = isDryRun ? createDryRunClient() : createClient()
+  const kairos = isDryRun ? await createDryRunClient() : await createClient()
   const builder = new PackBuilder({ anthropicApiKey: anthropicKey, kairos })
 
   console.error('\nPlanning workflow pack...')
@@ -1044,6 +1081,9 @@ async function main(): Promise<void> {
       break
     case 'sync-templates':
       await handleSyncTemplates(flags)
+      break
+    case 'sync-nodes':
+      await handleSyncNodes()
       break
     case 'pack': {
       const subcommand = positional[0]

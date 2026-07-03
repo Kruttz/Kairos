@@ -31,7 +31,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
-import { readCatalogCache, writeCatalogCache } from './utils/node-catalog-cache.js'
+import { readCatalogCache, writeCatalogCache, getCatalogCachePath } from './utils/node-catalog-cache.js'
 import { coalesceAsync } from './utils/coalesce-async.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -136,12 +136,6 @@ function getApiClient(): N8nApiClient {
   return new N8nApiClient(baseUrl, apiKey, nullLogger)
 }
 
-function getCatalogCachePath(): string {
-  const telemetry = process.env['KAIROS_TELEMETRY']
-  const base = telemetry ? join(telemetry, '..') : join(homedir(), '.kairos')
-  return join(base, 'node-catalog-cache.json')
-}
-
 // Coalesces concurrent autoSync() calls (e.g. overlapping kairos_prompt requests, or
 // kairos_prompt racing kairos_sync) into a single in-flight sync instead of each caller
 // triggering its own redundant network fetch to n8n. Correct for kairos_sync's "force
@@ -156,7 +150,7 @@ async function autoSync(): Promise<SyncResult | null> {
 
 async function performSync(): Promise<SyncResult | null> {
   // Try disk cache before hitting the network
-  const cachePath = getCatalogCachePath()
+  const cachePath = getCatalogCachePath(process.env['KAIROS_TELEMETRY'])
   const cached = await readCatalogCache(cachePath)
   if (cached) {
     lastSync = cached

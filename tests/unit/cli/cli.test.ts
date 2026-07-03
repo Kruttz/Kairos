@@ -1,9 +1,10 @@
-import { describe, it, expect } from 'vitest'
-import { spawnSync } from 'node:child_process'
+import { describe, it, expect, afterAll } from 'vitest'
+import { spawnSync, spawn } from 'node:child_process'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { mkdtemp, writeFile, rm, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { createServer, type Server } from 'node:http'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 const TSX = join(__dirname, '../../../node_modules/.bin/tsx')
@@ -350,6 +351,68 @@ describe('CLI — parseArgs / routing', () => {
         await rm(sourceDir, { recursive: true, force: true })
         await rm(libDir, { recursive: true, force: true })
       }
+    })
+  })
+
+  describe('sync-nodes', () => {
+    it('exits with code 1 when N8N_BASE_URL/N8N_API_KEY are missing', () => {
+      const r = run(['sync-nodes'], { N8N_BASE_URL: '', N8N_API_KEY: '' })
+      expect(r.status).toBe(1)
+      expect(r.stderr).toContain('N8N_BASE_URL')
+    })
+
+    describe('against a real (mocked) n8n instance', () => {
+      let mockN8n: Server
+      let mockN8nUrl: string
+
+      afterAll(async () => {
+        await new Promise<void>((resolve) => mockN8n.close(() => resolve()))
+      })
+
+      it('fetches node types, reports the count, and caches a registry containing the fixture node', async () => {
+        mockN8n = createServer((req, res) => {
+          if (req.method === 'GET' && req.url === '/api/v1/node-types') {
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({
+              data: [
+                { name: 'n8n-nodes-base.kairosTestFixtureNode', displayName: 'Kairos Test Fixture Node', version: 1 },
+              ],
+            }))
+            return
+          }
+          res.writeHead(404)
+          res.end()
+        })
+        await new Promise<void>((resolve) => mockN8n.listen(0, '127.0.0.1', resolve))
+        const addr = mockN8n.address()
+        if (addr === null || typeof addr === 'string') throw new Error('mock server failed to bind')
+        mockN8nUrl = `http://127.0.0.1:${addr.port}`
+
+        const telemetryDir = await mkdtemp(join(tmpdir(), 'kairos-cli-sync-nodes-'))
+        try {
+          // spawnSync (the run() helper) blocks this process's event loop while the
+          // child runs — which would prevent the mock server above (living in this
+          // same process) from ever answering the child's request. Needs a real async
+          // spawn here so the server's event loop keeps running concurrently.
+          const child = spawn(TSX, [CLI, 'sync-nodes'], {
+            encoding: 'utf-8',
+            env: { ...process.env, N8N_BASE_URL: mockN8nUrl, N8N_API_KEY: 'test-key', KAIROS_TELEMETRY: telemetryDir },
+          })
+          let stderr = ''
+          child.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
+          const exitCode = await new Promise<number | null>((resolve) => child.on('close', resolve))
+
+          expect(exitCode).toBe(0)
+          expect(stderr).toContain('Synced')
+          expect(stderr).toContain('1 new beyond the built-in registry')
+
+          const cachePath = join(telemetryDir, '..', 'node-catalog-cache.json')
+          const cached = JSON.parse(await readFile(cachePath, 'utf-8')) as { nodeDefinitions: Array<{ type: string }> }
+          expect(cached.nodeDefinitions.some((d) => d.type === 'n8n-nodes-base.kairosTestFixtureNode')).toBe(true)
+        } finally {
+          await rm(telemetryDir, { recursive: true, force: true })
+        }
+      }, 15_000)
     })
   })
 })

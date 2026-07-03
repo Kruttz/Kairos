@@ -8,6 +8,7 @@ import { ResponseParseError } from '../errors/response-parse-error.js'
 import { ValidationError } from '../errors/validation-error.js'
 import type { ValidationIssue } from '../errors/validation-error.js'
 import { N8nValidator } from '../validation/validator.js'
+import type { NodeRegistry } from '../validation/registry.js'
 import { PromptBuilder } from './prompt-builder.js'
 import type { AttemptMetadata } from '../telemetry/types.js'
 import type { RuleFailureRate } from '../telemetry/reader.js'
@@ -71,8 +72,9 @@ export class WorkflowDesigner {
     private readonly model: string,
     private readonly logger: ILogger,
     patternsPath?: string,
+    nodeRegistry?: NodeRegistry,
   ) {
-    this.validator = new N8nValidator()
+    this.validator = new N8nValidator(nodeRegistry)
     this.promptBuilder = new PromptBuilder(patternsPath)
   }
 

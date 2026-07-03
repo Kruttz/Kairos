@@ -1,5 +1,6 @@
 import type { ILogger } from '../utils/logger.js'
 import type { IWorkflowLibrary } from '../library/types.js'
+import type { NodeRegistry } from '../validation/registry.js'
 
 export interface ClientOptions {
   anthropicApiKey: string
@@ -9,6 +10,10 @@ export interface ClientOptions {
   logger?: ILogger
   library?: IWorkflowLibrary
   telemetry?: boolean | string
+  /** Override the node-type registry validation uses during generation — e.g. a registry
+   * synced from a live n8n instance via `kairos sync-nodes`. Defaults to the built-in
+   * static registry when omitted. */
+  nodeRegistry?: NodeRegistry
 }
 
 export interface BuildOptions {

@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { readCatalogCache, writeCatalogCache, isCacheExpired } from '../../../src/utils/node-catalog-cache.js'
+import { readCatalogCache, writeCatalogCache, isCacheExpired, getCatalogCachePath } from '../../../src/utils/node-catalog-cache.js'
+import { homedir } from 'node:os'
 import { NodeRegistry } from '../../../src/validation/registry.js'
 import { N8nValidator } from '../../../src/validation/validator.js'
 import type { SyncResult } from '../../../src/validation/node-syncer.js'
@@ -150,5 +151,23 @@ describe('isCacheExpired', () => {
     const fiveMinutesAgo = Date.now() - 5 * 60 * 1000
     expect(isCacheExpired(fiveMinutesAgo, 10 * 60 * 1000)).toBe(false)
     expect(isCacheExpired(fiveMinutesAgo, 1 * 60 * 1000)).toBe(true)
+  })
+})
+
+describe('getCatalogCachePath', () => {
+  it('defaults to ~/.kairos/node-catalog-cache.json when no telemetry dir is given', () => {
+    expect(getCatalogCachePath()).toBe(join(homedir(), '.kairos', 'node-catalog-cache.json'))
+  })
+
+  it('defaults the same way for "true"/"false" literal telemetry values', () => {
+    // Matches the MCP server's existing behavior exactly (raw env-value passthrough) —
+    // "true"/"false" aren't real directories, so join(value, '..') would be nonsensical;
+    // this documents the actual current behavior rather than an idealized one.
+    expect(getCatalogCachePath('true')).toBe(join('true', '..', 'node-catalog-cache.json'))
+  })
+
+  it('uses the parent of a real telemetry directory when one is given', () => {
+    const telemetryDir = join('/tmp', 'some-telemetry-dir')
+    expect(getCatalogCachePath(telemetryDir)).toBe(join('/tmp', 'node-catalog-cache.json'))
   })
 })

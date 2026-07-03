@@ -57,7 +57,7 @@ export class Kairos {
     const patternsPath = typeof options.telemetry === 'string'
       ? join(options.telemetry, '..', 'patterns.json')
       : join(homedir(), '.kairos', 'patterns.json')
-    this.designer = new WorkflowDesigner(anthropic, this.model, logger, patternsPath)
+    this.designer = new WorkflowDesigner(anthropic, this.model, logger, patternsPath, options.nodeRegistry)
     this.library = options.library ?? new NullLibrary()
     this.logger = logger
 
