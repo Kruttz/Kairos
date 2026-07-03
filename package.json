@@ -91,6 +91,7 @@
     "@typescript-eslint/parser": "^8.62.0",
     "eslint": "^10.6.0",
     "msw": "^2.0.0",
+    "n8n-core": "^2.16.1",
     "n8n-nodes-base": "^2.15.1",
     "tsup": "^8.0.0",
     "tsx": "^4.22.4",

@@ -33,6 +33,11 @@ Everything below is committed locally as of this entry but **not yet pushed to G
 - Removed the dead `'skipped'` value from `SmokeTestStatus` (confirmed never constructed anywhere — `'not-applicable'` already covers the case it was meant for)
 - Patch-level dependency bumps: `tsx`, `@typescript-eslint/eslint-plugin`, `@typescript-eslint/parser`
 
+### Fixed a near-miss in the node-catalog generator before it shipped
+- `scripts/generate-node-catalog.ts` silently dropped Slack, Gmail, Telegram, Discord, WhatsApp, Microsoft Teams, Microsoft Outlook, and Google Chat from the generated catalog when run against a newer `n8n-nodes-base` — root cause: those node families all transitively require a shared "send and wait" utility that itself requires `n8n-core`, which isn't declared as a dependency of `n8n-nodes-base` and was never installed. The generator's blind `catch { skipped++ }` made a hard failure and a benign "no resource/operation options" skip look identical, hiding it completely
+- Fixed by (1) adding `n8n-core` as a devDependency so the requires actually resolve, verified via a full isolated reproduction — 288 node types extracted, matching the current catalog's count exactly, byte-identical resource/operation data; and (2) making the generator report the real error message per file, grouped and deduplicated, instead of swallowing it into an indistinguishable skip count
+- Currently-committed catalog (built against the still-pinned `n8n-nodes-base@2.15.1`) was never affected — this was caught before any version bump was taken, not after
+
 ## [0.8.0] - 2026-07-02
 Full audit pass: fixed `pack-wirer`'s `__rl` resource-locator shape, an unstripped PUT field, word-boundary intent matching, and a library write-queue poisoning bug.
 

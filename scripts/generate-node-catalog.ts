@@ -96,14 +96,21 @@ function extractCatalogEntry(desc: NodeDescription): NodeCatalogEntry {
   return { resources: [...resources].sort(), operations: [...operations].sort() }
 }
 
-async function processPackage(spec: PackageSpec, catalog: Record<string, NodeCatalogEntry>): Promise<{ ok: number; skipped: number }> {
+interface ProcessResult {
+  ok: number
+  benignSkipped: number
+  errors: Array<{ file: string; message: string }>
+}
+
+async function processPackage(spec: PackageSpec, catalog: Record<string, NodeCatalogEntry>): Promise<ProcessResult> {
   const pkgJsonPath = require.resolve(`${spec.packageName}/package.json`)
   const pkgDir = pkgJsonPath.slice(0, -'/package.json'.length)
   const pkgJson = require(pkgJsonPath) as { n8n?: { nodes?: string[] } }
   const nodeFiles = pkgJson.n8n?.nodes ?? []
 
   let ok = 0
-  let skipped = 0
+  let benignSkipped = 0
+  const errors: Array<{ file: string; message: string }> = []
 
   for (const relPath of nodeFiles) {
     const fullPath = join(pkgDir, relPath)
@@ -111,27 +118,51 @@ async function processPackage(spec: PackageSpec, catalog: Record<string, NodeCat
     try {
       const mod = require(fullPath) as Record<string, unknown>
       const ExportedClass = (mod[exportName] ?? Object.values(mod).find((v) => typeof v === 'function')) as (new () => VersionedInstance) | undefined
-      if (!ExportedClass) { skipped++; continue }
+      if (!ExportedClass) { benignSkipped++; continue }
       const instance = new ExportedClass()
       const desc = resolveDescription(instance)
-      if (!desc?.name) { skipped++; continue }
+      if (!desc?.name) { benignSkipped++; continue }
       const type = `${spec.typePrefix}.${desc.name}`
       const entry = extractCatalogEntry(desc)
-      if (entry.resources.length === 0 && entry.operations.length === 0) { skipped++; continue }
+      if (entry.resources.length === 0 && entry.operations.length === 0) { benignSkipped++; continue }
       catalog[type] = entry
       ok++
-    } catch {
-      skipped++
+    } catch (err) {
+      // First line only — Node's "Cannot find module" errors append a multi-line,
+      // per-file require stack after the actual message, which would otherwise
+      // defeat grouping-by-message below (the real error is identical across
+      // files; only the stack trace differs).
+      const fullMessage = err instanceof Error ? err.message : String(err)
+      const message = fullMessage.split('\n')[0]!
+      errors.push({ file: relPath, message })
     }
   }
-  return { ok, skipped }
+  return { ok, benignSkipped, errors }
+}
+
+function reportErrors(packageName: string, errors: Array<{ file: string; message: string }>): void {
+  if (errors.length === 0) return
+  // Group by message so one systemic problem (e.g. a missing shared dependency
+  // affecting 30 files) prints once with a count, not 30 near-identical lines.
+  const byMessage = new Map<string, string[]>()
+  for (const { file, message } of errors) {
+    const files = byMessage.get(message) ?? []
+    files.push(file)
+    byMessage.set(message, files)
+  }
+  console.error(`\n${packageName}: ${errors.length} file(s) threw while loading — this is NOT the same as a node having no resource/operation split, and likely means real node coverage is silently missing from the catalog below:`)
+  for (const [message, files] of byMessage) {
+    console.error(`  [${files.length}x] ${message}`)
+    console.error(`    e.g. ${files[0]}${files.length > 1 ? ` (+ ${files.length - 1} more)` : ''}`)
+  }
 }
 
 async function main(): Promise<void> {
   const catalog: Record<string, NodeCatalogEntry> = {}
   for (const spec of PACKAGES) {
-    const { ok, skipped } = await processPackage(spec, catalog)
-    console.log(`${spec.packageName}: ${ok} node types cataloged, ${skipped} skipped (no resource/operation options, or failed to load)`)
+    const { ok, benignSkipped, errors } = await processPackage(spec, catalog)
+    console.log(`${spec.packageName}: ${ok} node types cataloged, ${benignSkipped} skipped (no resource/operation options), ${errors.length} errored while loading`)
+    reportErrors(spec.packageName, errors)
   }
 
   const sortedTypes = Object.keys(catalog).sort()
