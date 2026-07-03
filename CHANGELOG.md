@@ -2,6 +2,13 @@
 
 All notable changes to `@kairos-sdk/core` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); dates are publish dates from npm.
 
+## [Unreleased]
+
+### Fixed CI (broken since before this changelog existed — nobody had been watching Actions)
+- `npm ci` failed on every push/PR because the committed `package-lock.json` wasn't actually self-consistent with `package.json` — likely from `npm install`'s non-deterministic handling of `@langchain/community`'s large optional-peer-dependency surface (Azure Search, HuggingFace, xata.io, AWS Smithy SDK components, mysql2, etc. all showed as "missing from lock file" on a strict `npm ci`, independent of Node version). Fixed by fully regenerating the lockfile from a clean `node_modules`-free install and verifying `npm ci` against it from an isolated copy
+- Separately, discovered `isolated-vm@6.1.2` — a required (non-optional) transitive dependency of `@n8n/expression-runtime`, pulled in by all three n8n devDependencies — hard-requires Node ≥22 and fails to natively compile below that (a real `node-gyp` build error, not just an engines warning). CI's matrix included Node 20, which can never install this toolchain regardless of lockfile correctness. Updated the matrix from `[20, 22]` to `[22, 24]` — this only affects the dev/build toolchain; Kairos's published package (`files: dist` only) never ships these devDependencies and still declares/supports `engines: node >=18.0.0` for consumers
+- No production code changed; this is lockfile + CI workflow only
+
 ## [0.9.0] - 2026-07-03
 
 Grouped by theme, not commit-by-commit.
