@@ -127,10 +127,24 @@ const PROMPTS = [
   'Every first of the month, pull usage metrics from an API, generate a PDF report via an HTTP service, and email it to management',
   'When a user submits a bug report via webhook, create a GitHub issue, add appropriate labels based on keywords, and notify the dev team on Slack',
   'Receive a webhook with geographic coordinates, look up the nearest store via API, calculate distance, and return directions',
+
+  // --- Backend API contract prompts: CRUD/API-shaped tasks stressing consistent
+  // response shape, structured validation, not-found paths, batch per-item status,
+  // and auth -- gaps identified in the "is Kairos viable as an app backend" review,
+  // deliberately absent from every prompt above (which are automation-shaped) ---
+  'Build a webhook endpoint that accepts a new user signup with email and name fields, validates the email format, checks a Postgres table for an existing user with that email, inserts a new record if not found, and returns a consistent JSON response shaped like {success, data, error} for every path including validation failures and duplicates',
+  'Build a webhook endpoint that accepts a customer ID as a query parameter, looks up the customer in a Supabase table, and returns the customer record as JSON if found or a structured {success: false, error} response if no matching record exists',
+  'Build a webhook endpoint that accepts an array of items to import, validates each item has required name and email fields, inserts valid items into an Airtable base, and returns a JSON array with one status object per item indicating whether it succeeded or failed and why',
+  "Build a webhook endpoint that accepts a product ID and updated fields, checks if the product exists in a NocoDB table, updates it if found, and returns a structured JSON response with the updated record or a clear error if the product ID doesn't exist",
+  'Build a webhook endpoint for creating a support ticket that requires title, description, and priority fields, validates priority is one of low, medium, or high, rejects the request with a detailed list of which fields are missing or invalid if validation fails, and only writes to the database if all fields pass validation',
+  "Build a webhook endpoint that requires an API key passed in a header, rejects requests with a structured 401-style JSON error if the key is missing or doesn't match an expected value, and only proceeds to look up account data in Postgres if the key is valid",
+  'Build a webhook endpoint that returns a paginated list of orders from a Postgres table, accepting page and pageSize query parameters, and returning the matching rows along with total count and page metadata in the JSON response',
+  'Build a webhook endpoint that accepts an order creation request with an idempotency key, checks if a request with that idempotency key was already processed by looking it up in Redis, returns the previously stored result if it was, and otherwise processes the order and stores the result keyed by that idempotency key',
+  "Build a webhook endpoint that accepts a user ID, fetches the user's profile from Postgres and their recent orders from a separate HTTP API, combines both into a single JSON response shaped like {success: true, data: {profile, orders}}, and returns a clear error response if either lookup fails",
 ]
 
 // Machine-readable boundaries matching the comment-marked sections above (verified
-// by direct count: 10+15+10+10+10+10+20 = 85, matching PROMPTS.length). [start, end)
+// by direct count: 10+15+10+10+10+10+20+9 = 94, matching PROMPTS.length). [start, end)
 // half-open ranges into PROMPTS.
 const TIER_RANGES: Record<string, [number, number]> = {
   simple: [0, 10],
@@ -140,7 +154,8 @@ const TIER_RANGES: Record<string, [number, number]> = {
   realworld: [45, 55],
   stress: [55, 65],
   additional: [65, 85],
-  all: [0, 85],
+  backendApi: [85, 94],
+  all: [0, 94],
 }
 
 function selectPrompts(count: number, tier?: string): string[] {
