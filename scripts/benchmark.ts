@@ -172,6 +172,7 @@ function selectPrompts(count: number, tier?: string): string[] {
 
 interface BenchmarkResult {
   prompt: string
+  promptIndex: number
   success: boolean
   attempts: number
   durationMs: number
@@ -181,6 +182,14 @@ interface BenchmarkResult {
   credentialsCount: number
   error?: string
   failedRules?: number[]
+}
+
+interface PromptReliability {
+  promptIndex: number
+  prompt: string
+  passes: number
+  runs: number
+  passRate: number
 }
 
 interface BenchmarkSummary {
@@ -197,9 +206,13 @@ interface BenchmarkSummary {
   firstTryRateOverAll: number
   correctionRate: number
   libraryUsed: boolean
+  /** How many times each distinct prompt was run (1 unless --repeat is passed) */
+  repeatsPerPrompt: number
+  /** Per-prompt pass rate across repeats — only meaningful when repeatsPerPrompt > 1 */
+  promptReliability?: PromptReliability[]
 }
 
-async function runBenchmark(count: number, outputPath?: string, useLibrary = true, comparePath?: string, tier?: string): Promise<void> {
+async function runBenchmark(count: number, outputPath?: string, useLibrary = true, comparePath?: string, tier?: string, repeat = 1): Promise<void> {
   // Validate --tier before the API key check so a typo fails fast without needing
   // real credentials to discover it.
   const prompts = selectPrompts(count, tier)
@@ -222,47 +235,55 @@ async function runBenchmark(count: number, outputPath?: string, useLibrary = tru
   })
 
   const results: BenchmarkResult[] = []
+  const totalRuns = prompts.length * repeat
 
-  console.log(`Kairos SDK Benchmark — ${prompts.length} prompts (dry run)`)
+  console.log(`Kairos SDK Benchmark — ${prompts.length} prompts${repeat > 1 ? ` × ${repeat} repeats = ${totalRuns} runs` : ''} (dry run)`)
   console.log('═'.repeat(60))
 
+  let runNumber = 0
   for (let i = 0; i < prompts.length; i++) {
     const prompt = prompts[i]!
-    const label = prompt.length > 80 ? prompt.slice(0, 77) + '...' : prompt
-    process.stdout.write(`[${String(i + 1).padStart(3)}/${prompts.length}] ${label}\n`)
+    for (let r = 0; r < repeat; r++) {
+      runNumber++
+      const label = prompt.length > 80 ? prompt.slice(0, 77) + '...' : prompt
+      const runSuffix = repeat > 1 ? ` (run ${r + 1}/${repeat})` : ''
+      process.stdout.write(`[${String(runNumber).padStart(4)}/${totalRuns}] ${label}${runSuffix}\n`)
 
-    const start = Date.now()
-    try {
-      const result = await kairos.build(prompt, { dryRun: true })
+      const start = Date.now()
+      try {
+        const result = await kairos.build(prompt, { dryRun: true })
 
-      results.push({
-        prompt,
-        success: true,
-        attempts: result.generationAttempts,
-        durationMs: Date.now() - start,
-        tokensInput: result.tokensInput,
-        tokensOutput: result.tokensOutput,
-        workflowName: result.name,
-        credentialsCount: result.credentialsNeeded.length,
-      })
-      console.log(`         ✅ ${result.generationAttempts} attempt(s), ${Date.now() - start}ms`)
-    } catch (err) {
-      const failedRules = 'issues' in (err as Record<string, unknown>)
-        ? ((err as { issues: Array<{ rule: number }> }).issues).map((i) => i.rule)
-        : undefined
+        results.push({
+          prompt,
+          promptIndex: i,
+          success: true,
+          attempts: result.generationAttempts,
+          durationMs: Date.now() - start,
+          tokensInput: result.tokensInput,
+          tokensOutput: result.tokensOutput,
+          workflowName: result.name,
+          credentialsCount: result.credentialsNeeded.length,
+        })
+        console.log(`         ✅ ${result.generationAttempts} attempt(s), ${Date.now() - start}ms`)
+      } catch (err) {
+        const failedRules = 'issues' in (err as Record<string, unknown>)
+          ? ((err as { issues: Array<{ rule: number }> }).issues).map((i) => i.rule)
+          : undefined
 
-      results.push({
-        prompt,
-        success: false,
-        attempts: 3,
-        durationMs: Date.now() - start,
-        tokensInput: 'tokensInput' in (err as Record<string, unknown>) ? Number((err as Record<string, unknown>)['tokensInput']) : 0,
-        tokensOutput: 'tokensOutput' in (err as Record<string, unknown>) ? Number((err as Record<string, unknown>)['tokensOutput']) : 0,
-        credentialsCount: 0,
-        error: err instanceof Error ? err.message : String(err),
-        failedRules,
-      })
-      console.log(`         ❌ FAILED (${Date.now() - start}ms)`)
+        results.push({
+          prompt,
+          promptIndex: i,
+          success: false,
+          attempts: 3,
+          durationMs: Date.now() - start,
+          tokensInput: 'tokensInput' in (err as Record<string, unknown>) ? Number((err as Record<string, unknown>)['tokensInput']) : 0,
+          tokensOutput: 'tokensOutput' in (err as Record<string, unknown>) ? Number((err as Record<string, unknown>)['tokensOutput']) : 0,
+          credentialsCount: 0,
+          error: err instanceof Error ? err.message : String(err),
+          failedRules,
+        })
+        console.log(`         ❌ FAILED (${Date.now() - start}ms)`)
+      }
     }
   }
 
@@ -289,6 +310,25 @@ async function runBenchmark(count: number, outputPath?: string, useLibrary = tru
     firstTryRateOverAll: results.length > 0 ? firstTry.length / results.length : 0,
     correctionRate: successes.length > 0 ? neededCorrection.length / successes.length : 0,
     libraryUsed: useLibrary,
+    repeatsPerPrompt: repeat,
+  }
+
+  if (repeat > 1) {
+    const byPrompt = new Map<number, BenchmarkResult[]>()
+    for (const r of results) {
+      const list = byPrompt.get(r.promptIndex) ?? []
+      list.push(r)
+      byPrompt.set(r.promptIndex, list)
+    }
+    summary.promptReliability = [...byPrompt.entries()]
+      .map(([promptIndex, runs]) => ({
+        promptIndex,
+        prompt: runs[0]!.prompt,
+        passes: runs.filter((r) => r.success).length,
+        runs: runs.length,
+        passRate: runs.filter((r) => r.success).length / runs.length,
+      }))
+      .sort((a, b) => a.passRate - b.passRate) // worst-performing prompts first
   }
 
   console.log(`Total prompts:       ${summary.total}`)
@@ -299,6 +339,20 @@ async function runBenchmark(count: number, outputPath?: string, useLibrary = tru
   console.log(`Failures:            ${summary.failures}`)
   console.log(`Avg duration:        ${(summary.avgDurationMs / 1000).toFixed(1)}s`)
   console.log(`Avg attempts:        ${summary.avgAttempts.toFixed(2)}`)
+
+  if (summary.promptReliability) {
+    const inconsistent = summary.promptReliability.filter((p) => p.passRate < 1)
+    console.log(`\nPer-prompt reliability (${repeat} runs each):`)
+    if (inconsistent.length === 0) {
+      console.log('  All prompts passed every repeat — no inconsistency detected.')
+    } else {
+      console.log(`  ${inconsistent.length}/${summary.promptReliability.length} prompts were inconsistent across repeats:`)
+      for (const p of inconsistent) {
+        const label = p.prompt.length > 70 ? p.prompt.slice(0, 67) + '...' : p.prompt
+        console.log(`    ${p.passes}/${p.runs} (${(p.passRate * 100).toFixed(0)}%) — ${label}`)
+      }
+    }
+  }
 
   if (failures.length > 0) {
     console.log('\nFailed rules distribution:')
@@ -358,8 +412,10 @@ const compareArg = process.argv.indexOf('--compare')
 const compare = compareArg !== -1 ? process.argv[compareArg + 1] : undefined
 const tierArg = process.argv.indexOf('--tier')
 const tier = tierArg !== -1 ? process.argv[tierArg + 1] : undefined
+const repeatArg = process.argv.indexOf('--repeat')
+const repeat = repeatArg !== -1 ? parseInt(process.argv[repeatArg + 1] ?? '1', 10) : 1
 
-runBenchmark(count, output, !noLibrary, compare, tier).catch((err) => {
+runBenchmark(count, output, !noLibrary, compare, tier, repeat).catch((err) => {
   console.error('Benchmark failed:', err)
   process.exit(1)
 })
