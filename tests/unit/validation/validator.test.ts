@@ -827,6 +827,14 @@ describe('N8nValidator', () => {
     expect(result.issues.some((i) => i.rule === 34)).toBe(true)
   })
 
+  it('RULE_EXAMPLES[126] bad snippet triggers rule 126 (node ID reverse guard)', () => {
+    const parsed = JSON.parse(`{${RULE_EXAMPLES[126]!.bad}}`) as { id: string }
+    const w = baseWorkflow()
+    w.nodes[0]!.id = parsed.id
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 126)).toBe(true)
+  })
+
   // Regression guard: RULE_EXAMPLES "good" snippets must themselves pass validation
   it('RULE_EXAMPLES[17] good snippet passes rule 17 (credential shape regression guard)', () => {
     const goodSnippet = RULE_EXAMPLES[17]!.good
@@ -965,6 +973,14 @@ describe('N8nValidator', () => {
     })
     const result = validator.validate(w)
     expect(result.issues.filter((i) => i.rule === 34)).toHaveLength(0)
+  })
+
+  it('RULE_EXAMPLES[126] good snippet passes rule 126 (node ID regression guard)', () => {
+    const parsed = JSON.parse(`{${RULE_EXAMPLES[126]!.good}}`) as { id: string }
+    const w = baseWorkflow()
+    w.nodes[0]!.id = parsed.id
+    const result = validator.validate(w)
+    expect(result.issues.filter((i) => i.rule === 126)).toHaveLength(0)
   })
 
   // Rule 27: httpRequest URL placeholders

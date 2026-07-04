@@ -4,6 +4,12 @@ All notable changes to `@kairos-sdk/core` are documented here. Format loosely fo
 
 ## [Unreleased]
 
+### Fixed 3 real correctness/reliability gaps found by the 282-run backend-viability benchmark
+A benchmark run (94 prompts × 3 repeats, backend-API tier included) found 12 failures. Root-caused all three:
+- **`max_tokens: 8192` was hardcoded** in `src/generation/designer.ts` since the very first commit (v0.1.1), never tuned — accounted for 10/12 failures, all on 5+ integration "stress test" prompts hitting the ceiling. Raised the default to 16000 and made it configurable (`KAIROS_MAX_TOKENS` env var / `ClientOptions.maxTokens`), matching the existing `KAIROS_MODEL` convention. `pack-builder.ts`'s separate `max_tokens: 4096` (a different, smaller planning-JSON call) is untouched — not implicated by this benchmark.
+- **The retry/correction loop only ever fed back ERROR-severity validation issues, never WARN-severity ones** — confirmed via two Explore agents tracing the full loop. Since most of the 131 rules are warn-level (including Rule 126, invalid UUID node IDs — the one that appeared to "resist correction" across 3 attempts in the benchmark), this meant the majority of rules never got a chance to be corrected during retries at all, even when a build was already retrying for an unrelated real error. Fixed by feeding the *full* issue list (not just errors) into the next attempt's correction message — `designer.ts`'s pass/fail gate (`validation.valid`) is completely unchanged, so this only affects what Claude is told to fix during an already-happening retry, not what counts as a passing build.
+- **Rule 126 had no `RULE_EXAMPLES` entry** — even after the fix above, Claude would've gotten only the raw validator message, no concrete bad/good example. Added one (`"id": "node-1"` vs. a real UUID v4), with reverse-guard/regression-guard tests matching the existing pattern for every other example in `rule-metadata.ts`.
+
 ### Runtime execution drift detection + efficiency analysis
 Part of a "can Kairos serve as a real app's backend" investigation — these two were identified as prerequisites for trusting Kairos with unattended backend workloads, not separate nice-to-haves.
 - `ExecutionTrace` now captures per-node execution time (`nodeDurations`) — n8n's own execution data already contained this (`runData`'s per-node `executionTime` field), `parseExecutionTrace` was just discarding it

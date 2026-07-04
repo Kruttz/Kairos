@@ -404,6 +404,10 @@ export const RULE_EXAMPLES: Record<number, RuleExample> = {
     bad: '"resource": "file", "operation": "upload", "binaryPropertyName": ""',
     good: '"resource": "file", "operation": "upload", "binaryPropertyName": "data"',
   },
+  126: {
+    bad: '"id": "node-1"',
+    good: '"id": "f47ac10b-58cc-4372-a567-0e02b2c3d479"',
+  },
 }
 
 export const RULE_MITIGATIONS: Record<number, string> = {

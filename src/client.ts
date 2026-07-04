@@ -24,6 +24,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 const DEFAULT_MODEL = process.env['KAIROS_MODEL'] ?? 'claude-sonnet-4-6'
+const DEFAULT_MAX_TOKENS = process.env['KAIROS_MAX_TOKENS'] ? parseInt(process.env['KAIROS_MAX_TOKENS'], 10) : 16000
 
 export class Kairos {
   private readonly provider: N8nProvider | null
@@ -39,6 +40,7 @@ export class Kairos {
   constructor(options: ClientOptions) {
     const logger = options.logger ?? nullLogger
     this.model = options.model ?? DEFAULT_MODEL
+    const maxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS
 
     if (options.n8nBaseUrl && options.n8nApiKey) {
       try {
@@ -57,7 +59,7 @@ export class Kairos {
     const patternsPath = typeof options.telemetry === 'string'
       ? join(options.telemetry, '..', 'patterns.json')
       : join(homedir(), '.kairos', 'patterns.json')
-    this.designer = new WorkflowDesigner(anthropic, this.model, logger, patternsPath, options.nodeRegistry)
+    this.designer = new WorkflowDesigner(anthropic, this.model, logger, patternsPath, options.nodeRegistry, maxTokens)
     this.library = options.library ?? new NullLibrary()
     this.logger = logger
 

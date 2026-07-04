@@ -17,6 +17,7 @@ import type { DesignRequest, DesignResult, SystemPromptBlock } from './types.js'
 const MAX_ATTEMPTS = 3
 const BASE_TEMPERATURE = 0.2
 const FINAL_TEMPERATURE = 0.1
+const DEFAULT_MAX_TOKENS = 16000
 
 const GENERATE_WORKFLOW_TOOL: Anthropic.Tool = {
   name: 'generate_workflow',
@@ -73,6 +74,7 @@ export class WorkflowDesigner {
     private readonly logger: ILogger,
     patternsPath?: string,
     nodeRegistry?: NodeRegistry,
+    private readonly maxTokens: number = DEFAULT_MAX_TOKENS,
   ) {
     this.validator = new N8nValidator(nodeRegistry)
     this.promptBuilder = new PromptBuilder(patternsPath)
@@ -80,7 +82,14 @@ export class WorkflowDesigner {
 
   async design(request: DesignRequest, matches: WorkflowMatch[], globalFailureRates: RuleFailureRate[] = []): Promise<DesignResult> {
     const attemptMetadata: AttemptMetadata[] = []
-    let lastErrors: ValidationIssue[] = []
+    // Deliberately holds ALL issues (errors + warnings) from the previous attempt, not
+    // just errors — so a build that's already retrying for a real error also gets a
+    // chance to clean up warn-level issues (e.g. Rule 126 malformed node IDs) sitting
+    // alongside it, instead of those shipping silently the moment the error clears.
+    // The actual pass/fail gate below (validation.valid) is untouched by this — it still
+    // only depends on error-severity issues, matching the documented "errors block
+    // deployment, warnings are recorded" design.
+    let lastIssues: ValidationIssue[] = []
     let attempts = 0
     const built = this.promptBuilder.build(request, matches, globalFailureRates)
 
@@ -93,12 +102,12 @@ export class WorkflowDesigner {
         userMessage = built.userMessage
         this.logger.debug('WorkflowDesigner: attempt 1', { description: request.description })
       } else {
-        const issueLines = lastErrors.map(
+        const issueLines = lastIssues.map(
           (i) => `- [Rule ${i.rule}] ${i.message}${i.nodeId ? ` (node: ${i.nodeId})` : ''}`,
         )
-        const failingRuleIds = lastErrors.map((i) => i.rule)
+        const failingRuleIds = lastIssues.map((i) => i.rule)
         userMessage = this.promptBuilder.buildCorrectionMessage(request, matches, issueLines, attempt - 1, failingRuleIds)
-        this.logger.debug(`WorkflowDesigner: correction attempt ${attempt}`, { issueCount: lastErrors.length })
+        this.logger.debug(`WorkflowDesigner: correction attempt ${attempt}`, { issueCount: lastIssues.length })
       }
 
       const start = Date.now()
@@ -127,13 +136,13 @@ export class WorkflowDesigner {
         return { workflow: parsed.workflow, credentialsNeeded: parsed.credentialsNeeded, attempts, attemptMetadata, warnedRules: this.promptBuilder.getWarnedRules() }
       }
 
-      lastErrors = errors
+      lastIssues = validation.issues
       this.logger.warn(`WorkflowDesigner: validation failed on attempt ${attempt}`, {
         errorCount: errors.length,
       })
     }
 
-    const finalIssues = attemptMetadata.at(-1)?.issues ?? lastErrors
+    const finalIssues = attemptMetadata.at(-1)?.issues ?? lastIssues
     throw new ValidationError(
       `Workflow failed validation after ${MAX_ATTEMPTS} attempts`,
       finalIssues,
@@ -153,7 +162,7 @@ export class WorkflowDesigner {
       return await this.anthropic.messages.create(
         {
           model: this.model,
-          max_tokens: 8192,
+          max_tokens: this.maxTokens,
           temperature,
           system: system.map((b) => ({ type: b.type, text: b.text, ...(b.cache_control ? { cache_control: b.cache_control } : {}) })),
           messages: [{ role: 'user', content: userMessage }],

@@ -7,6 +7,9 @@ export interface ClientOptions {
   n8nBaseUrl?: string
   n8nApiKey?: string
   model?: string
+  /** Max output tokens for the generation call (default: 16000, or KAIROS_MAX_TOKENS). Raise
+   * this if you see "Claude response was truncated (max_tokens reached)" on large workflows. */
+  maxTokens?: number
   logger?: ILogger
   library?: IWorkflowLibrary
   telemetry?: boolean | string

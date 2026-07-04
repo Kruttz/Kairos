@@ -198,6 +198,7 @@ Every `KAIROS_*` variable Kairos reads, in one place (the CLI's own `--help` out
 | Variable | Applies to | Effect |
 |---|---|---|
 | `KAIROS_MODEL` | SDK, CLI | Claude model override (default: `claude-sonnet-4-6`) |
+| `KAIROS_MAX_TOKENS` | SDK, CLI | Max output tokens for the generation call (default: `16000`) — raise this if you see "Claude response was truncated (max_tokens reached)" on large, many-integration workflows |
 | `KAIROS_TELEMETRY` | SDK, CLI, MCP | `true` for the default directory, or a path — enables JSONL telemetry logging |
 | `KAIROS_LIBRARY_DIR` | CLI | Override the workflow library directory (default: `~/.kairos/library`) |
 | `KAIROS_LIBRARY_SIZE` | SDK, CLI, MCP | Max library entries before oldest/least-used are evicted (default: `1500`) |
@@ -448,6 +449,7 @@ Errors block deployment. Warnings are recorded and fed back into the prompt for 
 | `n8nBaseUrl` | `string` | ✓ | Base URL of your n8n instance |
 | `n8nApiKey` | `string` | ✓ | n8n API key |
 | `model` | `string` | | Claude model to use (default: `claude-sonnet-4-6`) |
+| `maxTokens` | `number` | | Max output tokens for the generation call (default: `16000`) |
 | `logger` | `ILogger` | | Custom logger (default: silent) |
 | `telemetry` | `boolean \| string` | | Enable JSONL telemetry logging (`true` for default dir, or a path) |
 | `library` | `IWorkflowLibrary` | | Workflow library for learning loop (default: `NullLibrary`, CLI uses `FileLibrary`) |

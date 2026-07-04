@@ -1,0 +1,3809 @@
+{
+  "results": [
+    {
+      "prompt": "Every day at 8am, send an email reminder to team@company.com saying \"Stand-up in 30 minutes\"",
+      "promptIndex": 0,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 9406,
+      "tokensInput": 845,
+      "tokensOutput": 704,
+      "workflowName": "Daily Stand-up Reminder Email",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Every day at 8am, send an email reminder to team@company.com saying \"Stand-up in 30 minutes\"",
+      "promptIndex": 0,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 10444,
+      "tokensInput": 845,
+      "tokensOutput": 714,
+      "workflowName": "Daily Stand-up Email Reminder",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Every day at 8am, send an email reminder to team@company.com saying \"Stand-up in 30 minutes\"",
+      "promptIndex": 0,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 9857,
+      "tokensInput": 845,
+      "tokensOutput": 711,
+      "workflowName": "Daily Stand-up Reminder Email",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "When a webhook receives a POST request, return a JSON response with { \"status\": \"ok\" }",
+      "promptIndex": 1,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 8956,
+      "tokensInput": 1235,
+      "tokensOutput": 795,
+      "workflowName": "Webhook POST — Return Status OK",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "When a webhook receives a POST request, return a JSON response with { \"status\": \"ok\" }",
+      "promptIndex": 1,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 8840,
+      "tokensInput": 1235,
+      "tokensOutput": 754,
+      "workflowName": "Webhook POST — Return Status OK",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "When a webhook receives a POST request, return a JSON response with { \"status\": \"ok\" }",
+      "promptIndex": 1,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 9364,
+      "tokensInput": 1235,
+      "tokensOutput": 795,
+      "workflowName": "Webhook POST — Return Status OK",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Every Monday at 9am, post \"Weekly sync time!\" to a Slack channel called #engineering",
+      "promptIndex": 2,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 8532,
+      "tokensInput": 1289,
+      "tokensOutput": 663,
+      "workflowName": "Weekly Slack Reminder – #engineering",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Every Monday at 9am, post \"Weekly sync time!\" to a Slack channel called #engineering",
+      "promptIndex": 2,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 8419,
+      "tokensInput": 1289,
+      "tokensOutput": 663,
+      "workflowName": "Weekly Slack Reminder – #engineering",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Every Monday at 9am, post \"Weekly sync time!\" to a Slack channel called #engineering",
+      "promptIndex": 2,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 8882,
+      "tokensInput": 1289,
+      "tokensOutput": 664,
+      "workflowName": "Weekly Sync Slack Reminder",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "When a form is submitted via webhook, save the data to a Google Sheet",
+      "promptIndex": 3,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 15639,
+      "tokensInput": 852,
+      "tokensOutput": 1426,
+      "workflowName": "Webhook Form Submission → Save to Google Sheet",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "When a form is submitted via webhook, save the data to a Google Sheet",
+      "promptIndex": 3,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 15779,
+      "tokensInput": 852,
+      "tokensOutput": 1434,
+      "workflowName": "Webhook Form Submission → Save to Google Sheet",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "When a form is submitted via webhook, save the data to a Google Sheet",
+      "promptIndex": 3,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 16127,
+      "tokensInput": 852,
+      "tokensOutput": 1460,
+      "workflowName": "Webhook Form Submission → Save to Google Sheet",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Every hour, make a GET request to https://api.example.com/health and log the result",
+      "promptIndex": 4,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 9786,
+      "tokensInput": 732,
+      "tokensOutput": 856,
+      "workflowName": "Hourly Health Check Logger",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Every hour, make a GET request to https://api.example.com/health and log the result",
+      "promptIndex": 4,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 10744,
+      "tokensInput": 732,
+      "tokensOutput": 881,
+      "workflowName": "Hourly Health Check Logger",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Every hour, make a GET request to https://api.example.com/health and log the result",
+      "promptIndex": 4,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 10092,
+      "tokensInput": 732,
+      "tokensOutput": 857,
+      "workflowName": "Hourly Health Check Logger",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Send a Telegram message saying \"Build complete\" when a webhook is triggered",
+      "promptIndex": 5,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 11483,
+      "tokensInput": 881,
+      "tokensOutput": 1020,
+      "workflowName": "Send Telegram Message on Webhook Trigger",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Send a Telegram message saying \"Build complete\" when a webhook is triggered",
+      "promptIndex": 5,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 11629,
+      "tokensInput": 881,
+      "tokensOutput": 1052,
+      "workflowName": "Send Telegram Message on Webhook Trigger",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Send a Telegram message saying \"Build complete\" when a webhook is triggered",
+      "promptIndex": 5,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 14368,
+      "tokensInput": 881,
+      "tokensOutput": 1052,
+      "workflowName": "Send Telegram Message on Webhook Trigger",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Every 5 minutes, check https://httpbin.org/status/200 and alert on failure via email",
+      "promptIndex": 6,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 18355,
+      "tokensInput": 841,
+      "tokensOutput": 1507,
+      "workflowName": "HTTP Health Check — Alert on Failure",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Every 5 minutes, check https://httpbin.org/status/200 and alert on failure via email",
+      "promptIndex": 6,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 18939,
+      "tokensInput": 841,
+      "tokensOutput": 1577,
+      "workflowName": "HTTP Health Check — Alert on Failure via Email",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Every 5 minutes, check https://httpbin.org/status/200 and alert on failure via email",
+      "promptIndex": 6,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 17023,
+      "tokensInput": 841,
+      "tokensOutput": 1469,
+      "workflowName": "HTTP Health Check — Alert on Failure Every 5 Minutes",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "When receiving a webhook, extract the \"name\" field and respond with \"Hello, {name}\"",
+      "promptIndex": 7,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 8393,
+      "tokensInput": 956,
+      "tokensOutput": 728,
+      "workflowName": "Webhook Hello Response",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "When receiving a webhook, extract the \"name\" field and respond with \"Hello, {name}\"",
+      "promptIndex": 7,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 8500,
+      "tokensInput": 956,
+      "tokensOutput": 728,
+      "workflowName": "Webhook Hello Response",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "When receiving a webhook, extract the \"name\" field and respond with \"Hello, {name}\"",
+      "promptIndex": 7,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 8807,
+      "tokensInput": 956,
+      "tokensOutput": 750,
+      "workflowName": "Webhook Hello Response",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Schedule a daily report email at 6pm with a summary from an HTTP API endpoint",
+      "promptIndex": 8,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 22884,
+      "tokensInput": 1253,
+      "tokensOutput": 2042,
+      "workflowName": "Daily 6PM Report Email from API",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Schedule a daily report email at 6pm with a summary from an HTTP API endpoint",
+      "promptIndex": 8,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 19949,
+      "tokensInput": 1253,
+      "tokensOutput": 1577,
+      "workflowName": "Daily 6PM Report Email from API",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Schedule a daily report email at 6pm with a summary from an HTTP API endpoint",
+      "promptIndex": 8,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 17428,
+      "tokensInput": 1253,
+      "tokensOutput": 1414,
+      "workflowName": "Daily 6PM Report Email from API",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Receive a webhook with user data, validate the email field, and return success/failure",
+      "promptIndex": 9,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 20254,
+      "tokensInput": 900,
+      "tokensOutput": 1985,
+      "workflowName": "Webhook — Validate Email Field & Respond",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Receive a webhook with user data, validate the email field, and return success/failure",
+      "promptIndex": 9,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 19717,
+      "tokensInput": 900,
+      "tokensOutput": 1930,
+      "workflowName": "Webhook — Validate Email & Respond",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Receive a webhook with user data, validate the email field, and return success/failure",
+      "promptIndex": 9,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 19949,
+      "tokensInput": 900,
+      "tokensOutput": 1965,
+      "workflowName": "Webhook — Validate Email & Respond",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Receive a webhook with order data, check if total > 100, send a Slack alert for high-value orders, otherwise log to a spreadsheet",
+      "promptIndex": 10,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 24518,
+      "tokensInput": 904,
+      "tokensOutput": 2254,
+      "workflowName": "Order Webhook Handler — Slack Alert or Sheet Log",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Receive a webhook with order data, check if total > 100, send a Slack alert for high-value orders, otherwise log to a spreadsheet",
+      "promptIndex": 10,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 23985,
+      "tokensInput": 904,
+      "tokensOutput": 2231,
+      "workflowName": "Order Webhook Handler — Slack Alert or Sheet Log",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Receive a webhook with order data, check if total > 100, send a Slack alert for high-value orders, otherwise log to a spreadsheet",
+      "promptIndex": 10,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 24365,
+      "tokensInput": 904,
+      "tokensOutput": 2322,
+      "workflowName": "Order Webhook Handler — Slack Alert or Sheet Log",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Every morning at 7am, fetch weather data from an API, format it nicely, and post to Slack #general",
+      "promptIndex": 11,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 28731,
+      "tokensInput": 882,
+      "tokensOutput": 2462,
+      "workflowName": "Daily Morning Weather Report to Slack",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Every morning at 7am, fetch weather data from an API, format it nicely, and post to Slack #general",
+      "promptIndex": 11,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 23794,
+      "tokensInput": 882,
+      "tokensOutput": 1929,
+      "workflowName": "Daily Morning Weather Report to Slack",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Every morning at 7am, fetch weather data from an API, format it nicely, and post to Slack #general",
+      "promptIndex": 11,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 27040,
+      "tokensInput": 882,
+      "tokensOutput": 2157,
+      "workflowName": "Daily Morning Weather Report to Slack",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "When a webhook receives a support ticket, classify priority based on keywords, route high-priority to Slack and low-priority to email",
+      "promptIndex": 12,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 48286,
+      "tokensInput": 981,
+      "tokensOutput": 4209,
+      "workflowName": "Support Ticket Triage — Classify & Route by Priority",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "When a webhook receives a support ticket, classify priority based on keywords, route high-priority to Slack and low-priority to email",
+      "promptIndex": 12,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 43322,
+      "tokensInput": 981,
+      "tokensOutput": 3760,
+      "workflowName": "Support Ticket Triage — Classify & Route by Priority",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "When a webhook receives a support ticket, classify priority based on keywords, route high-priority to Slack and low-priority to email",
+      "promptIndex": 12,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 46224,
+      "tokensInput": 981,
+      "tokensOutput": 4115,
+      "workflowName": "Support Ticket Triage — Classify & Route by Priority",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "Receive a webhook POST, call https://httpbin.org/json, merge the response with the original data, and return the combined result",
+      "promptIndex": 13,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 17547,
+      "tokensInput": 1256,
+      "tokensOutput": 1643,
+      "workflowName": "Webhook POST → Fetch httpbin.org/json → Merge & Respond",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Receive a webhook POST, call https://httpbin.org/json, merge the response with the original data, and return the combined result",
+      "promptIndex": 13,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 19397,
+      "tokensInput": 1256,
+      "tokensOutput": 1660,
+      "workflowName": "Webhook POST → Fetch httpbin.org/json → Merge & Respond",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Receive a webhook POST, call https://httpbin.org/json, merge the response with the original data, and return the combined result",
+      "promptIndex": 13,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 16182,
+      "tokensInput": 1256,
+      "tokensOutput": 1512,
+      "workflowName": "Webhook POST → Fetch httpbin.org/json → Merge & Respond",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Every day at midnight, fetch all GitHub issues from a repo, filter open ones, and send a summary email",
+      "promptIndex": 14,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 27809,
+      "tokensInput": 846,
+      "tokensOutput": 2484,
+      "workflowName": "Daily GitHub Open Issues Summary Email",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Every day at midnight, fetch all GitHub issues from a repo, filter open ones, and send a summary email",
+      "promptIndex": 14,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 27569,
+      "tokensInput": 846,
+      "tokensOutput": 2545,
+      "workflowName": "Daily GitHub Open Issues Summary Email",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Every day at midnight, fetch all GitHub issues from a repo, filter open ones, and send a summary email",
+      "promptIndex": 14,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 28609,
+      "tokensInput": 846,
+      "tokensOutput": 2575,
+      "workflowName": "Daily GitHub Open Issues Summary Email",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "When a new email arrives, extract attachments, upload them to S3, and send a confirmation Slack message",
+      "promptIndex": 15,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 25134,
+      "tokensInput": 932,
+      "tokensOutput": 2155,
+      "workflowName": "Email Attachments → S3 Upload → Slack Confirmation",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "When a new email arrives, extract attachments, upload them to S3, and send a confirmation Slack message",
+      "promptIndex": 15,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 29228,
+      "tokensInput": 932,
+      "tokensOutput": 2509,
+      "workflowName": "Email Attachments → S3 Upload → Slack Confirmation",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "When a new email arrives, extract attachments, upload them to S3, and send a confirmation Slack message",
+      "promptIndex": 15,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 24886,
+      "tokensInput": 932,
+      "tokensOutput": 2164,
+      "workflowName": "Email Attachments → S3 Upload → Slack Confirmation",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "Receive a webhook with product data, check inventory levels, send restock alerts for items below threshold",
+      "promptIndex": 16,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 40636,
+      "tokensInput": 884,
+      "tokensOutput": 3490,
+      "workflowName": "Webhook Product Inventory Restock Alert",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Receive a webhook with product data, check inventory levels, send restock alerts for items below threshold",
+      "promptIndex": 16,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 41232,
+      "tokensInput": 884,
+      "tokensOutput": 3781,
+      "workflowName": "Webhook Product Inventory Restock Alert",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Receive a webhook with product data, check inventory levels, send restock alerts for items below threshold",
+      "promptIndex": 16,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 46854,
+      "tokensInput": 884,
+      "tokensOutput": 4333,
+      "workflowName": "Webhook Product Inventory Restock Alert",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Every 30 minutes, poll an RSS feed, check for new entries, and post new items to a Slack channel",
+      "promptIndex": 17,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 23129,
+      "tokensInput": 701,
+      "tokensOutput": 1957,
+      "workflowName": "RSS Feed Poller → Slack Notifier",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Every 30 minutes, poll an RSS feed, check for new entries, and post new items to a Slack channel",
+      "promptIndex": 17,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 28581,
+      "tokensInput": 701,
+      "tokensOutput": 2550,
+      "workflowName": "RSS Feed Poller → Slack Notifier",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Every 30 minutes, poll an RSS feed, check for new entries, and post new items to a Slack channel",
+      "promptIndex": 17,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 27222,
+      "tokensInput": 701,
+      "tokensOutput": 2296,
+      "workflowName": "RSS Feed Poller → Slack Notifier",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "When triggered by webhook, look up a customer in a database, enrich with external API data, and return the profile",
+      "promptIndex": 18,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 30177,
+      "tokensInput": 861,
+      "tokensOutput": 2725,
+      "workflowName": "Webhook — Customer Profile Lookup & Enrichment",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "When triggered by webhook, look up a customer in a database, enrich with external API data, and return the profile",
+      "promptIndex": 18,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 30479,
+      "tokensInput": 861,
+      "tokensOutput": 2782,
+      "workflowName": "Webhook — Customer Profile Lookup & Enrichment",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "When triggered by webhook, look up a customer in a database, enrich with external API data, and return the profile",
+      "promptIndex": 18,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 41535,
+      "tokensInput": 861,
+      "tokensOutput": 3940,
+      "workflowName": "Webhook — Customer Profile Lookup & Enrichment",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Receive form submissions via webhook, validate required fields, store valid entries in Airtable, respond with status",
+      "promptIndex": 19,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 30182,
+      "tokensInput": 860,
+      "tokensOutput": 2810,
+      "workflowName": "Webhook Form Submission Handler",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Receive form submissions via webhook, validate required fields, store valid entries in Airtable, respond with status",
+      "promptIndex": 19,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 33203,
+      "tokensInput": 860,
+      "tokensOutput": 3105,
+      "workflowName": "Webhook Form Submission Handler",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Receive form submissions via webhook, validate required fields, store valid entries in Airtable, respond with status",
+      "promptIndex": 19,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 27953,
+      "tokensInput": 860,
+      "tokensOutput": 2662,
+      "workflowName": "Webhook Form Submission Handler",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Fetch data from two different APIs, merge the results, transform the combined data, and save to Google Sheets",
+      "promptIndex": 20,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 31693,
+      "tokensInput": 830,
+      "tokensOutput": 2860,
+      "workflowName": "Fetch, Merge, Transform & Save to Google Sheets",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Fetch data from two different APIs, merge the results, transform the combined data, and save to Google Sheets",
+      "promptIndex": 20,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 34562,
+      "tokensInput": 830,
+      "tokensOutput": 3105,
+      "workflowName": "Fetch, Merge, Transform & Save to Google Sheets",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Fetch data from two different APIs, merge the results, transform the combined data, and save to Google Sheets",
+      "promptIndex": 20,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 33445,
+      "tokensInput": 830,
+      "tokensOutput": 3053,
+      "workflowName": "Fetch, Merge, Transform & Save to Google Sheets",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Every week on Friday at 5pm, aggregate weekly metrics from an API and email a summary report",
+      "promptIndex": 21,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 30814,
+      "tokensInput": 844,
+      "tokensOutput": 2792,
+      "workflowName": "Weekly Friday Metrics Report via Email",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Every week on Friday at 5pm, aggregate weekly metrics from an API and email a summary report",
+      "promptIndex": 21,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 30137,
+      "tokensInput": 844,
+      "tokensOutput": 2790,
+      "workflowName": "Weekly Friday Metrics Report via Email",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Every week on Friday at 5pm, aggregate weekly metrics from an API and email a summary report",
+      "promptIndex": 21,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 28580,
+      "tokensInput": 844,
+      "tokensOutput": 2568,
+      "workflowName": "Weekly Friday Metrics Report via Email",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "When a webhook receives an event, check the event type with a switch node, and route to different Slack channels based on type",
+      "promptIndex": 22,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 36697,
+      "tokensInput": 863,
+      "tokensOutput": 3699,
+      "workflowName": "Webhook Event Router to Slack Channels",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "When a webhook receives an event, check the event type with a switch node, and route to different Slack channels based on type",
+      "promptIndex": 22,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 36641,
+      "tokensInput": 863,
+      "tokensOutput": 3645,
+      "workflowName": "Webhook Event Router to Slack Channels",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "When a webhook receives an event, check the event type with a switch node, and route to different Slack channels based on type",
+      "promptIndex": 22,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 39110,
+      "tokensInput": 863,
+      "tokensOutput": 3705,
+      "workflowName": "Webhook Event Router to Slack Channels",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Receive customer feedback via webhook, analyze sentiment using a simple keyword check, and route to appropriate team",
+      "promptIndex": 23,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 49766,
+      "tokensInput": 884,
+      "tokensOutput": 4779,
+      "workflowName": "Customer Feedback Sentiment Router",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Receive customer feedback via webhook, analyze sentiment using a simple keyword check, and route to appropriate team",
+      "promptIndex": 23,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 45208,
+      "tokensInput": 884,
+      "tokensOutput": 4335,
+      "workflowName": "Customer Feedback Sentiment Router",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Receive customer feedback via webhook, analyze sentiment using a simple keyword check, and route to appropriate team",
+      "promptIndex": 23,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 48986,
+      "tokensInput": 884,
+      "tokensOutput": 4759,
+      "workflowName": "Customer Feedback Sentiment Router",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Every day, fetch exchange rates from an API, compare with yesterday, and alert via Slack if change exceeds 2%",
+      "promptIndex": 24,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 35735,
+      "tokensInput": 1287,
+      "tokensOutput": 3109,
+      "workflowName": "Daily Exchange Rate Alert via Slack",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Every day, fetch exchange rates from an API, compare with yesterday, and alert via Slack if change exceeds 2%",
+      "promptIndex": 24,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 32154,
+      "tokensInput": 1287,
+      "tokensOutput": 2945,
+      "workflowName": "Daily Exchange Rate Alert via Slack",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Every day, fetch exchange rates from an API, compare with yesterday, and alert via Slack if change exceeds 2%",
+      "promptIndex": 24,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 36643,
+      "tokensInput": 1287,
+      "tokensOutput": 3220,
+      "workflowName": "Daily Exchange Rate Alert via Slack",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a chat-triggered AI agent using GPT-4o with window buffer memory that can answer questions about a company knowledge base",
+      "promptIndex": 25,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 52333,
+      "tokensInput": 1369,
+      "tokensOutput": 3535,
+      "workflowName": "Chat-Triggered AI Agent with GPT-4o & Knowledge Base",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a chat-triggered AI agent using GPT-4o with window buffer memory that can answer questions about a company knowledge base",
+      "promptIndex": 25,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 22552,
+      "tokensInput": 1369,
+      "tokensOutput": 1607,
+      "workflowName": "Chat AI Agent — Company Knowledge Base Q&A",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a chat-triggered AI agent using GPT-4o with window buffer memory that can answer questions about a company knowledge base",
+      "promptIndex": 25,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 36316,
+      "tokensInput": 1369,
+      "tokensOutput": 2627,
+      "workflowName": "Chat AI Agent — Company Knowledge Base Q&A",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Create an AI agent with OpenAI that has access to a calculator tool and a web search tool, triggered by chat messages",
+      "promptIndex": 26,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 26993,
+      "tokensInput": 1368,
+      "tokensOutput": 2160,
+      "workflowName": "AI Agent with Calculator & Web Search (Chat Triggered)",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Create an AI agent with OpenAI that has access to a calculator tool and a web search tool, triggered by chat messages",
+      "promptIndex": 26,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 20558,
+      "tokensInput": 1368,
+      "tokensOutput": 1793,
+      "workflowName": "AI Agent with Calculator & Web Search (Chat Triggered)",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Create an AI agent with OpenAI that has access to a calculator tool and a web search tool, triggered by chat messages",
+      "promptIndex": 26,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 21459,
+      "tokensInput": 1368,
+      "tokensOutput": 1815,
+      "workflowName": "AI Agent with Calculator & Web Search (Chat Triggered)",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "When a webhook receives a document URL, fetch the document, split it into chunks, generate embeddings, and store in a vector database",
+      "promptIndex": 27,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 51737,
+      "tokensInput": 936,
+      "tokensOutput": 4786,
+      "workflowName": "Document Ingestion Pipeline — Fetch, Chunk, Embed & Store",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "When a webhook receives a document URL, fetch the document, split it into chunks, generate embeddings, and store in a vector database",
+      "promptIndex": 27,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 51726,
+      "tokensInput": 936,
+      "tokensOutput": 4821,
+      "workflowName": "Document Ingestion Pipeline — Fetch, Chunk, Embed & Store",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "When a webhook receives a document URL, fetch the document, split it into chunks, generate embeddings, and store in a vector database",
+      "promptIndex": 27,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 53903,
+      "tokensInput": 936,
+      "tokensOutput": 5024,
+      "workflowName": "Document Ingestion Pipeline — Fetch, Chunk, Embed & Store",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Build a customer support chatbot using an AI agent with memory that can look up order status via an HTTP tool",
+      "promptIndex": 28,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 22046,
+      "tokensInput": 1365,
+      "tokensOutput": 1696,
+      "workflowName": "Customer Support Chatbot with Order Lookup",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a customer support chatbot using an AI agent with memory that can look up order status via an HTTP tool",
+      "promptIndex": 28,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 20787,
+      "tokensInput": 1365,
+      "tokensOutput": 1612,
+      "workflowName": "Customer Support Chatbot with Order Lookup",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a customer support chatbot using an AI agent with memory that can look up order status via an HTTP tool",
+      "promptIndex": 28,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 24513,
+      "tokensInput": 1365,
+      "tokensOutput": 1867,
+      "workflowName": "Customer Support Chatbot with Order Lookup",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Create an AI-powered email classifier: receive emails, use an LLM to categorize them, route to appropriate folders, and send auto-replies",
+      "promptIndex": 29,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 51916,
+      "tokensInput": 985,
+      "tokensOutput": 4953,
+      "workflowName": "AI-Powered Email Classifier & Auto-Responder",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Create an AI-powered email classifier: receive emails, use an LLM to categorize them, route to appropriate folders, and send auto-replies",
+      "promptIndex": 29,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 58413,
+      "tokensInput": 985,
+      "tokensOutput": 5555,
+      "workflowName": "AI-Powered Email Classifier & Auto-Reply",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "Create an AI-powered email classifier: receive emails, use an LLM to categorize them, route to appropriate folders, and send auto-replies",
+      "promptIndex": 29,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 62373,
+      "tokensInput": 985,
+      "tokensOutput": 5874,
+      "workflowName": "AI-Powered Email Classifier & Auto-Reply",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "Build a Slack bot that uses an AI agent to answer questions about internal documentation, with conversation memory",
+      "promptIndex": 30,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 34372,
+      "tokensInput": 1363,
+      "tokensOutput": 2719,
+      "workflowName": "Slack AI Bot — Internal Documentation Q&A with Memory",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "Build a Slack bot that uses an AI agent to answer questions about internal documentation, with conversation memory",
+      "promptIndex": 30,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 40761,
+      "tokensInput": 1363,
+      "tokensOutput": 3377,
+      "workflowName": "Slack AI Bot — Internal Docs Q&A with Memory",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "Build a Slack bot that uses an AI agent to answer questions about internal documentation, with conversation memory",
+      "promptIndex": 30,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 39551,
+      "tokensInput": 1363,
+      "tokensOutput": 2734,
+      "workflowName": "Slack AI Bot — Internal Docs Q&A with Memory",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "When a webhook receives a long text, use an AI chain to summarize it, extract key entities, and store the results",
+      "promptIndex": 31,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 47395,
+      "tokensInput": 934,
+      "tokensOutput": 4451,
+      "workflowName": "Webhook → AI Summarize & Extract Entities → Store Results",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "When a webhook receives a long text, use an AI chain to summarize it, extract key entities, and store the results",
+      "promptIndex": 31,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 41558,
+      "tokensInput": 934,
+      "tokensOutput": 3691,
+      "workflowName": "Webhook → AI Summarize & Extract Entities → Store Results",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "When a webhook receives a long text, use an AI chain to summarize it, extract key entities, and store the results",
+      "promptIndex": 31,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 35173,
+      "tokensInput": 934,
+      "tokensOutput": 3159,
+      "workflowName": "Webhook → AI Summarize & Extract Entities → Store Results",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Create a workflow that monitors a GitHub repo for new issues, uses AI to suggest labels, and auto-assigns based on content",
+      "promptIndex": 32,
+      "success": true,
+      "attempts": 2,
+      "durationMs": 92947,
+      "tokensInput": 2082,
+      "tokensOutput": 8384,
+      "workflowName": "GitHub Issue Monitor with AI Label Suggestions",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Create a workflow that monitors a GitHub repo for new issues, uses AI to suggest labels, and auto-assigns based on content",
+      "promptIndex": 32,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 51390,
+      "tokensInput": 934,
+      "tokensOutput": 4577,
+      "workflowName": "GitHub Issue Monitor — AI Label Suggester & Auto-Assigner",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Create a workflow that monitors a GitHub repo for new issues, uses AI to suggest labels, and auto-assigns based on content",
+      "promptIndex": 32,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 52897,
+      "tokensInput": 1113,
+      "tokensOutput": 4693,
+      "workflowName": "GitHub Issue Monitor — AI Label Suggester & Auto-Assigner",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Build an AI agent with tools for querying a PostgreSQL database and formatting results as tables",
+      "promptIndex": 33,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 40936,
+      "tokensInput": 1540,
+      "tokensOutput": 3078,
+      "workflowName": "AI Agent with PostgreSQL Query & Table Formatting Tools",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build an AI agent with tools for querying a PostgreSQL database and formatting results as tables",
+      "promptIndex": 33,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 42619,
+      "tokensInput": 1540,
+      "tokensOutput": 3296,
+      "workflowName": "AI Agent with PostgreSQL Query & Table Formatting Tools",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Build an AI agent with tools for querying a PostgreSQL database and formatting results as tables",
+      "promptIndex": 33,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 38030,
+      "tokensInput": 1540,
+      "tokensOutput": 2972,
+      "workflowName": "AI Agent with PostgreSQL Query & Table Formatting Tools",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Create a multi-step AI pipeline: receive text via webhook, translate to English, summarize, extract sentiment, return structured result",
+      "promptIndex": 34,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 42230,
+      "tokensInput": 1114,
+      "tokensOutput": 3965,
+      "workflowName": "Multi-Step AI Pipeline: Translate → Summarize → Sentiment",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Create a multi-step AI pipeline: receive text via webhook, translate to English, summarize, extract sentiment, return structured result",
+      "promptIndex": 34,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 51634,
+      "tokensInput": 1114,
+      "tokensOutput": 5015,
+      "workflowName": "Multi-Step AI Pipeline: Translate → Summarize → Sentiment",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Create a multi-step AI pipeline: receive text via webhook, translate to English, summarize, extract sentiment, return structured result",
+      "promptIndex": 34,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 52275,
+      "tokensInput": 1114,
+      "tokensOutput": 5140,
+      "workflowName": "Multi-Step AI Pipeline: Translate → Summarize → Sentiment",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Merge data from three different webhook endpoints using a merge node and return the combined payload",
+      "promptIndex": 35,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 27440,
+      "tokensInput": 1033,
+      "tokensOutput": 2511,
+      "workflowName": "Merge Three Webhook Endpoints",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Merge data from three different webhook endpoints using a merge node and return the combined payload",
+      "promptIndex": 35,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 20982,
+      "tokensInput": 1033,
+      "tokensOutput": 2136,
+      "workflowName": "Merge Three Webhook Endpoints",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Merge data from three different webhook endpoints using a merge node and return the combined payload",
+      "promptIndex": 35,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 24952,
+      "tokensInput": 1033,
+      "tokensOutput": 2385,
+      "workflowName": "Merge Three Webhook Endpoints",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Use a code node to calculate the fibonacci sequence for a number received via webhook",
+      "promptIndex": 36,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 13561,
+      "tokensInput": 1352,
+      "tokensOutput": 1114,
+      "workflowName": "Fibonacci Sequence via Webhook",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Use a code node to calculate the fibonacci sequence for a number received via webhook",
+      "promptIndex": 36,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 13354,
+      "tokensInput": 1352,
+      "tokensOutput": 1060,
+      "workflowName": "Fibonacci Sequence via Webhook",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Use a code node to calculate the fibonacci sequence for a number received via webhook",
+      "promptIndex": 36,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 16222,
+      "tokensInput": 1352,
+      "tokensOutput": 1473,
+      "workflowName": "Fibonacci Sequence via Webhook",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Receive a webhook, wait 5 seconds using a wait node, then send a delayed response",
+      "promptIndex": 37,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 15815,
+      "tokensInput": 1036,
+      "tokensOutput": 1475,
+      "workflowName": "Webhook with 5-Second Delayed Response",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Receive a webhook, wait 5 seconds using a wait node, then send a delayed response",
+      "promptIndex": 37,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 11843,
+      "tokensInput": 1036,
+      "tokensOutput": 1048,
+      "workflowName": "Webhook with 5-Second Delayed Response",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Receive a webhook, wait 5 seconds using a wait node, then send a delayed response",
+      "promptIndex": 37,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 17238,
+      "tokensInput": 1036,
+      "tokensOutput": 1474,
+      "workflowName": "Webhook with 5-Second Delayed Response",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Create a workflow with error handling: try an HTTP request, catch failures, and send error details to Slack",
+      "promptIndex": 38,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 34558,
+      "tokensInput": 1008,
+      "tokensOutput": 3172,
+      "workflowName": "HTTP Request with Error Handling → Slack Alert",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Create a workflow with error handling: try an HTTP request, catch failures, and send error details to Slack",
+      "promptIndex": 38,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 34020,
+      "tokensInput": 1008,
+      "tokensOutput": 3036,
+      "workflowName": "HTTP Request with Error Handling → Slack Alert",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Create a workflow with error handling: try an HTTP request, catch failures, and send error details to Slack",
+      "promptIndex": 38,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 36145,
+      "tokensInput": 1008,
+      "tokensOutput": 3228,
+      "workflowName": "HTTP Request with Error Handling → Slack Alert",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Receive a CSV file via webhook, parse it using a code node, and insert rows into a Google Sheet",
+      "promptIndex": 39,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 17818,
+      "tokensInput": 1359,
+      "tokensOutput": 1519,
+      "workflowName": "Webhook CSV to Google Sheets",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Receive a CSV file via webhook, parse it using a code node, and insert rows into a Google Sheet",
+      "promptIndex": 39,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 19020,
+      "tokensInput": 1359,
+      "tokensOutput": 1645,
+      "workflowName": "Webhook CSV to Google Sheets",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Receive a CSV file via webhook, parse it using a code node, and insert rows into a Google Sheet",
+      "promptIndex": 39,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 17827,
+      "tokensInput": 1359,
+      "tokensOutput": 1519,
+      "workflowName": "Webhook CSV to Google Sheets",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Use a switch node to route incoming webhooks to 4 different processing paths based on the \"action\" field",
+      "promptIndex": 40,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 35345,
+      "tokensInput": 1039,
+      "tokensOutput": 3422,
+      "workflowName": "Webhook Router — 4 Action Paths via Switch",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Use a switch node to route incoming webhooks to 4 different processing paths based on the \"action\" field",
+      "promptIndex": 40,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 31387,
+      "tokensInput": 1039,
+      "tokensOutput": 3076,
+      "workflowName": "Webhook Router — 4 Action Paths via Switch",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Use a switch node to route incoming webhooks to 4 different processing paths based on the \"action\" field",
+      "promptIndex": 40,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 27117,
+      "tokensInput": 1039,
+      "tokensOutput": 2685,
+      "workflowName": "Webhook Router — 4 Action Paths via Switch",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Receive a webhook with an image URL, download the image via HTTP request, and upload it to S3",
+      "promptIndex": 41,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 21266,
+      "tokensInput": 1038,
+      "tokensOutput": 1845,
+      "workflowName": "Webhook → Download Image → Upload to S3",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Receive a webhook with an image URL, download the image via HTTP request, and upload it to S3",
+      "promptIndex": 41,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 24805,
+      "tokensInput": 1038,
+      "tokensOutput": 2213,
+      "workflowName": "Webhook → Download Image → Upload to S3",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Receive a webhook with an image URL, download the image via HTTP request, and upload it to S3",
+      "promptIndex": 41,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 23835,
+      "tokensInput": 1038,
+      "tokensOutput": 2127,
+      "workflowName": "Webhook → Download Image → Upload to S3",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Create a workflow that processes items in a loop: receive an array via webhook, iterate, transform each item, and return results",
+      "promptIndex": 42,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 27459,
+      "tokensInput": 1495,
+      "tokensOutput": 2443,
+      "workflowName": "Webhook Array Processor with Batch Loop",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Create a workflow that processes items in a loop: receive an array via webhook, iterate, transform each item, and return results",
+      "promptIndex": 42,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 29632,
+      "tokensInput": 1495,
+      "tokensOutput": 2545,
+      "workflowName": "Webhook Array Processor with Batch Loop",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Create a workflow that processes items in a loop: receive an array via webhook, iterate, transform each item, and return results",
+      "promptIndex": 42,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 22876,
+      "tokensInput": 1495,
+      "tokensOutput": 2047,
+      "workflowName": "Webhook Array Processor with Batch Loop",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Build a webhook endpoint that rate-limits requests: check a counter in Redis, reject if over limit, process if under",
+      "promptIndex": 43,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 35784,
+      "tokensInput": 1040,
+      "tokensOutput": 3368,
+      "workflowName": "Webhook Rate Limiter with Redis",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a webhook endpoint that rate-limits requests: check a counter in Redis, reject if over limit, process if under",
+      "promptIndex": 43,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 39434,
+      "tokensInput": 1040,
+      "tokensOutput": 3705,
+      "workflowName": "Webhook Rate Limiter with Redis",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a webhook endpoint that rate-limits requests: check a counter in Redis, reject if over limit, process if under",
+      "promptIndex": 43,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 43533,
+      "tokensInput": 1040,
+      "tokensOutput": 3887,
+      "workflowName": "Webhook Rate Limiter with Redis",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Receive a webhook, encrypt sensitive fields using a code node, store in a database, and return a receipt ID",
+      "promptIndex": 44,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 21770,
+      "tokensInput": 1360,
+      "tokensOutput": 1945,
+      "workflowName": "Webhook → Encrypt Fields → Store in DB → Return Receipt ID",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Receive a webhook, encrypt sensitive fields using a code node, store in a database, and return a receipt ID",
+      "promptIndex": 44,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 31008,
+      "tokensInput": 1360,
+      "tokensOutput": 2341,
+      "workflowName": "Webhook → Encrypt Fields → Store in DB → Return Receipt ID",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Receive a webhook, encrypt sensitive fields using a code node, store in a database, and return a receipt ID",
+      "promptIndex": 44,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 31982,
+      "tokensInput": 1360,
+      "tokensOutput": 2637,
+      "workflowName": "Webhook → Encrypt Fields → Store in DB → Return Receipt ID",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "When a new row is added to Google Sheets, check for duplicates, send a welcome email to new contacts, and update CRM",
+      "promptIndex": 45,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 45639,
+      "tokensInput": 883,
+      "tokensOutput": 4150,
+      "workflowName": "Google Sheets → Duplicate Check → Welcome Email → CRM Update",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "When a new row is added to Google Sheets, check for duplicates, send a welcome email to new contacts, and update CRM",
+      "promptIndex": 45,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 39286,
+      "tokensInput": 883,
+      "tokensOutput": 3736,
+      "workflowName": "Google Sheets → Duplicate Check → Welcome Email → CRM Update",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "When a new row is added to Google Sheets, check for duplicates, send a welcome email to new contacts, and update CRM",
+      "promptIndex": 45,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 37078,
+      "tokensInput": 883,
+      "tokensOutput": 3286,
+      "workflowName": "Google Sheets → Duplicate Check → Welcome Email → CRM Update",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "Monitor a website for changes every hour, compare with previous version, and alert via Telegram if content changed",
+      "promptIndex": 46,
+      "success": true,
+      "attempts": 2,
+      "durationMs": 56657,
+      "tokensInput": 2216,
+      "tokensOutput": 4840,
+      "workflowName": "Website Change Monitor & Telegram Alert",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Monitor a website for changes every hour, compare with previous version, and alert via Telegram if content changed",
+      "promptIndex": 46,
+      "success": true,
+      "attempts": 2,
+      "durationMs": 63249,
+      "tokensInput": 2216,
+      "tokensOutput": 4747,
+      "workflowName": "Website Change Monitor with Telegram Alert",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Monitor a website for changes every hour, compare with previous version, and alert via Telegram if content changed",
+      "promptIndex": 46,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 31432,
+      "tokensInput": 1147,
+      "tokensOutput": 2710,
+      "workflowName": "Website Change Monitor & Telegram Alert",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "When a Stripe payment webhook arrives, update the customer record, send a receipt email, and log to accounting spreadsheet",
+      "promptIndex": 47,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 39761,
+      "tokensInput": 1215,
+      "tokensOutput": 3511,
+      "workflowName": "Stripe Payment Webhook → Update Customer, Send Receipt, Log to Sheets",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "When a Stripe payment webhook arrives, update the customer record, send a receipt email, and log to accounting spreadsheet",
+      "promptIndex": 47,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 45464,
+      "tokensInput": 1215,
+      "tokensOutput": 3808,
+      "workflowName": "Stripe Payment Webhook → Update Customer, Send Receipt, Log to Sheets",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "When a Stripe payment webhook arrives, update the customer record, send a receipt email, and log to accounting spreadsheet",
+      "promptIndex": 47,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 42564,
+      "tokensInput": 1215,
+      "tokensOutput": 3653,
+      "workflowName": "Stripe Payment Webhook → Update Customer, Send Receipt, Log to Sheets",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "Sync contacts between two systems: fetch from API A, compare with API B, create missing entries, update changed ones",
+      "promptIndex": 48,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 43272,
+      "tokensInput": 1172,
+      "tokensOutput": 4050,
+      "workflowName": "Contact Sync: API A → API B (Create Missing, Update Changed)",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Sync contacts between two systems: fetch from API A, compare with API B, create missing entries, update changed ones",
+      "promptIndex": 48,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 48071,
+      "tokensInput": 1172,
+      "tokensOutput": 4585,
+      "workflowName": "Contact Sync: API A → API B (Create Missing, Update Changed)",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Sync contacts between two systems: fetch from API A, compare with API B, create missing entries, update changed ones",
+      "promptIndex": 48,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 53244,
+      "tokensInput": 1172,
+      "tokensOutput": 4804,
+      "workflowName": "Contact Sync: API A → API B (Create Missing, Update Changed)",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "When a GitHub PR is merged, trigger a deployment webhook, wait for completion, and post the result to Slack",
+      "promptIndex": 49,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 38496,
+      "tokensInput": 1156,
+      "tokensOutput": 3604,
+      "workflowName": "GitHub PR Merged → Deploy → Slack Notification",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "When a GitHub PR is merged, trigger a deployment webhook, wait for completion, and post the result to Slack",
+      "promptIndex": 49,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 39927,
+      "tokensInput": 1156,
+      "tokensOutput": 3602,
+      "workflowName": "GitHub PR Merged → Deploy → Slack Notification",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "When a GitHub PR is merged, trigger a deployment webhook, wait for completion, and post the result to Slack",
+      "promptIndex": 49,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 36100,
+      "tokensInput": 1156,
+      "tokensOutput": 3311,
+      "workflowName": "GitHub PR Merged → Deploy → Slack Notification",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Process incoming invoice emails: extract amount and vendor using regex, categorize, and add to an expense tracking sheet",
+      "promptIndex": 50,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 58583,
+      "tokensInput": 1240,
+      "tokensOutput": 5123,
+      "workflowName": "Invoice Email Processor — Extract, Categorize & Track Expenses",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "Process incoming invoice emails: extract amount and vendor using regex, categorize, and add to an expense tracking sheet",
+      "promptIndex": 50,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 59576,
+      "tokensInput": 1240,
+      "tokensOutput": 4917,
+      "workflowName": "Invoice Email Processor — Extract, Categorize & Track Expenses",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "Process incoming invoice emails: extract amount and vendor using regex, categorize, and add to an expense tracking sheet",
+      "promptIndex": 50,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 57866,
+      "tokensInput": 1240,
+      "tokensOutput": 4948,
+      "workflowName": "Invoice Email Processor — Extract, Categorize & Track Expenses",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "When a user signs up via webhook, create accounts in 3 services, send a welcome email, and log the onboarding event",
+      "promptIndex": 51,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 50831,
+      "tokensInput": 1219,
+      "tokensOutput": 4767,
+      "workflowName": "User Signup Onboarding — Multi-Service Account Creation",
+      "credentialsCount": 5
+    },
+    {
+      "prompt": "When a user signs up via webhook, create accounts in 3 services, send a welcome email, and log the onboarding event",
+      "promptIndex": 51,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 44661,
+      "tokensInput": 1219,
+      "tokensOutput": 4186,
+      "workflowName": "User Signup Onboarding — Multi-Service Account Creation",
+      "credentialsCount": 4
+    },
+    {
+      "prompt": "When a user signs up via webhook, create accounts in 3 services, send a welcome email, and log the onboarding event",
+      "promptIndex": 51,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 48787,
+      "tokensInput": 1219,
+      "tokensOutput": 4648,
+      "workflowName": "User Signup Onboarding — Multi-Service Account Creation",
+      "credentialsCount": 4
+    },
+    {
+      "prompt": "Monitor server metrics via HTTP endpoint every 5 minutes, check thresholds, escalate alerts through email then Slack then PagerDuty",
+      "promptIndex": 52,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 48913,
+      "tokensInput": 1222,
+      "tokensOutput": 4406,
+      "workflowName": "Server Metrics Monitor — Alert Escalation",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "Monitor server metrics via HTTP endpoint every 5 minutes, check thresholds, escalate alerts through email then Slack then PagerDuty",
+      "promptIndex": 52,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 51071,
+      "tokensInput": 1222,
+      "tokensOutput": 4594,
+      "workflowName": "Server Metrics Monitor — Alert Escalation (Email → Slack → PagerDuty)",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Monitor server metrics via HTTP endpoint every 5 minutes, check thresholds, escalate alerts through email then Slack then PagerDuty",
+      "promptIndex": 52,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 56464,
+      "tokensInput": 1222,
+      "tokensOutput": 5176,
+      "workflowName": "Server Metrics Monitor — Alert Escalation (Email → Slack → PagerDuty)",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "When a form submission arrives, validate the data, check against a blocklist, send to approval queue or auto-approve",
+      "promptIndex": 53,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 60341,
+      "tokensInput": 1157,
+      "tokensOutput": 5544,
+      "workflowName": "Form Submission — Validate, Blocklist Check & Approval Queue",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "When a form submission arrives, validate the data, check against a blocklist, send to approval queue or auto-approve",
+      "promptIndex": 53,
+      "success": false,
+      "attempts": 3,
+      "durationMs": 177399,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "credentialsCount": 0,
+      "error": "Workflow failed validation after 3 attempts",
+      "failedRules": [
+        35,
+        35,
+        35,
+        75,
+        75,
+        75,
+        78,
+        80,
+        80,
+        80,
+        90,
+        126,
+        126,
+        126,
+        126,
+        126,
+        126,
+        126,
+        126,
+        126,
+        126,
+        126,
+        126,
+        126,
+        126,
+        126,
+        126
+      ]
+    },
+    {
+      "prompt": "When a form submission arrives, validate the data, check against a blocklist, send to approval queue or auto-approve",
+      "promptIndex": 53,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 66227,
+      "tokensInput": 1157,
+      "tokensOutput": 6275,
+      "workflowName": "Form Submission — Validate, Blocklist Check & Approval Queue",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Aggregate data from 5 different API sources daily, normalize formats, merge into a unified report, and email to stakeholders",
+      "promptIndex": 54,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 72778,
+      "tokensInput": 1152,
+      "tokensOutput": 7283,
+      "workflowName": "Daily Multi-Source API Aggregation & Stakeholder Report",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Aggregate data from 5 different API sources daily, normalize formats, merge into a unified report, and email to stakeholders",
+      "promptIndex": 54,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 79251,
+      "tokensInput": 1152,
+      "tokensOutput": 7539,
+      "workflowName": "Daily Multi-Source API Aggregation & Stakeholder Report",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Aggregate data from 5 different API sources daily, normalize formats, merge into a unified report, and email to stakeholders",
+      "promptIndex": 54,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 82432,
+      "tokensInput": 1152,
+      "tokensOutput": 8080,
+      "workflowName": "Daily Multi-API Data Aggregation & Stakeholder Report",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a complete lead scoring system: receive lead data via webhook, enrich from Clearbit API, score based on multiple criteria using a code node, route high-score leads to sales Slack channel and CRM, low-score to nurture email sequence",
+      "promptIndex": 55,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 77657,
+      "tokensInput": 1575,
+      "tokensOutput": 6791,
+      "workflowName": "Lead Scoring & Routing System",
+      "credentialsCount": 4
+    },
+    {
+      "prompt": "Build a complete lead scoring system: receive lead data via webhook, enrich from Clearbit API, score based on multiple criteria using a code node, route high-score leads to sales Slack channel and CRM, low-score to nurture email sequence",
+      "promptIndex": 55,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 82378,
+      "tokensInput": 1575,
+      "tokensOutput": 7386,
+      "workflowName": "Lead Scoring & Routing System",
+      "credentialsCount": 4
+    },
+    {
+      "prompt": "Build a complete lead scoring system: receive lead data via webhook, enrich from Clearbit API, score based on multiple criteria using a code node, route high-score leads to sales Slack channel and CRM, low-score to nurture email sequence",
+      "promptIndex": 55,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 84608,
+      "tokensInput": 1575,
+      "tokensOutput": 7575,
+      "workflowName": "Lead Scoring System — Enrich, Score & Route",
+      "credentialsCount": 4
+    },
+    {
+      "prompt": "Create an automated content pipeline: monitor RSS feeds for industry news, use AI to summarize each article, generate social media posts for Twitter and LinkedIn, schedule posts, and track engagement metrics",
+      "promptIndex": 56,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 85864,
+      "tokensInput": 1677,
+      "tokensOutput": 7831,
+      "workflowName": "Automated Content Pipeline: RSS → AI Summary → Social Media",
+      "credentialsCount": 5
+    },
+    {
+      "prompt": "Create an automated content pipeline: monitor RSS feeds for industry news, use AI to summarize each article, generate social media posts for Twitter and LinkedIn, schedule posts, and track engagement metrics",
+      "promptIndex": 56,
+      "success": false,
+      "attempts": 3,
+      "durationMs": 87434,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "credentialsCount": 0,
+      "error": "generate_workflow tool call missing workflow field"
+    },
+    {
+      "prompt": "Create an automated content pipeline: monitor RSS feeds for industry news, use AI to summarize each article, generate social media posts for Twitter and LinkedIn, schedule posts, and track engagement metrics",
+      "promptIndex": 56,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 83508,
+      "tokensInput": 1677,
+      "tokensOutput": 7796,
+      "workflowName": "Automated Content Pipeline: RSS → AI Summary → Social Media Posts",
+      "credentialsCount": 5
+    },
+    {
+      "prompt": "Build an incident response workflow: receive PagerDuty alerts via webhook, create a Slack channel for the incident, gather system metrics from monitoring APIs, use AI to suggest diagnosis, and create a Jira ticket with all context",
+      "promptIndex": 57,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 76905,
+      "tokensInput": 1204,
+      "tokensOutput": 7015,
+      "workflowName": "Incident Response: PagerDuty → Slack → Metrics → AI Diagnosis → Jira",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "Build an incident response workflow: receive PagerDuty alerts via webhook, create a Slack channel for the incident, gather system metrics from monitoring APIs, use AI to suggest diagnosis, and create a Jira ticket with all context",
+      "promptIndex": 57,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 74977,
+      "tokensInput": 1204,
+      "tokensOutput": 6871,
+      "workflowName": "Incident Response: PagerDuty → Slack → Metrics → AI Diagnosis → Jira",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "Build an incident response workflow: receive PagerDuty alerts via webhook, create a Slack channel for the incident, gather system metrics from monitoring APIs, use AI to suggest diagnosis, and create a Jira ticket with all context",
+      "promptIndex": 57,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 74070,
+      "tokensInput": 1204,
+      "tokensOutput": 6709,
+      "workflowName": "Incident Response: PagerDuty → Slack → Metrics → AI Diagnosis → Jira",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "Create a data pipeline that extracts data from a PostgreSQL database, transforms it with custom code, loads it into Google BigQuery, generates a summary report, and emails it to the data team every morning",
+      "promptIndex": 58,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 59486,
+      "tokensInput": 1505,
+      "tokensOutput": 5246,
+      "workflowName": "Daily ETL Pipeline: PostgreSQL → BigQuery → Email Report",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "Create a data pipeline that extracts data from a PostgreSQL database, transforms it with custom code, loads it into Google BigQuery, generates a summary report, and emails it to the data team every morning",
+      "promptIndex": 58,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 48536,
+      "tokensInput": 1505,
+      "tokensOutput": 4219,
+      "workflowName": "Daily ETL Pipeline: PostgreSQL → BigQuery → Email Report",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "Create a data pipeline that extracts data from a PostgreSQL database, transforms it with custom code, loads it into Google BigQuery, generates a summary report, and emails it to the data team every morning",
+      "promptIndex": 58,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 53926,
+      "tokensInput": 1505,
+      "tokensOutput": 4580,
+      "workflowName": "Daily ETL Pipeline: PostgreSQL → BigQuery → Email Report",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "Build an employee onboarding automation: when HR submits a form, create user accounts in Google Workspace and Slack, assign to appropriate groups, schedule orientation meetings, send welcome package details, and create a 30-day check-in reminder",
+      "promptIndex": 59,
+      "success": false,
+      "attempts": 3,
+      "durationMs": 88512,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "credentialsCount": 0,
+      "error": "Claude response was truncated (max_tokens reached) — the workflow may be too large. Try a simpler description or break it into smaller workflows."
+    },
+    {
+      "prompt": "Build an employee onboarding automation: when HR submits a form, create user accounts in Google Workspace and Slack, assign to appropriate groups, schedule orientation meetings, send welcome package details, and create a 30-day check-in reminder",
+      "promptIndex": 59,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 79361,
+      "tokensInput": 1599,
+      "tokensOutput": 7240,
+      "workflowName": "Employee Onboarding Automation",
+      "credentialsCount": 4
+    },
+    {
+      "prompt": "Build an employee onboarding automation: when HR submits a form, create user accounts in Google Workspace and Slack, assign to appropriate groups, schedule orientation meetings, send welcome package details, and create a 30-day check-in reminder",
+      "promptIndex": 59,
+      "success": false,
+      "attempts": 3,
+      "durationMs": 89721,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "credentialsCount": 0,
+      "error": "Claude response was truncated (max_tokens reached) — the workflow may be too large. Try a simpler description or break it into smaller workflows."
+    },
+    {
+      "prompt": "Create a customer feedback loop: collect NPS survey responses via webhook, analyze sentiment using AI, categorize feedback themes, route critical issues to support, generate weekly trend reports, and update a dashboard",
+      "promptIndex": 60,
+      "success": false,
+      "attempts": 3,
+      "durationMs": 87718,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "credentialsCount": 0,
+      "error": "Claude response was truncated (max_tokens reached) — the workflow may be too large. Try a simpler description or break it into smaller workflows."
+    },
+    {
+      "prompt": "Create a customer feedback loop: collect NPS survey responses via webhook, analyze sentiment using AI, categorize feedback themes, route critical issues to support, generate weekly trend reports, and update a dashboard",
+      "promptIndex": 60,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 85268,
+      "tokensInput": 1721,
+      "tokensOutput": 7802,
+      "workflowName": "Customer Feedback Loop — NPS Survey → AI Analysis → Routing & Reports",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "Create a customer feedback loop: collect NPS survey responses via webhook, analyze sentiment using AI, categorize feedback themes, route critical issues to support, generate weekly trend reports, and update a dashboard",
+      "promptIndex": 60,
+      "success": false,
+      "attempts": 3,
+      "durationMs": 87574,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "credentialsCount": 0,
+      "error": "Claude response was truncated (max_tokens reached) — the workflow may be too large. Try a simpler description or break it into smaller workflows."
+    },
+    {
+      "prompt": "Build a content moderation pipeline: receive user-generated content via webhook, scan for prohibited content using AI, flag suspicious items for human review, auto-approve clean content, and maintain an audit log",
+      "promptIndex": 61,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 80435,
+      "tokensInput": 1183,
+      "tokensOutput": 7596,
+      "workflowName": "Content Moderation Pipeline with Human Review",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "Build a content moderation pipeline: receive user-generated content via webhook, scan for prohibited content using AI, flag suspicious items for human review, auto-approve clean content, and maintain an audit log",
+      "promptIndex": 61,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 79912,
+      "tokensInput": 1183,
+      "tokensOutput": 7346,
+      "workflowName": "Content Moderation Pipeline with Human-in-the-Loop",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "Build a content moderation pipeline: receive user-generated content via webhook, scan for prohibited content using AI, flag suspicious items for human review, auto-approve clean content, and maintain an audit log",
+      "promptIndex": 61,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 80540,
+      "tokensInput": 1183,
+      "tokensOutput": 7593,
+      "workflowName": "Content Moderation Pipeline with Human Review",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "Create an automated invoice processing system: receive invoices via email, extract line items using AI, match against purchase orders in the database, flag discrepancies, route for approval based on amount thresholds, and update the accounting system",
+      "promptIndex": 62,
+      "success": false,
+      "attempts": 3,
+      "durationMs": 90275,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "credentialsCount": 0,
+      "error": "Claude response was truncated (max_tokens reached) — the workflow may be too large. Try a simpler description or break it into smaller workflows."
+    },
+    {
+      "prompt": "Create an automated invoice processing system: receive invoices via email, extract line items using AI, match against purchase orders in the database, flag discrepancies, route for approval based on amount thresholds, and update the accounting system",
+      "promptIndex": 62,
+      "success": false,
+      "attempts": 3,
+      "durationMs": 87195,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "credentialsCount": 0,
+      "error": "Claude response was truncated (max_tokens reached) — the workflow may be too large. Try a simpler description or break it into smaller workflows."
+    },
+    {
+      "prompt": "Create an automated invoice processing system: receive invoices via email, extract line items using AI, match against purchase orders in the database, flag discrepancies, route for approval based on amount thresholds, and update the accounting system",
+      "promptIndex": 62,
+      "success": false,
+      "attempts": 3,
+      "durationMs": 89883,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "credentialsCount": 0,
+      "error": "Claude response was truncated (max_tokens reached) — the workflow may be too large. Try a simpler description or break it into smaller workflows."
+    },
+    {
+      "prompt": "Build a competitive intelligence workflow: monitor competitor websites daily for pricing changes, use AI to analyze and summarize changes, compare against internal pricing, generate strategy recommendations, and brief the sales team via Slack",
+      "promptIndex": 63,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 68249,
+      "tokensInput": 1268,
+      "tokensOutput": 5699,
+      "workflowName": "Competitive Intelligence — Daily Pricing Monitor & Sales Brief",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "Build a competitive intelligence workflow: monitor competitor websites daily for pricing changes, use AI to analyze and summarize changes, compare against internal pricing, generate strategy recommendations, and brief the sales team via Slack",
+      "promptIndex": 63,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 74413,
+      "tokensInput": 1268,
+      "tokensOutput": 6426,
+      "workflowName": "Competitive Intelligence — Daily Pricing Monitor & Sales Brief",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "Build a competitive intelligence workflow: monitor competitor websites daily for pricing changes, use AI to analyze and summarize changes, compare against internal pricing, generate strategy recommendations, and brief the sales team via Slack",
+      "promptIndex": 63,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 73293,
+      "tokensInput": 1268,
+      "tokensOutput": 6769,
+      "workflowName": "Competitive Intelligence — Daily Pricing Monitor & Sales Brief",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "Create a multi-channel customer support router: receive tickets from email webhook Slack and web form, unify format, use AI to classify urgency and category, assign to appropriate team member based on skills and availability, set SLA timers, and escalate overdue tickets",
+      "promptIndex": 64,
+      "success": false,
+      "attempts": 3,
+      "durationMs": 85113,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "credentialsCount": 0,
+      "error": "Claude response was truncated (max_tokens reached) — the workflow may be too large. Try a simpler description or break it into smaller workflows."
+    },
+    {
+      "prompt": "Create a multi-channel customer support router: receive tickets from email webhook Slack and web form, unify format, use AI to classify urgency and category, assign to appropriate team member based on skills and availability, set SLA timers, and escalate overdue tickets",
+      "promptIndex": 64,
+      "success": false,
+      "attempts": 3,
+      "durationMs": 85655,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "credentialsCount": 0,
+      "error": "Claude response was truncated (max_tokens reached) — the workflow may be too large. Try a simpler description or break it into smaller workflows."
+    },
+    {
+      "prompt": "Create a multi-channel customer support router: receive tickets from email webhook Slack and web form, unify format, use AI to classify urgency and category, assign to appropriate team member based on skills and availability, set SLA timers, and escalate overdue tickets",
+      "promptIndex": 64,
+      "success": false,
+      "attempts": 3,
+      "durationMs": 88319,
+      "tokensInput": 0,
+      "tokensOutput": 0,
+      "credentialsCount": 0,
+      "error": "Claude response was truncated (max_tokens reached) — the workflow may be too large. Try a simpler description or break it into smaller workflows."
+    },
+    {
+      "prompt": "Send a Slack message when a Google Calendar event is about to start in 15 minutes",
+      "promptIndex": 65,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 22797,
+      "tokensInput": 1155,
+      "tokensOutput": 1983,
+      "workflowName": "Slack Alert: Google Calendar Event Starting in 15 Minutes",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Send a Slack message when a Google Calendar event is about to start in 15 minutes",
+      "promptIndex": 65,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 19347,
+      "tokensInput": 1155,
+      "tokensOutput": 1555,
+      "workflowName": "Slack Alert: Google Calendar Event Starting in 15 Minutes",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Send a Slack message when a Google Calendar event is about to start in 15 minutes",
+      "promptIndex": 65,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 24955,
+      "tokensInput": 1155,
+      "tokensOutput": 2228,
+      "workflowName": "Slack Alert: Google Calendar Event Starting in 15 Minutes",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Receive a webhook with a URL, take a screenshot using an HTTP API, and save it to cloud storage",
+      "promptIndex": 66,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 31300,
+      "tokensInput": 1178,
+      "tokensOutput": 2774,
+      "workflowName": "Webhook → Screenshot → Cloud Storage",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Receive a webhook with a URL, take a screenshot using an HTTP API, and save it to cloud storage",
+      "promptIndex": 66,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 31422,
+      "tokensInput": 1178,
+      "tokensOutput": 2754,
+      "workflowName": "Webhook → Screenshot → Cloud Storage",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Receive a webhook with a URL, take a screenshot using an HTTP API, and save it to cloud storage",
+      "promptIndex": 66,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 30376,
+      "tokensInput": 1178,
+      "tokensOutput": 2609,
+      "workflowName": "Webhook → Screenshot → Cloud Storage",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Every day at noon, count the number of open support tickets from an API and post the count to Slack",
+      "promptIndex": 67,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 25133,
+      "tokensInput": 1197,
+      "tokensOutput": 1437,
+      "workflowName": "Daily Noon: Open Support Ticket Count to Slack",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Every day at noon, count the number of open support tickets from an API and post the count to Slack",
+      "promptIndex": 67,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 18976,
+      "tokensInput": 1197,
+      "tokensOutput": 1551,
+      "workflowName": "Daily Noon: Open Support Ticket Count to Slack",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Every day at noon, count the number of open support tickets from an API and post the count to Slack",
+      "promptIndex": 67,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 17499,
+      "tokensInput": 1197,
+      "tokensOutput": 1440,
+      "workflowName": "Daily Noon: Open Support Ticket Count to Slack",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "When a webhook receives a JSON array, split it into individual items, process each one, and aggregate the results",
+      "promptIndex": 68,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 29043,
+      "tokensInput": 1602,
+      "tokensOutput": 2459,
+      "workflowName": "Webhook JSON Array — Split, Process & Aggregate",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "When a webhook receives a JSON array, split it into individual items, process each one, and aggregate the results",
+      "promptIndex": 68,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 28976,
+      "tokensInput": 1602,
+      "tokensOutput": 2541,
+      "workflowName": "Webhook JSON Array — Split, Process & Aggregate",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "When a webhook receives a JSON array, split it into individual items, process each one, and aggregate the results",
+      "promptIndex": 68,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 25257,
+      "tokensInput": 1602,
+      "tokensOutput": 2127,
+      "workflowName": "Webhook JSON Array — Split, Process & Aggregate",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Create a workflow that backs up a Notion database to Google Sheets every night at 2am",
+      "promptIndex": 69,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 30233,
+      "tokensInput": 1015,
+      "tokensOutput": 2626,
+      "workflowName": "Nightly Notion Database Backup to Google Sheets",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Create a workflow that backs up a Notion database to Google Sheets every night at 2am",
+      "promptIndex": 69,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 30357,
+      "tokensInput": 1015,
+      "tokensOutput": 2626,
+      "workflowName": "Nightly Notion Database Backup to Google Sheets",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Create a workflow that backs up a Notion database to Google Sheets every night at 2am",
+      "promptIndex": 69,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 29973,
+      "tokensInput": 1015,
+      "tokensOutput": 2611,
+      "workflowName": "Nightly Notion Database Backup to Google Sheets",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Receive a webhook with search terms, query multiple APIs in parallel, merge results, rank by relevance, and return top 10",
+      "promptIndex": 70,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 46022,
+      "tokensInput": 1183,
+      "tokensOutput": 4239,
+      "workflowName": "Webhook Search Aggregator — Multi-API Parallel Query with Ranked Results",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Receive a webhook with search terms, query multiple APIs in parallel, merge results, rank by relevance, and return top 10",
+      "promptIndex": 70,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 50482,
+      "tokensInput": 1183,
+      "tokensOutput": 4490,
+      "workflowName": "Webhook Search Aggregator — Multi-API Parallel Query with Ranked Results",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Receive a webhook with search terms, query multiple APIs in parallel, merge results, rank by relevance, and return top 10",
+      "promptIndex": 70,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 49512,
+      "tokensInput": 1183,
+      "tokensOutput": 4557,
+      "workflowName": "Webhook Search Aggregator — Multi-API Parallel Query with Ranked Results",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Monitor an e-commerce API for low stock items every 4 hours and generate reorder requests via email",
+      "promptIndex": 71,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 36160,
+      "tokensInput": 1017,
+      "tokensOutput": 3121,
+      "workflowName": "E-Commerce Low Stock Monitor & Reorder Requests",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Monitor an e-commerce API for low stock items every 4 hours and generate reorder requests via email",
+      "promptIndex": 71,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 46460,
+      "tokensInput": 1017,
+      "tokensOutput": 3864,
+      "workflowName": "E-Commerce Low Stock Monitor & Reorder Requests",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Monitor an e-commerce API for low stock items every 4 hours and generate reorder requests via email",
+      "promptIndex": 71,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 41036,
+      "tokensInput": 1017,
+      "tokensOutput": 3502,
+      "workflowName": "E-Commerce Low Stock Monitor & Reorder Alerts",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "When a new GitHub release is published, download release notes, format for multiple channels, and post to Slack Discord and email",
+      "promptIndex": 72,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 53888,
+      "tokensInput": 1020,
+      "tokensOutput": 4804,
+      "workflowName": "GitHub Release → Slack, Discord & Email Notifications",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "When a new GitHub release is published, download release notes, format for multiple channels, and post to Slack Discord and email",
+      "promptIndex": 72,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 54751,
+      "tokensInput": 1020,
+      "tokensOutput": 4916,
+      "workflowName": "GitHub Release → Slack, Discord & Email Notifications",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "When a new GitHub release is published, download release notes, format for multiple channels, and post to Slack Discord and email",
+      "promptIndex": 72,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 54141,
+      "tokensInput": 1020,
+      "tokensOutput": 4796,
+      "workflowName": "GitHub Release → Slack, Discord & Email Notifications",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "Build a simple approval workflow: receive request via webhook, send approval message to Slack, wait for response, and proceed or reject",
+      "promptIndex": 73,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 32643,
+      "tokensInput": 1169,
+      "tokensOutput": 2937,
+      "workflowName": "Approval Workflow — Webhook → Slack → Wait → Route",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a simple approval workflow: receive request via webhook, send approval message to Slack, wait for response, and proceed or reject",
+      "promptIndex": 73,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 33688,
+      "tokensInput": 1169,
+      "tokensOutput": 3149,
+      "workflowName": "Approval Workflow — Webhook → Slack → Wait → Route",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a simple approval workflow: receive request via webhook, send approval message to Slack, wait for response, and proceed or reject",
+      "promptIndex": 73,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 31600,
+      "tokensInput": 1169,
+      "tokensOutput": 2930,
+      "workflowName": "Approval Workflow — Webhook → Slack → Wait → Route",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Create a data validation pipeline: receive CSV data via webhook, validate each row against business rules using code node, separate valid and invalid rows, store valid rows and email error report for invalid ones",
+      "promptIndex": 74,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 48993,
+      "tokensInput": 1560,
+      "tokensOutput": 4234,
+      "workflowName": "CSV Data Validation Pipeline",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Create a data validation pipeline: receive CSV data via webhook, validate each row against business rules using code node, separate valid and invalid rows, store valid rows and email error report for invalid ones",
+      "promptIndex": 74,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 47449,
+      "tokensInput": 1560,
+      "tokensOutput": 4006,
+      "workflowName": "CSV Data Validation Pipeline",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Create a data validation pipeline: receive CSV data via webhook, validate each row against business rules using code node, separate valid and invalid rows, store valid rows and email error report for invalid ones",
+      "promptIndex": 74,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 53629,
+      "tokensInput": 1560,
+      "tokensOutput": 4595,
+      "workflowName": "CSV Data Validation Pipeline",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Every morning fetch the top 5 news headlines from a news API and send them as a formatted Slack message",
+      "promptIndex": 75,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 19236,
+      "tokensInput": 1198,
+      "tokensOutput": 1561,
+      "workflowName": "Daily Top 5 News Headlines to Slack",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Every morning fetch the top 5 news headlines from a news API and send them as a formatted Slack message",
+      "promptIndex": 75,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 19640,
+      "tokensInput": 1198,
+      "tokensOutput": 1555,
+      "workflowName": "Daily Top 5 News Headlines to Slack",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Every morning fetch the top 5 news headlines from a news API and send them as a formatted Slack message",
+      "promptIndex": 75,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 22476,
+      "tokensInput": 1198,
+      "tokensOutput": 1909,
+      "workflowName": "Daily Top 5 News Headlines to Slack",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Receive a webhook with a YouTube URL, fetch video metadata via API, extract title and description, and save to a spreadsheet",
+      "promptIndex": 76,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 33031,
+      "tokensInput": 1209,
+      "tokensOutput": 2969,
+      "workflowName": "YouTube URL Webhook → Fetch Metadata → Save to Google Sheets",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Receive a webhook with a YouTube URL, fetch video metadata via API, extract title and description, and save to a spreadsheet",
+      "promptIndex": 76,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 32686,
+      "tokensInput": 1209,
+      "tokensOutput": 2925,
+      "workflowName": "YouTube URL Webhook → Fetch Metadata → Save to Google Sheets",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Receive a webhook with a YouTube URL, fetch video metadata via API, extract title and description, and save to a spreadsheet",
+      "promptIndex": 76,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 36013,
+      "tokensInput": 1209,
+      "tokensOutput": 3132,
+      "workflowName": "YouTube URL Webhook → Fetch Metadata → Save to Google Sheets",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Build a periodic cleanup workflow: every Sunday at midnight, find inactive records older than 90 days via API, archive them, and send a summary",
+      "promptIndex": 77,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 30602,
+      "tokensInput": 1207,
+      "tokensOutput": 2800,
+      "workflowName": "Weekly Inactive Records Cleanup & Archive",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a periodic cleanup workflow: every Sunday at midnight, find inactive records older than 90 days via API, archive them, and send a summary",
+      "promptIndex": 77,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 51286,
+      "tokensInput": 1207,
+      "tokensOutput": 4632,
+      "workflowName": "Weekly Inactive Records Cleanup & Archive",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a periodic cleanup workflow: every Sunday at midnight, find inactive records older than 90 days via API, archive them, and send a summary",
+      "promptIndex": 77,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 39998,
+      "tokensInput": 1207,
+      "tokensOutput": 3568,
+      "workflowName": "Weekly Inactive Records Cleanup & Archive",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "When a webhook receives a long URL, call a URL shortener API, store the mapping, and return the short URL",
+      "promptIndex": 78,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 31827,
+      "tokensInput": 1207,
+      "tokensOutput": 2517,
+      "workflowName": "Webhook URL Shortener with Mapping Storage",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "When a webhook receives a long URL, call a URL shortener API, store the mapping, and return the short URL",
+      "promptIndex": 78,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 23195,
+      "tokensInput": 1207,
+      "tokensOutput": 2116,
+      "workflowName": "Webhook URL Shortener",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "When a webhook receives a long URL, call a URL shortener API, store the mapping, and return the short URL",
+      "promptIndex": 78,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 24840,
+      "tokensInput": 1207,
+      "tokensOutput": 2288,
+      "workflowName": "Webhook URL Shortener with Mapping Storage",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Create a workflow that monitors a Supabase database for new entries every 10 minutes and syncs them to Airtable",
+      "promptIndex": 79,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 37132,
+      "tokensInput": 1023,
+      "tokensOutput": 3353,
+      "workflowName": "Supabase to Airtable Sync (Every 10 Minutes)",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Create a workflow that monitors a Supabase database for new entries every 10 minutes and syncs them to Airtable",
+      "promptIndex": 79,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 35292,
+      "tokensInput": 1023,
+      "tokensOutput": 3153,
+      "workflowName": "Supabase to Airtable Sync (Every 10 Minutes)",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Create a workflow that monitors a Supabase database for new entries every 10 minutes and syncs them to Airtable",
+      "promptIndex": 79,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 36581,
+      "tokensInput": 1023,
+      "tokensOutput": 3366,
+      "workflowName": "Supabase to Airtable Sync (Every 10 Minutes)",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Receive a payment notification via webhook, verify the signature using a code node, update order status, and send confirmation email",
+      "promptIndex": 80,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 32629,
+      "tokensInput": 1546,
+      "tokensOutput": 2993,
+      "workflowName": "Payment Notification Handler",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Receive a payment notification via webhook, verify the signature using a code node, update order status, and send confirmation email",
+      "promptIndex": 80,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 32503,
+      "tokensInput": 1546,
+      "tokensOutput": 2862,
+      "workflowName": "Payment Notification Handler",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Receive a payment notification via webhook, verify the signature using a code node, update order status, and send confirmation email",
+      "promptIndex": 80,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 39327,
+      "tokensInput": 1546,
+      "tokensOutput": 3223,
+      "workflowName": "Payment Notification Handler",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a simple chatbot workflow: receive chat messages via webhook, use OpenAI to generate responses, and send them back",
+      "promptIndex": 81,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 26913,
+      "tokensInput": 1181,
+      "tokensOutput": 2468,
+      "workflowName": "Simple Chatbot — Webhook + OpenAI",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a simple chatbot workflow: receive chat messages via webhook, use OpenAI to generate responses, and send them back",
+      "promptIndex": 81,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 29710,
+      "tokensInput": 1181,
+      "tokensOutput": 2836,
+      "workflowName": "Simple Chatbot — Webhook + OpenAI",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a simple chatbot workflow: receive chat messages via webhook, use OpenAI to generate responses, and send them back",
+      "promptIndex": 81,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 29574,
+      "tokensInput": 1181,
+      "tokensOutput": 2801,
+      "workflowName": "Simple Chatbot — Webhook + OpenAI",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Every first of the month, pull usage metrics from an API, generate a PDF report via an HTTP service, and email it to management",
+      "promptIndex": 82,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 41693,
+      "tokensInput": 1170,
+      "tokensOutput": 3750,
+      "workflowName": "Monthly Usage Metrics Report — Email to Management",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Every first of the month, pull usage metrics from an API, generate a PDF report via an HTTP service, and email it to management",
+      "promptIndex": 82,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 34769,
+      "tokensInput": 1170,
+      "tokensOutput": 3192,
+      "workflowName": "Monthly Usage Metrics Report — Email to Management",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "Every first of the month, pull usage metrics from an API, generate a PDF report via an HTTP service, and email it to management",
+      "promptIndex": 82,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 39236,
+      "tokensInput": 1170,
+      "tokensOutput": 3661,
+      "workflowName": "Monthly Usage Metrics Report — Email to Management",
+      "credentialsCount": 3
+    },
+    {
+      "prompt": "When a user submits a bug report via webhook, create a GitHub issue, add appropriate labels based on keywords, and notify the dev team on Slack",
+      "promptIndex": 83,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 41331,
+      "tokensInput": 1167,
+      "tokensOutput": 3747,
+      "workflowName": "Bug Report → GitHub Issue + Slack Notification",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "When a user submits a bug report via webhook, create a GitHub issue, add appropriate labels based on keywords, and notify the dev team on Slack",
+      "promptIndex": 83,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 98369,
+      "tokensInput": 1167,
+      "tokensOutput": 3115,
+      "workflowName": "Bug Report → GitHub Issue + Slack Notification",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "When a user submits a bug report via webhook, create a GitHub issue, add appropriate labels based on keywords, and notify the dev team on Slack",
+      "promptIndex": 83,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 44327,
+      "tokensInput": 1167,
+      "tokensOutput": 4062,
+      "workflowName": "Bug Report → GitHub Issue + Slack Notification",
+      "credentialsCount": 2
+    },
+    {
+      "prompt": "Receive a webhook with geographic coordinates, look up the nearest store via API, calculate distance, and return directions",
+      "promptIndex": 84,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 42611,
+      "tokensInput": 1205,
+      "tokensOutput": 3917,
+      "workflowName": "Webhook: Find Nearest Store & Return Directions",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Receive a webhook with geographic coordinates, look up the nearest store via API, calculate distance, and return directions",
+      "promptIndex": 84,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 37585,
+      "tokensInput": 1205,
+      "tokensOutput": 3511,
+      "workflowName": "Webhook: Find Nearest Store & Return Directions",
+      "credentialsCount": 0
+    },
+    {
+      "prompt": "Receive a webhook with geographic coordinates, look up the nearest store via API, calculate distance, and return directions",
+      "promptIndex": 84,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 41882,
+      "tokensInput": 1205,
+      "tokensOutput": 3760,
+      "workflowName": "Webhook: Find Nearest Store & Return Directions",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a webhook endpoint that accepts a new user signup with email and name fields, validates the email format, checks a Postgres table for an existing user with that email, inserts a new record if not found, and returns a consistent JSON response shaped like {success, data, error} for every path including validation failures and duplicates",
+      "promptIndex": 85,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 30785,
+      "tokensInput": 1268,
+      "tokensOutput": 3002,
+      "workflowName": "User Signup Webhook with Validation & Postgres",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a webhook endpoint that accepts a new user signup with email and name fields, validates the email format, checks a Postgres table for an existing user with that email, inserts a new record if not found, and returns a consistent JSON response shaped like {success, data, error} for every path including validation failures and duplicates",
+      "promptIndex": 85,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 29978,
+      "tokensInput": 1268,
+      "tokensOutput": 2892,
+      "workflowName": "User Signup Webhook with Validation & Postgres",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a webhook endpoint that accepts a new user signup with email and name fields, validates the email format, checks a Postgres table for an existing user with that email, inserts a new record if not found, and returns a consistent JSON response shaped like {success, data, error} for every path including validation failures and duplicates",
+      "promptIndex": 85,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 31748,
+      "tokensInput": 1268,
+      "tokensOutput": 3056,
+      "workflowName": "User Signup Webhook with Validation & Postgres",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a webhook endpoint that accepts a customer ID as a query parameter, looks up the customer in a Supabase table, and returns the customer record as JSON if found or a structured {success: false, error} response if no matching record exists",
+      "promptIndex": 86,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 19795,
+      "tokensInput": 1207,
+      "tokensOutput": 1835,
+      "workflowName": "Webhook — Customer Lookup by ID",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a webhook endpoint that accepts a customer ID as a query parameter, looks up the customer in a Supabase table, and returns the customer record as JSON if found or a structured {success: false, error} response if no matching record exists",
+      "promptIndex": 86,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 26773,
+      "tokensInput": 1207,
+      "tokensOutput": 2532,
+      "workflowName": "Webhook — Customer Lookup by ID",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a webhook endpoint that accepts a customer ID as a query parameter, looks up the customer in a Supabase table, and returns the customer record as JSON if found or a structured {success: false, error} response if no matching record exists",
+      "promptIndex": 86,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 25348,
+      "tokensInput": 1207,
+      "tokensOutput": 2514,
+      "workflowName": "Webhook — Customer Lookup by ID",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a webhook endpoint that accepts an array of items to import, validates each item has required name and email fields, inserts valid items into an Airtable base, and returns a JSON array with one status object per item indicating whether it succeeded or failed and why",
+      "promptIndex": 87,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 38524,
+      "tokensInput": 1709,
+      "tokensOutput": 3639,
+      "workflowName": "Webhook → Validate & Import Items to Airtable",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a webhook endpoint that accepts an array of items to import, validates each item has required name and email fields, inserts valid items into an Airtable base, and returns a JSON array with one status object per item indicating whether it succeeded or failed and why",
+      "promptIndex": 87,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 44434,
+      "tokensInput": 1709,
+      "tokensOutput": 3959,
+      "workflowName": "Webhook Bulk Import to Airtable with Validation",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a webhook endpoint that accepts an array of items to import, validates each item has required name and email fields, inserts valid items into an Airtable base, and returns a JSON array with one status object per item indicating whether it succeeded or failed and why",
+      "promptIndex": 87,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 41808,
+      "tokensInput": 1709,
+      "tokensOutput": 3704,
+      "workflowName": "Webhook Bulk Import to Airtable with Validation",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a webhook endpoint that accepts a product ID and updated fields, checks if the product exists in a NocoDB table, updates it if found, and returns a structured JSON response with the updated record or a clear error if the product ID doesn't exist",
+      "promptIndex": 88,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 37537,
+      "tokensInput": 1527,
+      "tokensOutput": 3576,
+      "workflowName": "NocoDB Product Update Webhook",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a webhook endpoint that accepts a product ID and updated fields, checks if the product exists in a NocoDB table, updates it if found, and returns a structured JSON response with the updated record or a clear error if the product ID doesn't exist",
+      "promptIndex": 88,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 37558,
+      "tokensInput": 1527,
+      "tokensOutput": 3611,
+      "workflowName": "NocoDB Product Update Webhook",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a webhook endpoint that accepts a product ID and updated fields, checks if the product exists in a NocoDB table, updates it if found, and returns a structured JSON response with the updated record or a clear error if the product ID doesn't exist",
+      "promptIndex": 88,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 35065,
+      "tokensInput": 1527,
+      "tokensOutput": 3400,
+      "workflowName": "NocoDB Product Update Webhook",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a webhook endpoint for creating a support ticket that requires title, description, and priority fields, validates priority is one of low, medium, or high, rejects the request with a detailed list of which fields are missing or invalid if validation fails, and only writes to the database if all fields pass validation",
+      "promptIndex": 89,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 21966,
+      "tokensInput": 1217,
+      "tokensOutput": 1995,
+      "workflowName": "Support Ticket Creation Webhook",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a webhook endpoint for creating a support ticket that requires title, description, and priority fields, validates priority is one of low, medium, or high, rejects the request with a detailed list of which fields are missing or invalid if validation fails, and only writes to the database if all fields pass validation",
+      "promptIndex": 89,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 20998,
+      "tokensInput": 1217,
+      "tokensOutput": 1891,
+      "workflowName": "Support Ticket Creation Webhook",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a webhook endpoint for creating a support ticket that requires title, description, and priority fields, validates priority is one of low, medium, or high, rejects the request with a detailed list of which fields are missing or invalid if validation fails, and only writes to the database if all fields pass validation",
+      "promptIndex": 89,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 24550,
+      "tokensInput": 1217,
+      "tokensOutput": 2072,
+      "workflowName": "Support Ticket Creation Webhook",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a webhook endpoint that requires an API key passed in a header, rejects requests with a structured 401-style JSON error if the key is missing or doesn't match an expected value, and only proceeds to look up account data in Postgres if the key is valid",
+      "promptIndex": 90,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 30071,
+      "tokensInput": 1211,
+      "tokensOutput": 2759,
+      "workflowName": "Webhook API Key Auth + Postgres Account Lookup",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a webhook endpoint that requires an API key passed in a header, rejects requests with a structured 401-style JSON error if the key is missing or doesn't match an expected value, and only proceeds to look up account data in Postgres if the key is valid",
+      "promptIndex": 90,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 30666,
+      "tokensInput": 1211,
+      "tokensOutput": 2716,
+      "workflowName": "Webhook with API Key Auth + Postgres Account Lookup",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a webhook endpoint that requires an API key passed in a header, rejects requests with a structured 401-style JSON error if the key is missing or doesn't match an expected value, and only proceeds to look up account data in Postgres if the key is valid",
+      "promptIndex": 90,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 31282,
+      "tokensInput": 1211,
+      "tokensOutput": 2844,
+      "workflowName": "Webhook with API Key Auth + Postgres Account Lookup",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a webhook endpoint that returns a paginated list of orders from a Postgres table, accepting page and pageSize query parameters, and returning the matching rows along with total count and page metadata in the JSON response",
+      "promptIndex": 91,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 19746,
+      "tokensInput": 1225,
+      "tokensOutput": 1814,
+      "workflowName": "Paginated Orders API via Webhook",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a webhook endpoint that returns a paginated list of orders from a Postgres table, accepting page and pageSize query parameters, and returning the matching rows along with total count and page metadata in the JSON response",
+      "promptIndex": 91,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 21799,
+      "tokensInput": 1225,
+      "tokensOutput": 2036,
+      "workflowName": "Paginated Orders API via Webhook",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a webhook endpoint that returns a paginated list of orders from a Postgres table, accepting page and pageSize query parameters, and returning the matching rows along with total count and page metadata in the JSON response",
+      "promptIndex": 91,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 21574,
+      "tokensInput": 1225,
+      "tokensOutput": 2047,
+      "workflowName": "Paginated Orders API — Webhook + Postgres",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a webhook endpoint that accepts an order creation request with an idempotency key, checks if a request with that idempotency key was already processed by looking it up in Redis, returns the previously stored result if it was, and otherwise processes the order and stores the result keyed by that idempotency key",
+      "promptIndex": 92,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 39101,
+      "tokensInput": 1222,
+      "tokensOutput": 3706,
+      "workflowName": "Idempotent Order Creation Webhook",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a webhook endpoint that accepts an order creation request with an idempotency key, checks if a request with that idempotency key was already processed by looking it up in Redis, returns the previously stored result if it was, and otherwise processes the order and stores the result keyed by that idempotency key",
+      "promptIndex": 92,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 39417,
+      "tokensInput": 1222,
+      "tokensOutput": 3657,
+      "workflowName": "Idempotent Order Creation Webhook",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a webhook endpoint that accepts an order creation request with an idempotency key, checks if a request with that idempotency key was already processed by looking it up in Redis, returns the previously stored result if it was, and otherwise processes the order and stores the result keyed by that idempotency key",
+      "promptIndex": 92,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 37892,
+      "tokensInput": 1222,
+      "tokensOutput": 3525,
+      "workflowName": "Idempotent Order Creation Webhook",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a webhook endpoint that accepts a user ID, fetches the user's profile from Postgres and their recent orders from a separate HTTP API, combines both into a single JSON response shaped like {success: true, data: {profile, orders}}, and returns a clear error response if either lookup fails",
+      "promptIndex": 93,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 52504,
+      "tokensInput": 1262,
+      "tokensOutput": 5186,
+      "workflowName": "Webhook: Fetch User Profile + Orders",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a webhook endpoint that accepts a user ID, fetches the user's profile from Postgres and their recent orders from a separate HTTP API, combines both into a single JSON response shaped like {success: true, data: {profile, orders}}, and returns a clear error response if either lookup fails",
+      "promptIndex": 93,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 40136,
+      "tokensInput": 1262,
+      "tokensOutput": 4083,
+      "workflowName": "Webhook: Fetch User Profile + Orders",
+      "credentialsCount": 1
+    },
+    {
+      "prompt": "Build a webhook endpoint that accepts a user ID, fetches the user's profile from Postgres and their recent orders from a separate HTTP API, combines both into a single JSON response shaped like {success: true, data: {profile, orders}}, and returns a clear error response if either lookup fails",
+      "promptIndex": 93,
+      "success": true,
+      "attempts": 1,
+      "durationMs": 42917,
+      "tokensInput": 1262,
+      "tokensOutput": 4230,
+      "workflowName": "Webhook: Fetch User Profile + Orders",
+      "credentialsCount": 1
+    }
+  ],
+  "summary": {
+    "total": 282,
+    "successes": 270,
+    "failures": 12,
+    "firstTry": 267,
+    "neededCorrection": 3,
+    "avgDurationMs": 39037.28723404255,
+    "avgAttempts": 1.011111111111111,
+    "firstTryRate": 0.9888888888888889,
+    "firstTryRateOverAll": 0.9468085106382979,
+    "correctionRate": 0.011111111111111112,
+    "libraryUsed": true,
+    "repeatsPerPrompt": 3,
+    "promptReliability": [
+      {
+        "promptIndex": 62,
+        "prompt": "Create an automated invoice processing system: receive invoices via email, extract line items using AI, match against purchase orders in the database, flag discrepancies, route for approval based on amount thresholds, and update the accounting system",
+        "passes": 0,
+        "runs": 3,
+        "passRate": 0
+      },
+      {
+        "promptIndex": 64,
+        "prompt": "Create a multi-channel customer support router: receive tickets from email webhook Slack and web form, unify format, use AI to classify urgency and category, assign to appropriate team member based on skills and availability, set SLA timers, and escalate overdue tickets",
+        "passes": 0,
+        "runs": 3,
+        "passRate": 0
+      },
+      {
+        "promptIndex": 59,
+        "prompt": "Build an employee onboarding automation: when HR submits a form, create user accounts in Google Workspace and Slack, assign to appropriate groups, schedule orientation meetings, send welcome package details, and create a 30-day check-in reminder",
+        "passes": 1,
+        "runs": 3,
+        "passRate": 0.3333333333333333
+      },
+      {
+        "promptIndex": 60,
+        "prompt": "Create a customer feedback loop: collect NPS survey responses via webhook, analyze sentiment using AI, categorize feedback themes, route critical issues to support, generate weekly trend reports, and update a dashboard",
+        "passes": 1,
+        "runs": 3,
+        "passRate": 0.3333333333333333
+      },
+      {
+        "promptIndex": 53,
+        "prompt": "When a form submission arrives, validate the data, check against a blocklist, send to approval queue or auto-approve",
+        "passes": 2,
+        "runs": 3,
+        "passRate": 0.6666666666666666
+      },
+      {
+        "promptIndex": 56,
+        "prompt": "Create an automated content pipeline: monitor RSS feeds for industry news, use AI to summarize each article, generate social media posts for Twitter and LinkedIn, schedule posts, and track engagement metrics",
+        "passes": 2,
+        "runs": 3,
+        "passRate": 0.6666666666666666
+      },
+      {
+        "promptIndex": 0,
+        "prompt": "Every day at 8am, send an email reminder to team@company.com saying \"Stand-up in 30 minutes\"",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 1,
+        "prompt": "When a webhook receives a POST request, return a JSON response with { \"status\": \"ok\" }",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 2,
+        "prompt": "Every Monday at 9am, post \"Weekly sync time!\" to a Slack channel called #engineering",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 3,
+        "prompt": "When a form is submitted via webhook, save the data to a Google Sheet",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 4,
+        "prompt": "Every hour, make a GET request to https://api.example.com/health and log the result",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 5,
+        "prompt": "Send a Telegram message saying \"Build complete\" when a webhook is triggered",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 6,
+        "prompt": "Every 5 minutes, check https://httpbin.org/status/200 and alert on failure via email",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 7,
+        "prompt": "When receiving a webhook, extract the \"name\" field and respond with \"Hello, {name}\"",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 8,
+        "prompt": "Schedule a daily report email at 6pm with a summary from an HTTP API endpoint",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 9,
+        "prompt": "Receive a webhook with user data, validate the email field, and return success/failure",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 10,
+        "prompt": "Receive a webhook with order data, check if total > 100, send a Slack alert for high-value orders, otherwise log to a spreadsheet",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 11,
+        "prompt": "Every morning at 7am, fetch weather data from an API, format it nicely, and post to Slack #general",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 12,
+        "prompt": "When a webhook receives a support ticket, classify priority based on keywords, route high-priority to Slack and low-priority to email",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 13,
+        "prompt": "Receive a webhook POST, call https://httpbin.org/json, merge the response with the original data, and return the combined result",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 14,
+        "prompt": "Every day at midnight, fetch all GitHub issues from a repo, filter open ones, and send a summary email",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 15,
+        "prompt": "When a new email arrives, extract attachments, upload them to S3, and send a confirmation Slack message",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 16,
+        "prompt": "Receive a webhook with product data, check inventory levels, send restock alerts for items below threshold",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 17,
+        "prompt": "Every 30 minutes, poll an RSS feed, check for new entries, and post new items to a Slack channel",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 18,
+        "prompt": "When triggered by webhook, look up a customer in a database, enrich with external API data, and return the profile",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 19,
+        "prompt": "Receive form submissions via webhook, validate required fields, store valid entries in Airtable, respond with status",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 20,
+        "prompt": "Fetch data from two different APIs, merge the results, transform the combined data, and save to Google Sheets",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 21,
+        "prompt": "Every week on Friday at 5pm, aggregate weekly metrics from an API and email a summary report",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 22,
+        "prompt": "When a webhook receives an event, check the event type with a switch node, and route to different Slack channels based on type",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 23,
+        "prompt": "Receive customer feedback via webhook, analyze sentiment using a simple keyword check, and route to appropriate team",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 24,
+        "prompt": "Every day, fetch exchange rates from an API, compare with yesterday, and alert via Slack if change exceeds 2%",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 25,
+        "prompt": "Build a chat-triggered AI agent using GPT-4o with window buffer memory that can answer questions about a company knowledge base",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 26,
+        "prompt": "Create an AI agent with OpenAI that has access to a calculator tool and a web search tool, triggered by chat messages",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 27,
+        "prompt": "When a webhook receives a document URL, fetch the document, split it into chunks, generate embeddings, and store in a vector database",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 28,
+        "prompt": "Build a customer support chatbot using an AI agent with memory that can look up order status via an HTTP tool",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 29,
+        "prompt": "Create an AI-powered email classifier: receive emails, use an LLM to categorize them, route to appropriate folders, and send auto-replies",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 30,
+        "prompt": "Build a Slack bot that uses an AI agent to answer questions about internal documentation, with conversation memory",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 31,
+        "prompt": "When a webhook receives a long text, use an AI chain to summarize it, extract key entities, and store the results",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 32,
+        "prompt": "Create a workflow that monitors a GitHub repo for new issues, uses AI to suggest labels, and auto-assigns based on content",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 33,
+        "prompt": "Build an AI agent with tools for querying a PostgreSQL database and formatting results as tables",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 34,
+        "prompt": "Create a multi-step AI pipeline: receive text via webhook, translate to English, summarize, extract sentiment, return structured result",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 35,
+        "prompt": "Merge data from three different webhook endpoints using a merge node and return the combined payload",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 36,
+        "prompt": "Use a code node to calculate the fibonacci sequence for a number received via webhook",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 37,
+        "prompt": "Receive a webhook, wait 5 seconds using a wait node, then send a delayed response",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 38,
+        "prompt": "Create a workflow with error handling: try an HTTP request, catch failures, and send error details to Slack",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 39,
+        "prompt": "Receive a CSV file via webhook, parse it using a code node, and insert rows into a Google Sheet",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 40,
+        "prompt": "Use a switch node to route incoming webhooks to 4 different processing paths based on the \"action\" field",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 41,
+        "prompt": "Receive a webhook with an image URL, download the image via HTTP request, and upload it to S3",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 42,
+        "prompt": "Create a workflow that processes items in a loop: receive an array via webhook, iterate, transform each item, and return results",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 43,
+        "prompt": "Build a webhook endpoint that rate-limits requests: check a counter in Redis, reject if over limit, process if under",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 44,
+        "prompt": "Receive a webhook, encrypt sensitive fields using a code node, store in a database, and return a receipt ID",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 45,
+        "prompt": "When a new row is added to Google Sheets, check for duplicates, send a welcome email to new contacts, and update CRM",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 46,
+        "prompt": "Monitor a website for changes every hour, compare with previous version, and alert via Telegram if content changed",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 47,
+        "prompt": "When a Stripe payment webhook arrives, update the customer record, send a receipt email, and log to accounting spreadsheet",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 48,
+        "prompt": "Sync contacts between two systems: fetch from API A, compare with API B, create missing entries, update changed ones",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 49,
+        "prompt": "When a GitHub PR is merged, trigger a deployment webhook, wait for completion, and post the result to Slack",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 50,
+        "prompt": "Process incoming invoice emails: extract amount and vendor using regex, categorize, and add to an expense tracking sheet",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 51,
+        "prompt": "When a user signs up via webhook, create accounts in 3 services, send a welcome email, and log the onboarding event",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 52,
+        "prompt": "Monitor server metrics via HTTP endpoint every 5 minutes, check thresholds, escalate alerts through email then Slack then PagerDuty",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 54,
+        "prompt": "Aggregate data from 5 different API sources daily, normalize formats, merge into a unified report, and email to stakeholders",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 55,
+        "prompt": "Build a complete lead scoring system: receive lead data via webhook, enrich from Clearbit API, score based on multiple criteria using a code node, route high-score leads to sales Slack channel and CRM, low-score to nurture email sequence",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 57,
+        "prompt": "Build an incident response workflow: receive PagerDuty alerts via webhook, create a Slack channel for the incident, gather system metrics from monitoring APIs, use AI to suggest diagnosis, and create a Jira ticket with all context",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 58,
+        "prompt": "Create a data pipeline that extracts data from a PostgreSQL database, transforms it with custom code, loads it into Google BigQuery, generates a summary report, and emails it to the data team every morning",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 61,
+        "prompt": "Build a content moderation pipeline: receive user-generated content via webhook, scan for prohibited content using AI, flag suspicious items for human review, auto-approve clean content, and maintain an audit log",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 63,
+        "prompt": "Build a competitive intelligence workflow: monitor competitor websites daily for pricing changes, use AI to analyze and summarize changes, compare against internal pricing, generate strategy recommendations, and brief the sales team via Slack",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 65,
+        "prompt": "Send a Slack message when a Google Calendar event is about to start in 15 minutes",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 66,
+        "prompt": "Receive a webhook with a URL, take a screenshot using an HTTP API, and save it to cloud storage",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 67,
+        "prompt": "Every day at noon, count the number of open support tickets from an API and post the count to Slack",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 68,
+        "prompt": "When a webhook receives a JSON array, split it into individual items, process each one, and aggregate the results",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 69,
+        "prompt": "Create a workflow that backs up a Notion database to Google Sheets every night at 2am",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 70,
+        "prompt": "Receive a webhook with search terms, query multiple APIs in parallel, merge results, rank by relevance, and return top 10",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 71,
+        "prompt": "Monitor an e-commerce API for low stock items every 4 hours and generate reorder requests via email",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 72,
+        "prompt": "When a new GitHub release is published, download release notes, format for multiple channels, and post to Slack Discord and email",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 73,
+        "prompt": "Build a simple approval workflow: receive request via webhook, send approval message to Slack, wait for response, and proceed or reject",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 74,
+        "prompt": "Create a data validation pipeline: receive CSV data via webhook, validate each row against business rules using code node, separate valid and invalid rows, store valid rows and email error report for invalid ones",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 75,
+        "prompt": "Every morning fetch the top 5 news headlines from a news API and send them as a formatted Slack message",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 76,
+        "prompt": "Receive a webhook with a YouTube URL, fetch video metadata via API, extract title and description, and save to a spreadsheet",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 77,
+        "prompt": "Build a periodic cleanup workflow: every Sunday at midnight, find inactive records older than 90 days via API, archive them, and send a summary",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 78,
+        "prompt": "When a webhook receives a long URL, call a URL shortener API, store the mapping, and return the short URL",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 79,
+        "prompt": "Create a workflow that monitors a Supabase database for new entries every 10 minutes and syncs them to Airtable",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 80,
+        "prompt": "Receive a payment notification via webhook, verify the signature using a code node, update order status, and send confirmation email",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 81,
+        "prompt": "Build a simple chatbot workflow: receive chat messages via webhook, use OpenAI to generate responses, and send them back",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 82,
+        "prompt": "Every first of the month, pull usage metrics from an API, generate a PDF report via an HTTP service, and email it to management",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 83,
+        "prompt": "When a user submits a bug report via webhook, create a GitHub issue, add appropriate labels based on keywords, and notify the dev team on Slack",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 84,
+        "prompt": "Receive a webhook with geographic coordinates, look up the nearest store via API, calculate distance, and return directions",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 85,
+        "prompt": "Build a webhook endpoint that accepts a new user signup with email and name fields, validates the email format, checks a Postgres table for an existing user with that email, inserts a new record if not found, and returns a consistent JSON response shaped like {success, data, error} for every path including validation failures and duplicates",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 86,
+        "prompt": "Build a webhook endpoint that accepts a customer ID as a query parameter, looks up the customer in a Supabase table, and returns the customer record as JSON if found or a structured {success: false, error} response if no matching record exists",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 87,
+        "prompt": "Build a webhook endpoint that accepts an array of items to import, validates each item has required name and email fields, inserts valid items into an Airtable base, and returns a JSON array with one status object per item indicating whether it succeeded or failed and why",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 88,
+        "prompt": "Build a webhook endpoint that accepts a product ID and updated fields, checks if the product exists in a NocoDB table, updates it if found, and returns a structured JSON response with the updated record or a clear error if the product ID doesn't exist",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 89,
+        "prompt": "Build a webhook endpoint for creating a support ticket that requires title, description, and priority fields, validates priority is one of low, medium, or high, rejects the request with a detailed list of which fields are missing or invalid if validation fails, and only writes to the database if all fields pass validation",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 90,
+        "prompt": "Build a webhook endpoint that requires an API key passed in a header, rejects requests with a structured 401-style JSON error if the key is missing or doesn't match an expected value, and only proceeds to look up account data in Postgres if the key is valid",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 91,
+        "prompt": "Build a webhook endpoint that returns a paginated list of orders from a Postgres table, accepting page and pageSize query parameters, and returning the matching rows along with total count and page metadata in the JSON response",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 92,
+        "prompt": "Build a webhook endpoint that accepts an order creation request with an idempotency key, checks if a request with that idempotency key was already processed by looking it up in Redis, returns the previously stored result if it was, and otherwise processes the order and stores the result keyed by that idempotency key",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      },
+      {
+        "promptIndex": 93,
+        "prompt": "Build a webhook endpoint that accepts a user ID, fetches the user's profile from Postgres and their recent orders from a separate HTTP API, combines both into a single JSON response shaped like {success: true, data: {profile, orders}}, and returns a clear error response if either lookup fails",
+        "passes": 3,
+        "runs": 3,
+        "passRate": 1
+      }
+    ]
+  }
+}
