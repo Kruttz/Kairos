@@ -78,6 +78,7 @@ Environment variables:
   N8N_API_KEY             n8n API key (required for deploy, optional for --dry-run)
   KAIROS_MODEL            Claude model override (default: claude-sonnet-4-6)
   KAIROS_MAX_TOKENS       Max output tokens for generation (default: 16000)
+  KAIROS_TIMEOUT_MS       Generation call timeout in ms (default: 300000)
   KAIROS_TELEMETRY        Set to "true" or a directory path to enable telemetry logging
   KAIROS_LIBRARY_DIR      Override the workflow library directory (default: ~/.kairos/library)
   KAIROS_PROMPT_PROFILE   minimal | standard | rich (default: standard)
@@ -172,6 +173,7 @@ async function createClient(): Promise<Kairos> {
     n8nApiKey: getEnvOrExit('N8N_API_KEY'),
     ...(process.env['KAIROS_MODEL'] ? { model: process.env['KAIROS_MODEL'] } : {}),
     ...(process.env['KAIROS_MAX_TOKENS'] ? { maxTokens: parseInt(process.env['KAIROS_MAX_TOKENS'], 10) } : {}),
+    ...(process.env['KAIROS_TIMEOUT_MS'] ? { timeoutMs: parseInt(process.env['KAIROS_TIMEOUT_MS'], 10) } : {}),
     ...(telemetry !== undefined ? { telemetry } : {}),
     ...(nodeRegistry ? { nodeRegistry } : {}),
     library: createLibrary(),
@@ -188,6 +190,7 @@ async function createDryRunClient(): Promise<Kairos> {
     ...(process.env['N8N_API_KEY'] ? { n8nApiKey: process.env['N8N_API_KEY'] } : {}),
     ...(process.env['KAIROS_MODEL'] ? { model: process.env['KAIROS_MODEL'] } : {}),
     ...(process.env['KAIROS_MAX_TOKENS'] ? { maxTokens: parseInt(process.env['KAIROS_MAX_TOKENS'], 10) } : {}),
+    ...(process.env['KAIROS_TIMEOUT_MS'] ? { timeoutMs: parseInt(process.env['KAIROS_TIMEOUT_MS'], 10) } : {}),
     ...(telemetry !== undefined ? { telemetry } : {}),
     ...(nodeRegistry ? { nodeRegistry } : {}),
     library: createLibrary(),

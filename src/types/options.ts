@@ -10,6 +10,10 @@ export interface ClientOptions {
   /** Max output tokens for the generation call (default: 16000, or KAIROS_MAX_TOKENS). Raise
    * this if you see "Claude response was truncated (max_tokens reached)" on large workflows. */
   maxTokens?: number
+  /** Timeout in ms for the generation call (default: 300000, or KAIROS_TIMEOUT_MS). Raise this
+   * if you see "Anthropic API call failed: Request was aborted" on large, many-integration
+   * workflows — larger maxTokens responses take longer to stream. */
+  timeoutMs?: number
   logger?: ILogger
   library?: IWorkflowLibrary
   telemetry?: boolean | string

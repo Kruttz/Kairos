@@ -18,6 +18,7 @@ const MAX_ATTEMPTS = 3
 const BASE_TEMPERATURE = 0.2
 const FINAL_TEMPERATURE = 0.1
 const DEFAULT_MAX_TOKENS = 16000
+const DEFAULT_TIMEOUT_MS = 300000
 
 const GENERATE_WORKFLOW_TOOL: Anthropic.Tool = {
   name: 'generate_workflow',
@@ -75,6 +76,7 @@ export class WorkflowDesigner {
     patternsPath?: string,
     nodeRegistry?: NodeRegistry,
     private readonly maxTokens: number = DEFAULT_MAX_TOKENS,
+    private readonly timeoutMs: number = DEFAULT_TIMEOUT_MS,
   ) {
     this.validator = new N8nValidator(nodeRegistry)
     this.promptBuilder = new PromptBuilder(patternsPath)
@@ -157,7 +159,7 @@ export class WorkflowDesigner {
     temperature: number,
   ): Promise<Anthropic.Message> {
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 120_000)
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs)
     try {
       return await this.anthropic.messages.create(
         {

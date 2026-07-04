@@ -136,3 +136,31 @@ describe('WorkflowDesigner — retry-loop feedback includes warn-severity issues
     expect(mockAnthropic.messages.create).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('WorkflowDesigner — timeout configuration', () => {
+  it('defaults the abort timeout to 300000ms when not specified', async () => {
+    const mockAnthropic = makeMockAnthropic({ workflow: VALID_WORKFLOW, credentialsNeeded: [] })
+    const designer = new WorkflowDesigner(mockAnthropic as never, 'claude-sonnet-4-6', nullLogger)
+
+    const setTimeoutSpy = vi.spyOn(global, 'setTimeout')
+    await designer.design(REQUEST, [])
+
+    const abortCall = setTimeoutSpy.mock.calls.find((call) => call[1] === 300000)
+    expect(abortCall).toBeDefined()
+    setTimeoutSpy.mockRestore()
+  })
+
+  it('uses a custom timeoutMs value when provided', async () => {
+    const mockAnthropic = makeMockAnthropic({ workflow: VALID_WORKFLOW, credentialsNeeded: [] })
+    const designer = new WorkflowDesigner(
+      mockAnthropic as never, 'claude-sonnet-4-6', nullLogger, undefined, undefined, undefined, 600000,
+    )
+
+    const setTimeoutSpy = vi.spyOn(global, 'setTimeout')
+    await designer.design(REQUEST, [])
+
+    const abortCall = setTimeoutSpy.mock.calls.find((call) => call[1] === 600000)
+    expect(abortCall).toBeDefined()
+    setTimeoutSpy.mockRestore()
+  })
+})
