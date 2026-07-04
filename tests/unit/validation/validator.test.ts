@@ -4291,4 +4291,40 @@ describe('N8nValidator', () => {
     const result = validator.validate(w)
     expect(result.issues.some((i) => i.rule === 130)).toBe(false)
   })
+
+  // Rule 131: long unbranched node chain — consolidation opportunity
+  function pushSetNodes(w: N8nWorkflow, count: number): void {
+    for (let i = 0; i < count; i++) {
+      w.nodes.push({
+        id: `bbbb0131-aaaa-4aaa-aaaa-${String(i).padStart(12, '0')}`,
+        name: `Set ${i}`,
+        type: 'n8n-nodes-base.set',
+        typeVersion: 3.4,
+        position: [450 + i * 100, 300],
+        parameters: { assignments: { assignments: [] } },
+      })
+    }
+  }
+
+  it('rule 131: warns when workflow has 15+ nodes with no branching logic', () => {
+    const w = baseWorkflow()
+    pushSetNodes(w, 14) // 1 (trigger) + 14 = 15, hits the threshold
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 131)).toBe(true)
+  })
+
+  it('rule 131: no warning below the 15-node threshold', () => {
+    const w = baseWorkflow()
+    pushSetNodes(w, 5) // 1 + 5 = 6, well under threshold
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 131)).toBe(false)
+  })
+
+  it('rule 131: no warning when the workflow branches, even with 15+ nodes', () => {
+    const w = baseWorkflow()
+    pushSetNodes(w, 13)
+    w.nodes.push({ id: 'bbbb0131-aaaa-4aaa-aaaa-aaaaaaaaaaaa', name: 'Check Status', type: 'n8n-nodes-base.if', typeVersion: 2, position: [450, 600], parameters: { conditions: { conditions: [{ leftValue: '={{ $json.x }}', rightValue: 1, operator: { type: 'number', operation: 'equals' } }] } } })
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 131)).toBe(false)
+  })
 })

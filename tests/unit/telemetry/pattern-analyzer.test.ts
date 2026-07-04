@@ -385,7 +385,7 @@ describe('PatternAnalyzer', () => {
   // ── Drift detection ────────────────────────────────────────────────
 
   describe('drift detection', () => {
-    it('reports healthy when all 34 rules are covered', async () => {
+    it('reports healthy when all rules are covered', async () => {
       const events = [
         makeEvent('build_start', 's1', { description: 'test', dryRun: false, model: 'test' }),
         makeEvent('generation_attempt', 's1', {
@@ -399,8 +399,8 @@ describe('PatternAnalyzer', () => {
       const result = await analyzer.analyze()
 
       expect(result.drift.healthy).toBe(true)
-      expect(result.drift.coveredRules).toBe(128)
-      expect(result.drift.totalRules).toBe(128)
+      expect(result.drift.coveredRules).toBe(129)
+      expect(result.drift.totalRules).toBe(129)
     })
 
     it('every rule has a mitigation and stage mapping', async () => {

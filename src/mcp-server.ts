@@ -727,7 +727,7 @@ server.tool(
 
 server.tool(
   'kairos_record_trace',
-  'Record the most recent execution of a deployed n8n workflow into the Kairos library. This improves future retrieval quality by grounding the library in real runtime behavior. Run after a workflow has executed in production.',
+  'Record the most recent execution of a deployed n8n workflow into the Kairos library. This improves future retrieval quality by grounding the library in real runtime behavior, checks for execution drift against this workflow\'s own trace history, and reports the slowest node from the latest run. Run after a workflow has executed in production.',
   {
     n8n_workflow_id: z.string().describe('The n8n workflow ID to fetch the latest execution for'),
   },
@@ -752,6 +752,12 @@ server.tool(
 
     await library.recordTrace(match.id, trace)
 
+    const { detectExecutionDrift } = await import('./telemetry/execution-drift.js')
+    const updated = await library.get(match.id)
+    const traces = updated?.executionTraces ?? [trace]
+    const drift = detectExecutionDrift(traces)
+    const slowestNode = Object.entries(trace.nodeDurations).sort((a, b) => b[1] - a[1])[0]
+
     return mcpText(JSON.stringify({
       recorded: true,
       libraryId: match.id,
@@ -761,6 +767,9 @@ server.tool(
       durationMs: trace.durationMs,
       executedNodes: trace.executedNodes.length,
       erroredNodes: trace.erroredNodes.length,
+      nodeDurations: trace.nodeDurations,
+      slowestNode: slowestNode ? { name: slowestNode[0], ms: slowestNode[1] } : null,
+      drift,
     }, null, 2))
   },
 )

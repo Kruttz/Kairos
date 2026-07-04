@@ -28,6 +28,7 @@ function makeTrace(overrides?: Partial<ExecutionTrace>): ExecutionTrace {
     executedNodes: ['Trigger', 'Process', 'Send'],
     erroredNodes: [],
     itemCount: 10,
+    nodeDurations: {},
     ...overrides,
   }
 }
@@ -120,6 +121,41 @@ describe('parseExecutionTrace', () => {
     expect(trace.executedNodes).toEqual([])
     expect(trace.erroredNodes).toEqual([])
     expect(trace.itemCount).toBe(0)
+    expect(trace.nodeDurations).toEqual({})
+  })
+
+  it('extracts per-node execution time from executionTime', () => {
+    const execution = makeExecution({
+      data: {
+        resultData: {
+          runData: {
+            'HTTP Request': [{ executionTime: 1250, data: { main: [[{ json: {} }]] } }],
+            'Fast Node': [{ executionTime: 5, data: { main: [[{ json: {} }]] } }],
+          },
+        },
+      },
+    })
+    const trace = parseExecutionTrace(execution)
+    expect(trace.nodeDurations['HTTP Request']).toBe(1250)
+    expect(trace.nodeDurations['Fast Node']).toBe(5)
+  })
+
+  it('sums execution time across multiple runs of a looped node', () => {
+    const execution = makeExecution({
+      data: {
+        resultData: {
+          runData: {
+            'Loop Body': [
+              { executionTime: 100, data: { main: [[{ json: {} }]] } },
+              { executionTime: 150, data: { main: [[{ json: {} }]] } },
+              { executionTime: 120, data: { main: [[{ json: {} }]] } },
+            ],
+          },
+        },
+      },
+    })
+    const trace = parseExecutionTrace(execution)
+    expect(trace.nodeDurations['Loop Body']).toBe(370)
   })
 })
 

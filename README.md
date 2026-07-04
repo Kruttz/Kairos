@@ -8,7 +8,7 @@
 
 ![Kairos SDK Demo](demo.gif)
 
-Describe your business and Kairos builds a full suite of n8n automations: it plans the workflows, generates each one via Claude, validates every node and connection against **128 structural rules**, deploys to your n8n instance, and hands back a structured document covering credentials needed, data sources, assumptions made, open questions, and a test checklist. Use it as an **MCP server** (connect to Claude Code, Claude Desktop, or any MCP host — no Anthropic API key needed), a **TypeScript SDK**, or a **CLI**. With a seeded template library, Kairos achieves **100% first-try structural validation pass rate** across 20 benchmark prompts.
+Describe your business and Kairos builds a full suite of n8n automations: it plans the workflows, generates each one via Claude, validates every node and connection against **129 structural rules**, deploys to your n8n instance, and hands back a structured document covering credentials needed, data sources, assumptions made, open questions, and a test checklist. Use it as an **MCP server** (connect to Claude Code, Claude Desktop, or any MCP host — no Anthropic API key needed), a **TypeScript SDK**, or a **CLI**. With a seeded template library, Kairos achieves **100% first-try structural validation pass rate** across 20 benchmark prompts.
 
 ```ts
 import { Kairos, PackBuilder } from '@kairos-sdk/core'
@@ -41,7 +41,7 @@ console.log(pack.testChecklist)               // how to verify each workflow
 |---|---|
 | Generates valid n8n workflow JSON | Perfect business logic |
 | Builds complete workflow packs from business context | Correct credentials or API configs |
-| Validates structure before deploy (128 rules) | Runtime success for every API |
+| Validates structure before deploy (129 rules) | Runtime success for every API |
 | Documents assumptions, open questions, and test steps | That every workflow matches intent perfectly |
 | Syncs node types from your live instance | Full replacement for human review |
 | Learns from prior builds and failures | Monitoring after deployment (coming soon) |
@@ -105,7 +105,7 @@ The MCP server does **not** call an LLM internally. Instead, it gives your host 
 
 1. **Host LLM calls `kairos_prompt`** — gets the n8n system prompt, node catalog, library matches, and failure patterns
 2. **Host LLM generates the workflow JSON** using that context (no separate API call)
-3. **Host LLM calls `kairos_validate`** — checks the JSON against 128 structural rules
+3. **Host LLM calls `kairos_validate`** — checks the JSON against 129 structural rules
 4. If invalid, the host LLM fixes the issues and validates again
 5. **Host LLM calls `kairos_deploy`** — sends the validated workflow to n8n
 
@@ -118,7 +118,7 @@ This means Kairos works with **any LLM** — Claude, GPT, Gemini, Llama, or anyt
 | Tool | Description |
 |------|-------------|
 | `kairos_prompt` | Returns the specialized system prompt, node catalog, library matches, and failure patterns for a given description |
-| `kairos_validate` | Validates workflow JSON against 128 structural rules — returns errors and warnings |
+| `kairos_validate` | Validates workflow JSON against 129 structural rules — returns errors and warnings |
 | `kairos_search` | Searches the local workflow library for similar past builds |
 | `kairos_sync` | Manually refresh the node catalog from your n8n instance (auto-runs on first `kairos_prompt` call) |
 | `kairos_patterns` | Returns pattern analysis — top failure rules, confidence scores, and improvement suggestions derived from build telemetry |
@@ -277,7 +277,7 @@ The original benchmark — 55% (11/20) baseline vs. 100% (20/20) with a 105-work
 1. **Search** — Kairos searches its local workflow library for similar past builds. Matching workflows and their failure patterns are pulled into context.
 2. **Warn** — Known failure patterns (from library matches and global telemetry rates) are injected into the system prompt so Claude avoids repeating known mistakes.
 3. **Generate** — Your description is sent to Claude with a detailed system prompt, forcing a `generate_workflow` tool call that produces structured n8n workflow JSON.
-4. **Validate** — The workflow is checked against **128 structural rules** covering node IDs, types, versions, names, positions, connections, forbidden fields, trigger presence, AI connection direction, cycle detection, webhook pairing, required parameters, and content quality (placeholder URLs, empty code nodes, missing required fields for Slack/Gmail/IF/Set/Schedule/Webhook nodes).
+4. **Validate** — The workflow is checked against **129 structural rules** covering node IDs, types, versions, names, positions, connections, forbidden fields, trigger presence, AI connection direction, cycle detection, webhook pairing, required parameters, and content quality (placeholder URLs, empty code nodes, missing required fields for Slack/Gmail/IF/Set/Schedule/Webhook nodes).
 5. **Correct** — If validation fails, the specific rule violations are sent back to Claude for correction (up to 3 attempts, with tighter temperature on the final try).
 6. **Strip** — Forbidden server-assigned fields (`id`, `createdAt`, `updatedAt`, etc.) are stripped before deployment.
 7. **Deploy** — The validated workflow is posted to your n8n instance via REST API.
@@ -287,7 +287,7 @@ The original benchmark — 55% (11/20) baseline vs. 100% (20/20) with a 105-work
 
 1. **Prompt** — Your LLM calls `kairos_prompt`, which searches the library and returns the specialized system prompt, node catalog, library matches, and failure patterns.
 2. **Generate** — Your LLM generates the workflow JSON itself using that context. No separate API call.
-3. **Validate** — Your LLM calls `kairos_validate`, which checks the JSON against the same 128 structural rules.
+3. **Validate** — Your LLM calls `kairos_validate`, which checks the JSON against the same 129 structural rules.
 4. **Correct** — If validation fails, your LLM fixes the issues and calls `kairos_validate` again.
 5. **Deploy** — Your LLM calls `kairos_deploy`, which strips forbidden fields and posts the workflow to n8n.
 6. **Record** — The deployed workflow is saved to the local library for future retrieval.
@@ -296,7 +296,7 @@ The original benchmark — 55% (11/20) baseline vs. 100% (20/20) with a 105-work
 
 ## Validator Rules
 
-The 128-rule validator is the core of what makes Kairos reliable. In baseline testing (no library), Claude needed the correction loop 45% of the time. Each rule targets a specific class of error:
+The 129-rule validator is the core of what makes Kairos reliable. In baseline testing (no library), Claude needed the correction loop 45% of the time. Each rule targets a specific class of error:
 
 **Node catalog generation:** Rule 129 (invalid `resource`/`operation` value for a node type) is backed by `src/validation/node-catalog-generated.ts`, a generated file listing every `resource`/`operation` value that actually exists for ~300 node types — extracted directly from the real `n8n-nodes-base` and `@n8n/n8n-nodes-langchain` packages (installed as devDependencies, never shipped) rather than hand-maintained. Regenerate it with `npm run generate:node-catalog` after bumping either package. It's an *existence* catalog, not a resource-to-operation pairing — a value that's valid under one resource might be incorrectly accepted under a different resource on the same node, since resolving that precisely would require evaluating n8n's conditional `displayOptions` logic against a specific parameter state (deferred; tracked as a follow-on).
 
@@ -430,10 +430,11 @@ The 128-rule validator is the core of what makes Kairos reliable. In baseline te
 | 128 | warn | OnError "continueErrorOutput" set but the dedicated error output port (index 1) is unwired |
 | 129 | warn | Node's resource/operation value doesn't exist in the real n8n schema for its type |
 | 130 | warn | AWS S3 / Slack file upload missing binaryPropertyName |
+| 131 | warn | Long unbranched node chain (15+ nodes, no If/Switch/Merge/Filter) — consolidation opportunity |
 
 Errors block deployment. Warnings are recorded and fed back into the prompt for future builds.
 
-*(All 128 rules — generated from `src/validation/validator.ts` via `npx tsx scripts/generate-rules-table.ts`; run it again and re-paste after adding or changing a rule. `tests/unit/docs-drift.test.ts` fails CI if this table's rule-ID set ever falls out of sync with the code.)*
+*(All 129 rules — generated from `src/validation/validator.ts` via `npx tsx scripts/generate-rules-table.ts`; run it again and re-paste after adding or changing a rule. `tests/unit/docs-drift.test.ts` fails CI if this table's rule-ID set ever falls out of sync with the code.)*
 
 ---
 
@@ -624,7 +625,7 @@ try {
 |---|---|
 | `GenerationError` | Anthropic API call failed |
 | `ResponseParseError` | Claude responded but produced no usable tool call |
-| `ValidationError` | Workflow failed 128-rule validation after max retries (carries `.attemptMetadata` and `.warnedRules`) |
+| `ValidationError` | Workflow failed 129-rule validation after max retries (carries `.attemptMetadata` and `.warnedRules`) |
 | `ProviderError` | Network/auth failure talking to n8n |
 | `ApiError` | n8n returned a 4xx or 5xx (carries `.statusCode`) |
 | `GuardError` | Input validation failed (empty description) or `delete()` called without `{ confirm: true }` |
@@ -868,9 +869,11 @@ const library = new FileLibrary(undefined, {
 })
 ```
 
-**Execution trace learning:** After a deployed workflow runs in n8n, record its latest execution with `kairos trace record <n8n-workflow-id>` (CLI) or `kairos_record_trace` (MCP). Kairos stores a privacy-safe trace (status, executed node names, error *types*, item counts — never data values, up to 10 per workflow) and computes a `runtimeReliabilityScore` that blends into the outcome signal (70% generation outcome, 30% runtime reliability). Workflows that actually run reliably in production rank higher in future retrieval.
+**Execution trace learning:** After a deployed workflow runs in n8n, record its latest execution with `kairos trace record <n8n-workflow-id>` (CLI) or `kairos_record_trace` (MCP). Kairos stores a privacy-safe trace (status, executed node names, error *types*, per-node execution time, item counts — never data values, up to 10 per workflow) and computes a `runtimeReliabilityScore` that blends into the outcome signal (70% generation outcome, 30% runtime reliability). Workflows that actually run reliably in production rank higher in future retrieval.
 
-**Template seeding:** Run `kairos sync-templates` to ingest validated workflows from the n8n community library. Templates are safety-filtered (blocks code/executeCommand/ssh nodes, hardcoded secrets) and tagged with `sourceKind: 'n8n-template'`. Under the 34-rule-era validator, seeding the library with 89 templates improved first-try pass rate from 55% to 100% — the current 128-rule validator plus a stronger system prompt now hits 100% even without a library (see [Benchmark Results](#benchmark-results) for the honest current picture and why the old comparison no longer discriminates).
+Each `trace record` call also compares the new run against that workflow's own trace history and reports: a node erroring that never errored before, a run more than 2x slower than the historical average, a node that always ran before but is now missing, any brand-new node in the executed path, and the single slowest node in the latest run. This is runtime *execution* drift — distinct from the validator-rule-coverage drift surfaced by `kairos patterns`.
+
+**Template seeding:** Run `kairos sync-templates` to ingest validated workflows from the n8n community library. Templates are safety-filtered (blocks code/executeCommand/ssh nodes, hardcoded secrets) and tagged with `sourceKind: 'n8n-template'`. Under the 34-rule-era validator, seeding the library with 89 templates improved first-try pass rate from 55% to 100% — the current 129-rule validator plus a stronger system prompt now hits 100% even without a library (see [Benchmark Results](#benchmark-results) for the honest current picture and why the old comparison no longer discriminates).
 
 **Bulk import from a local directory:** `kairos sync-templates --from-dir <path>` ingests any local directory of n8n workflow JSON files (recurses into subdirectories, accepts bare or n8n.io-style `{workflow: {...}}`-wrapped JSON). Each file goes through the same safety + validation gates as template seeding, deduplicates by a structural hash (so re-hosted copies of the same workflow don't pile up), synthesizes a description from any sticky notes on the canvas (falling back to a node-type summary), and selects up to `--limit` (default 1000) entries via diversity-aware sampling — every distinct structural pattern gets a slot before extra slots go to patterns matching your own build history. `code` nodes are demoted to `review` trust rather than blocked outright (pass `--strict-code-nodes` to keep the stricter behavior); imported `review`-trust entries are never injected as full JSON into the generation prompt, only as a reference node list, so an unvetted workflow's contents can't leak arbitrary instructions into a build. Never evicts existing library entries — if the library is already at capacity, the import reports zero capacity and stops rather than displacing what's there. Undo with `kairos library prune --source imported`.
 

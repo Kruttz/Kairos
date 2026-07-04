@@ -158,6 +158,7 @@ export class N8nValidator {
     this.checkRule128(workflow, issues)
     this.checkRule129(workflow, issues)
     this.checkRule130(workflow, issues)
+    this.checkRule131(workflow, issues)
 
     // Enrich issues with nodeType by looking up nodeId
     if (Array.isArray(workflow.nodes)) {
@@ -3391,6 +3392,35 @@ export class N8nValidator {
         )
       }
     }
+  }
+
+  // Rule 131 (WARN): long unbranched node chain (15+ nodes, no If/Switch/Merge/Filter) — consolidation opportunity
+  // Useful for performance-sensitive workflows (e.g. ones serving as a synchronous API
+  // backend, where per-node execution/serialization overhead adds up on every request).
+  // Deliberately narrow: only fires when there is NO branching logic anywhere in the
+  // workflow (no If/Switch/Merge/Filter), since a long workflow that branches is doing
+  // real conditional work, not just over-decomposed linear steps. A pure straight-line
+  // chain this long has no structural reason to stay broken into this many discrete
+  // nodes and is the textbook case for consolidating sequential steps into fewer,
+  // denser Code nodes.
+  private checkRule131(w: N8nWorkflow, issues: ValidationIssue[]): void {
+    if (!Array.isArray(w.nodes)) return
+    const LONG_UNBRANCHED_CHAIN_THRESHOLD = 15
+    if (w.nodes.length < LONG_UNBRANCHED_CHAIN_THRESHOLD) return
+
+    const BRANCHING_TYPES = new Set([
+      'n8n-nodes-base.if',
+      'n8n-nodes-base.switch',
+      'n8n-nodes-base.merge',
+      'n8n-nodes-base.filter',
+    ])
+    const hasBranching = w.nodes.some(n => BRANCHING_TYPES.has(n.type))
+    if (hasBranching) return
+
+    this.warn(
+      issues, 131,
+      `Workflow has ${w.nodes.length} nodes with no branching logic anywhere (no If/Switch/Merge/Filter) — a long, purely linear chain like this adds real per-node execution and data-serialization overhead on every run. Consider consolidating sequential transform steps into fewer, denser Code nodes, especially if this workflow serves latency-sensitive requests.`,
+    )
   }
 
   // Rule 34 (WARN): webhook path contains spaces, starts with slash, or looks like a full URL

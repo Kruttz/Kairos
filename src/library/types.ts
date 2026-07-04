@@ -62,6 +62,8 @@ export interface ExecutionTrace {
   executedNodes: string[]
   erroredNodes: Array<{ name: string; errorType: string }>
   itemCount: number
+  /** Per-node execution time in ms, summed across all runs of that node in this execution */
+  nodeDurations: Record<string, number>
 }
 
 export interface StoredWorkflow {

@@ -821,6 +821,8 @@ async function handleTrace(positional: string[]): Promise<void> {
     console.error('')
     console.error('Fetches the most recent execution of the given n8n workflow and')
     console.error('records it in the Kairos library to improve future retrieval quality.')
+    console.error('Also checks for execution drift against this workflow\'s own trace')
+    console.error('history and reports the slowest node from the latest run.')
     process.exit(1)
   }
 
@@ -858,6 +860,27 @@ async function handleTrace(positional: string[]): Promise<void> {
 
   await lib.recordTrace(match.id, trace)
   console.error(`Trace recorded for "${match.description}".`)
+
+  const { detectExecutionDrift } = await import('./telemetry/execution-drift.js')
+  const updated = await lib.get(match.id)
+  const traces = updated?.executionTraces ?? [trace]
+  const drift = detectExecutionDrift(traces)
+
+  const bottleneckEntries = Object.entries(trace.nodeDurations).sort((a, b) => b[1] - a[1])
+  const slowestNode = bottleneckEntries[0]
+
+  if (drift.hasDrift) {
+    console.error('')
+    console.error('⚠ Execution drift detected vs. this workflow\'s own trace history:')
+    if (drift.newlyErroringNodes.length > 0) console.error(`  - newly erroring: ${drift.newlyErroringNodes.join(', ')}`)
+    if (drift.durationAnomaly) console.error(`  - duration anomaly: ${drift.durationAnomaly.latestMs}ms vs. historical average ${Math.round(drift.durationAnomaly.baselineAvgMs)}ms (${drift.durationAnomaly.ratio.toFixed(1)}x)`)
+    if (drift.missingCoreNodes.length > 0) console.error(`  - missing nodes that always ran before: ${drift.missingCoreNodes.join(', ')}`)
+    if (drift.newNodes.length > 0) console.error(`  - new nodes not seen in prior runs: ${drift.newNodes.join(', ')}`)
+  }
+  if (slowestNode) {
+    console.error(`Slowest node this run: "${slowestNode[0]}" (${slowestNode[1]}ms)`)
+  }
+
   console.log(JSON.stringify({
     libraryId: match.id,
     workflowDescription: match.description,
@@ -866,6 +889,8 @@ async function handleTrace(positional: string[]): Promise<void> {
     durationMs: trace.durationMs,
     executedNodes: trace.executedNodes.length,
     erroredNodes: trace.erroredNodes,
+    nodeDurations: trace.nodeDurations,
+    drift,
   }, null, 2))
 }
 

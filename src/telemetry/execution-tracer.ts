@@ -27,6 +27,7 @@ export function parseExecutionTrace(execution: ExecutionDetail): ExecutionTrace 
 
   const executedNodes: string[] = []
   const erroredNodes: Array<{ name: string; errorType: string }> = []
+  const nodeDurations: Record<string, number> = {}
   let itemCount = 0
 
   // n8n execution data shape:
@@ -43,6 +44,14 @@ export function parseExecutionTrace(execution: ExecutionDetail): ExecutionTrace 
 
       for (const run of nodeRuns) {
         const runObj = run as Record<string, unknown>
+
+        // n8n's real ITaskData carries executionTime (ms) at the top level of each
+        // run object — summed across runs so a looped node's total cost is visible,
+        // matching how itemCount already sums across all of a node's runs.
+        const executionTime = runObj['executionTime']
+        if (typeof executionTime === 'number') {
+          nodeDurations[nodeName] = (nodeDurations[nodeName] ?? 0) + executionTime
+        }
 
         // Check for errors (only capture the error type/name, not the message content)
         const error = runObj['error'] as Record<string, unknown> | undefined
@@ -76,6 +85,7 @@ export function parseExecutionTrace(execution: ExecutionDetail): ExecutionTrace 
     executedNodes,
     erroredNodes,
     itemCount,
+    nodeDurations,
   }
 }
 
