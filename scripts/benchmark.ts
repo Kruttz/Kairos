@@ -12,7 +12,22 @@
  *   --compare      Compare results against a previous run's JSON file
  *   --tier <name>  Run only one difficulty tier instead of the first --count prompts.
  *                  One of: simple | medium | complex | edge | realworld | stress |
- *                  additional | all. Overrides --count when both are given.
+ *                  additional | backendApi | all. Overrides --count when both are given.
+ *   --repeat <n>   Run each selected prompt n times (default 1) — reports a per-prompt
+ *                  pass rate instead of a single pass/fail, since generation isn't fully
+ *                  deterministic and one sample can't distinguish "reliable" from "got lucky."
+ *   --isolated     Point telemetry/patterns at a fresh temp directory for this run only,
+ *                  instead of the real ~/.kairos state. Without this flag, every benchmark
+ *                  run both reads AND writes the same global telemetry/patterns.json that
+ *                  every other kairos build (this script, the CLI, real usage) also writes
+ *                  to — a long run's own earlier results can change the system-prompt
+ *                  guidance injected into its later prompts mid-run (observed directly:
+ *                  patterns.json regenerated mid-way through an 8-run single-prompt test).
+ *                  Use --isolated when you want a clean, stationary A/B comparison; omit it
+ *                  when you deliberately want to measure against real accumulated state (the
+ *                  library is NOT isolated by this flag — dry-run builds never write to it
+ *                  regardless, and retrieval against real library contents is part of what's
+ *                  being measured).
  *
  *                  As of 2026-07-02 the default --count 20 (the "simple" tier plus
  *                  the first 10 of "medium") scores 100% first-try under every
@@ -24,9 +39,13 @@
  *                  in the same commit (that's separate spend, ask first).
  *
  * All runs are dry-run (no deployment). Telemetry is written to ~/.kairos/telemetry/
+ * unless --isolated is passed.
  */
 
 import { Kairos, FileLibrary } from '../src/index.js'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const PROMPTS = [
   // --- Simple (single trigger + 1-2 nodes) ---
@@ -212,7 +231,7 @@ interface BenchmarkSummary {
   promptReliability?: PromptReliability[]
 }
 
-async function runBenchmark(count: number, outputPath?: string, useLibrary = true, comparePath?: string, tier?: string, repeat = 1): Promise<void> {
+async function runBenchmark(count: number, outputPath?: string, useLibrary = true, comparePath?: string, tier?: string, repeat = 1, isolated = false): Promise<void> {
   // Validate --tier before the API key check so a typo fails fast without needing
   // real credentials to discover it.
   const prompts = selectPrompts(count, tier)
@@ -226,11 +245,21 @@ async function runBenchmark(count: number, outputPath?: string, useLibrary = tru
     process.exit(1)
   }
 
+  // --isolated: point telemetry (and therefore patterns.json, which client.ts derives as
+  // join(telemetryDir, '..', 'patterns.json')) at a fresh temp dir, so this run's own
+  // earlier results can't mutate the system-prompt guidance injected into its later
+  // prompts. The library is deliberately left shared — dry-run builds never write to it.
+  let isolatedTelemetryDir: string | undefined
+  if (isolated) {
+    isolatedTelemetryDir = await mkdtemp(join(tmpdir(), 'kairos-benchmark-isolated-'))
+    console.log(`Isolated run — telemetry/patterns scoped to ${isolatedTelemetryDir} (deleted after this run)`)
+  }
+
   const kairos = new Kairos({
     anthropicApiKey: ANTHROPIC_API_KEY,
     n8nBaseUrl: N8N_BASE_URL,
     n8nApiKey: N8N_API_KEY,
-    telemetry: true,
+    telemetry: isolatedTelemetryDir ?? true,
     ...(useLibrary ? { library: new FileLibrary() } : {}),
   })
 
@@ -401,6 +430,11 @@ async function runBenchmark(count: number, outputPath?: string, useLibrary = tru
     await writeFile(outputPath, JSON.stringify({ results, summary }, null, 2))
     console.log(`\nFull results written to ${outputPath}`)
   }
+
+  if (isolatedTelemetryDir) {
+    await rm(isolatedTelemetryDir, { recursive: true, force: true })
+    console.log(`Isolated telemetry dir cleaned up.`)
+  }
 }
 
 const countArg = process.argv.indexOf('--count')
@@ -414,8 +448,9 @@ const tierArg = process.argv.indexOf('--tier')
 const tier = tierArg !== -1 ? process.argv[tierArg + 1] : undefined
 const repeatArg = process.argv.indexOf('--repeat')
 const repeat = repeatArg !== -1 ? parseInt(process.argv[repeatArg + 1] ?? '1', 10) : 1
+const isolated = process.argv.includes('--isolated')
 
-runBenchmark(count, output, !noLibrary, compare, tier, repeat).catch((err) => {
+runBenchmark(count, output, !noLibrary, compare, tier, repeat, isolated).catch((err) => {
   console.error('Benchmark failed:', err)
   process.exit(1)
 })
