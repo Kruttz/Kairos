@@ -1,6 +1,7 @@
 export { KairosError } from './base.js'
 export { GenerationError } from './generation-error.js'
 export { ResponseParseError } from './response-parse-error.js'
+export { ResponseTruncationError } from './response-truncation-error.js'
 export { ValidationError } from './validation-error.js'
 export type { ValidationIssue } from './validation-error.js'
 export { ProviderError } from './provider-error.js'

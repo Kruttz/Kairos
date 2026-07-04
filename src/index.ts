@@ -22,6 +22,7 @@ export {
   KairosError,
   GenerationError,
   ResponseParseError,
+  ResponseTruncationError,
   ValidationError,
   ProviderError,
   ApiError,

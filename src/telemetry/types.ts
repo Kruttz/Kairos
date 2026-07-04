@@ -19,6 +19,9 @@ export interface AttemptMetadata {
   tokensOutput: number
   validationPassed: boolean
   issues: ValidationIssue[]
+  /** Set when this attempt produced no parseable workflow at all (stringified/missing
+   * workflow field, truncation) — the attempt never reached validation. */
+  parseFailure?: string
 }
 
 export interface BuildStartData {

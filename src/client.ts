@@ -17,6 +17,8 @@ import type { ILogger } from './utils/logger.js'
 import { scoreToMode } from './utils/thresholds.js'
 import { GuardError } from './errors/guard-error.js'
 import { ValidationError } from './errors/validation-error.js'
+import { GenerationError } from './errors/generation-error.js'
+import { ResponseParseError } from './errors/response-parse-error.js'
 import { DeployActivationError } from './errors/deploy-activation-error.js'
 import { inferWorkflowType } from './utils/workflow-type.js'
 import { generateUUID } from './utils/uuid.js'
@@ -133,36 +135,8 @@ export class Kairos {
         globalFailureRates,
       )
     } catch (err) {
-      if (err instanceof ValidationError && err.attemptMetadata) {
-        for (const meta of err.attemptMetadata) {
-          await this.telemetry?.emit('generation_attempt', {
-            description,
-            attempt: meta.attempt,
-            temperature: meta.temperature,
-            durationMs: meta.durationMs,
-            tokensInput: meta.tokensInput,
-            tokensOutput: meta.tokensOutput,
-            validationPassed: meta.validationPassed,
-            issueCount: meta.issues.length,
-            issues: meta.issues.map((i) => ({ rule: i.rule, severity: i.severity, message: i.message, nodeId: i.nodeId ?? null, nodeType: i.nodeType ?? null })),
-            workflowType,
-          }, runId)
-        }
-        await this.telemetry?.emit('build_complete', {
-          description,
-          success: false,
-          totalAttempts: err.attemptMetadata.length,
-          totalDurationMs: Date.now() - buildStart,
-          totalTokensInput: err.attemptMetadata.reduce((s, m) => s + m.tokensInput, 0),
-          totalTokensOutput: err.attemptMetadata.reduce((s, m) => s + m.tokensOutput, 0),
-          workflowName: null,
-          workflowId: null,
-          dryRun: options?.dryRun ?? false,
-          credentialsNeeded: 0,
-          warnedRules: err.warnedRules ?? [],
-          workflowType,
-        }, runId)
-        this.updatePatterns()
+      if (err instanceof ValidationError || err instanceof GenerationError || err instanceof ResponseParseError) {
+        await this.emitFailureTelemetry(err, description, workflowType, runId, buildStart, options?.dryRun ?? false)
       }
       throw err
     }
@@ -296,36 +270,8 @@ export class Kairos {
     try {
       designResult = await this.designer.design({ description }, matches, globalFailureRates)
     } catch (err) {
-      if (err instanceof ValidationError && err.attemptMetadata) {
-        for (const meta of err.attemptMetadata) {
-          await this.telemetry?.emit('generation_attempt', {
-            description,
-            attempt: meta.attempt,
-            temperature: meta.temperature,
-            durationMs: meta.durationMs,
-            tokensInput: meta.tokensInput,
-            tokensOutput: meta.tokensOutput,
-            validationPassed: meta.validationPassed,
-            issueCount: meta.issues.length,
-            issues: meta.issues.map((i) => ({ rule: i.rule, severity: i.severity, message: i.message, nodeId: i.nodeId ?? null, nodeType: i.nodeType ?? null })),
-            workflowType,
-          }, runId)
-        }
-        await this.telemetry?.emit('build_complete', {
-          description,
-          success: false,
-          totalAttempts: err.attemptMetadata.length,
-          totalDurationMs: Date.now() - buildStart,
-          totalTokensInput: err.attemptMetadata.reduce((s, m) => s + m.tokensInput, 0),
-          totalTokensOutput: err.attemptMetadata.reduce((s, m) => s + m.tokensOutput, 0),
-          workflowName: null,
-          workflowId: null,
-          dryRun: false,
-          credentialsNeeded: 0,
-          warnedRules: err.warnedRules ?? [],
-          workflowType,
-        }, runId)
-        this.updatePatterns()
+      if (err instanceof ValidationError || err instanceof GenerationError || err instanceof ResponseParseError) {
+        await this.emitFailureTelemetry(err, description, workflowType, runId, buildStart, false)
       }
       throw err
     }
@@ -385,6 +331,58 @@ export class Kairos {
         this.logger.warn('Pattern analysis failed (non-fatal)', { err: String(err) })
         return null
       })
+  }
+
+  /**
+   * A build/replace failure can throw ValidationError, GenerationError, or
+   * ResponseParseError (ResponseTruncationError extends GenerationError) — all three
+   * carry attemptMetadata when the failure surfaced after the retry loop ran. Shared by
+   * build()'s and replace()'s catch blocks so every failure class gets the same
+   * telemetry/pattern-learning visibility, not just validation failures.
+   */
+  private async emitFailureTelemetry(
+    err: ValidationError | GenerationError | ResponseParseError,
+    description: string,
+    workflowType: string | null,
+    runId: string,
+    buildStart: number,
+    dryRun: boolean,
+  ): Promise<void> {
+    const attemptMetadata = err.attemptMetadata
+    if (!attemptMetadata) return
+
+    for (const meta of attemptMetadata) {
+      await this.telemetry?.emit('generation_attempt', {
+        description,
+        attempt: meta.attempt,
+        temperature: meta.temperature,
+        durationMs: meta.durationMs,
+        tokensInput: meta.tokensInput,
+        tokensOutput: meta.tokensOutput,
+        validationPassed: meta.validationPassed,
+        issueCount: meta.issues.length,
+        issues: meta.issues.map((i) => ({ rule: i.rule, severity: i.severity, message: i.message, nodeId: i.nodeId ?? null, nodeType: i.nodeType ?? null })),
+        ...(meta.parseFailure ? { parseFailure: meta.parseFailure } : {}),
+        workflowType,
+      }, runId)
+    }
+
+    await this.telemetry?.emit('build_complete', {
+      description,
+      success: false,
+      totalAttempts: attemptMetadata.length,
+      totalDurationMs: Date.now() - buildStart,
+      totalTokensInput: attemptMetadata.reduce((s, m) => s + m.tokensInput, 0),
+      totalTokensOutput: attemptMetadata.reduce((s, m) => s + m.tokensOutput, 0),
+      workflowName: null,
+      workflowId: null,
+      dryRun,
+      credentialsNeeded: 0,
+      warnedRules: err instanceof ValidationError ? (err.warnedRules ?? []) : [],
+      workflowType,
+    }, runId)
+
+    this.updatePatterns()
   }
 
   private async emitAttemptTelemetry(description: string, designResult: DesignResult, workflowType: string | null, runId: string): Promise<void> {

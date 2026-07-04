@@ -137,6 +137,123 @@ describe('WorkflowDesigner — retry-loop feedback includes warn-severity issues
   })
 })
 
+describe('WorkflowDesigner — stringified-workflow recovery shim', () => {
+  it('recovers when Claude returns the workflow as a JSON string instead of an object', async () => {
+    // The exact failure captured by the diagnostic: workflow present but stringified.
+    const mockAnthropic = makeMockAnthropic({
+      workflow: JSON.stringify(VALID_WORKFLOW),
+      credentialsNeeded: [],
+    })
+    const designer = new WorkflowDesigner(mockAnthropic as never, 'claude-sonnet-4-6', nullLogger)
+
+    const result = await designer.design(REQUEST, [])
+
+    expect(result.attempts).toBe(1)
+    expect(result.workflow.name).toBe('Test Workflow')
+    expect(result.workflow.nodes).toHaveLength(1)
+  })
+
+  it('recovers stringified credentialsNeeded alongside a stringified workflow', async () => {
+    const creds = [{ service: 'Slack', credentialType: 'slackOAuth2Api', description: 'Slack access' }]
+    const mockAnthropic = makeMockAnthropic({
+      workflow: JSON.stringify(VALID_WORKFLOW),
+      credentialsNeeded: JSON.stringify(creds),
+    })
+    const designer = new WorkflowDesigner(mockAnthropic as never, 'claude-sonnet-4-6', nullLogger)
+
+    const result = await designer.design(REQUEST, [])
+
+    expect(result.credentialsNeeded).toHaveLength(1)
+    expect(result.credentialsNeeded[0]!.service).toBe('Slack')
+  })
+})
+
+function makeResponse(toolInput: Record<string, unknown>, stopReason: string | null = 'tool_use') {
+  return {
+    stop_reason: stopReason,
+    content: [{ type: 'tool_use', name: 'generate_workflow', input: toolInput }],
+    usage: { input_tokens: 100, output_tokens: 50 },
+  }
+}
+
+describe('WorkflowDesigner — parse/truncation failures are retried, not instant-fatal', () => {
+  it('retries after an unparseable stringified workflow and succeeds on attempt 2', async () => {
+    const create = vi.fn()
+      .mockResolvedValueOnce(makeResponse({ workflow: '{not valid json', credentialsNeeded: [] }))
+      .mockResolvedValueOnce(makeResponse({ workflow: VALID_WORKFLOW, credentialsNeeded: [] }))
+    const mockAnthropic = { messages: { create } }
+    const designer = new WorkflowDesigner(mockAnthropic as never, 'claude-sonnet-4-6', nullLogger)
+
+    const result = await designer.design(REQUEST, [])
+
+    expect(result.attempts).toBe(2)
+    expect(create).toHaveBeenCalledTimes(2)
+    const secondCallArgs = create.mock.calls[1]![0] as { messages: Array<{ content: string }> }
+    expect(secondCallArgs.messages[0]!.content).toContain('[Format]')
+  })
+
+  it('retries after truncation (stop_reason max_tokens) and succeeds on attempt 2', async () => {
+    const create = vi.fn()
+      .mockResolvedValueOnce(makeResponse({ workflow: VALID_WORKFLOW, credentialsNeeded: [] }, 'max_tokens'))
+      .mockResolvedValueOnce(makeResponse({ workflow: VALID_WORKFLOW, credentialsNeeded: [] }))
+    const mockAnthropic = { messages: { create } }
+    const designer = new WorkflowDesigner(mockAnthropic as never, 'claude-sonnet-4-6', nullLogger)
+
+    const result = await designer.design(REQUEST, [])
+
+    expect(result.attempts).toBe(2)
+    const secondCallArgs = create.mock.calls[1]![0] as { messages: Array<{ content: string }> }
+    expect(secondCallArgs.messages[0]!.content).toContain('more compact workflow')
+  })
+
+  it('does NOT retry when Claude explicitly declines (input.error) — fails fast', async () => {
+    const mockAnthropic = makeMockAnthropic({ error: 'Cannot fulfill this request' })
+    const designer = new WorkflowDesigner(mockAnthropic as never, 'claude-sonnet-4-6', nullLogger)
+
+    await expect(designer.design(REQUEST, [])).rejects.toThrow('Claude declined to generate workflow')
+    expect(mockAnthropic.messages.create).toHaveBeenCalledTimes(1)
+  })
+
+  it('rethrows the parse/truncation error with attemptMetadata after exhausting all 3 attempts', async () => {
+    const mockAnthropic = makeMockAnthropic({ workflow: 'still not valid json', credentialsNeeded: [] })
+    const designer = new WorkflowDesigner(mockAnthropic as never, 'claude-sonnet-4-6', nullLogger)
+
+    let caught: unknown
+    try {
+      await designer.design(REQUEST, [])
+    } catch (err) {
+      caught = err
+    }
+
+    expect(caught).toBeInstanceOf(Error)
+    const err = caught as { name: string; attemptMetadata?: unknown[] }
+    expect(err.name).toBe('ResponseParseError')
+    expect(err.attemptMetadata).toHaveLength(3)
+    expect(mockAnthropic.messages.create).toHaveBeenCalledTimes(3)
+  })
+
+  it('preserves the prior validation issue across an intervening parse failure (attempt 3 sees both)', async () => {
+    // Attempt 1: a real validation error (empty name, Rule 1). Attempt 2: parse failure
+    // (learns nothing new about Rule 1). Attempt 3: valid workflow -- but its correction
+    // message (built from attempt 2's failure) must still carry attempt 1's Rule 1 issue.
+    const brokenWorkflow = { ...VALID_WORKFLOW, name: '' }
+    const create = vi.fn()
+      .mockResolvedValueOnce(makeResponse({ workflow: brokenWorkflow, credentialsNeeded: [] }))
+      .mockResolvedValueOnce(makeResponse({ workflow: '{broken', credentialsNeeded: [] }))
+      .mockResolvedValueOnce(makeResponse({ workflow: VALID_WORKFLOW, credentialsNeeded: [] }))
+    const mockAnthropic = { messages: { create } }
+    const designer = new WorkflowDesigner(mockAnthropic as never, 'claude-sonnet-4-6', nullLogger)
+
+    const result = await designer.design(REQUEST, [])
+
+    expect(result.attempts).toBe(3)
+    const thirdCallArgs = create.mock.calls[2]![0] as { messages: Array<{ content: string }> }
+    const message = thirdCallArgs.messages[0]!.content
+    expect(message).toContain('[Rule 1]')
+    expect(message).toContain('[Format]')
+  })
+})
+
 describe('WorkflowDesigner — timeout configuration', () => {
   it('defaults the abort timeout to 300000ms when not specified', async () => {
     const mockAnthropic = makeMockAnthropic({ workflow: VALID_WORKFLOW, credentialsNeeded: [] })

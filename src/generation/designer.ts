@@ -5,6 +5,7 @@ import type { CredentialRequirement } from '../types/result.js'
 import type { ILogger } from '../utils/logger.js'
 import { GenerationError } from '../errors/generation-error.js'
 import { ResponseParseError } from '../errors/response-parse-error.js'
+import { ResponseTruncationError } from '../errors/response-truncation-error.js'
 import { ValidationError } from '../errors/validation-error.js'
 import type { ValidationIssue } from '../errors/validation-error.js'
 import { N8nValidator } from '../validation/validator.js'
@@ -28,7 +29,11 @@ const GENERATE_WORKFLOW_TOOL: Anthropic.Tool = {
     properties: {
       workflow: {
         type: 'object',
-        description: 'The complete n8n workflow object',
+        // "Not a stringified JSON string" targets an observed failure mode: on very
+        // large outputs the model sometimes serializes this nested object as a string.
+        // NOTE: deliberately NOT in `required` — the error escape path returns {error}
+        // with no workflow, and the pinned SDK (0.36.x) predates strict tool use.
+        description: 'The complete n8n workflow object. Must be a raw JSON object, NOT a stringified JSON string.',
         properties: {
           name: { type: 'string' },
           nodes: { type: 'array' },
@@ -92,6 +97,12 @@ export class WorkflowDesigner {
     // only depends on error-severity issues, matching the documented "errors block
     // deployment, warnings are recorded" design.
     let lastIssues: ValidationIssue[] = []
+    // Set when the most recent attempt produced no parseable workflow at all (stringified/
+    // missing workflow field, truncation). Deliberately NOT cleared on a parse failure — a
+    // parse failure carries forward whatever validation issues came before it (D4: the prior
+    // attempt's unaddressed issues are still real, a parse failure just means we learned
+    // nothing new about them this round). Cleared the moment a later attempt parses cleanly.
+    let lastParseError: ResponseParseError | ResponseTruncationError | null = null
     let attempts = 0
     const built = this.promptBuilder.build(request, matches, globalFailureRates)
 
@@ -107,19 +118,47 @@ export class WorkflowDesigner {
         const issueLines = lastIssues.map(
           (i) => `- [Rule ${i.rule}] ${i.message}${i.nodeId ? ` (node: ${i.nodeId})` : ''}`,
         )
+        if (lastParseError) {
+          const hint = lastParseError instanceof ResponseTruncationError
+            ? 'generate a more compact workflow (leaner Code nodes, fewer redundant fields)'
+            : 'the workflow field must be a raw JSON object, not a stringified JSON string'
+          issueLines.push(`- [Format] ${lastParseError.message} — ${hint}.`)
+        }
         const failingRuleIds = lastIssues.map((i) => i.rule)
         userMessage = this.promptBuilder.buildCorrectionMessage(request, matches, issueLines, attempt - 1, failingRuleIds)
-        this.logger.debug(`WorkflowDesigner: correction attempt ${attempt}`, { issueCount: lastIssues.length })
+        this.logger.debug(`WorkflowDesigner: correction attempt ${attempt}`, { issueCount: lastIssues.length, hadParseFailure: !!lastParseError })
       }
 
       const start = Date.now()
       const message = await this.callClaude(built.system, userMessage, temperature)
       const durationMs = Date.now() - start
-      const parsed = this.extractToolUse(message)
+
+      let parsed: ToolUseResult
+      try {
+        parsed = this.extractToolUse(message)
+      } catch (err) {
+        if (!(err instanceof ResponseParseError) && !(err instanceof ResponseTruncationError)) throw err
+
+        attemptMetadata.push({
+          attempt,
+          temperature,
+          durationMs,
+          tokensInput: message.usage.input_tokens,
+          tokensOutput: message.usage.output_tokens,
+          validationPassed: false,
+          issues: [],
+          parseFailure: err.message,
+        })
+        this.logger.warn(`WorkflowDesigner: parse failure on attempt ${attempt}`, { message: err.message })
+        lastParseError = err
+        continue
+      }
 
       if (parsed.error) {
         throw new GenerationError(`Claude declined to generate workflow: ${parsed.error}`)
       }
+
+      lastParseError = null
 
       const validation = this.validator.validate(parsed.workflow)
       const errors = validation.issues.filter((i) => i.severity === 'error')
@@ -142,6 +181,14 @@ export class WorkflowDesigner {
       this.logger.warn(`WorkflowDesigner: validation failed on attempt ${attempt}`, {
         errorCount: errors.length,
       })
+    }
+
+    // Whatever the FINAL attempt's failure kind was is what gets rethrown (D5) — a parse
+    // failure on the last attempt rethrows that parse/truncation error (now carrying
+    // attemptMetadata for telemetry), NOT a generic ValidationError with stale issues.
+    if (lastParseError) {
+      const Ctor = lastParseError instanceof ResponseTruncationError ? ResponseTruncationError : ResponseParseError
+      throw new Ctor(lastParseError.message, lastParseError.cause, attemptMetadata)
     }
 
     const finalIssues = attemptMetadata.at(-1)?.issues ?? lastIssues
@@ -183,7 +230,7 @@ export class WorkflowDesigner {
 
   private extractToolUse(message: Anthropic.Message): ToolUseResult {
     if (message.stop_reason === 'max_tokens') {
-      throw new GenerationError(
+      throw new ResponseTruncationError(
         'Claude response was truncated (max_tokens reached) — the workflow may be too large. Try a simpler description or break it into smaller workflows.',
       )
     }
@@ -207,12 +254,54 @@ export class WorkflowDesigner {
       }
     }
 
-    if (!input['workflow'] || typeof input['workflow'] !== 'object') {
-      throw new ResponseParseError('generate_workflow tool call missing workflow field')
+    let rawWorkflow = input['workflow']
+
+    // Recovery shim: on very large outputs Claude sometimes serializes the nested
+    // workflow object as a JSON *string* (observed directly on an 8.4K-token response
+    // whose string contained complete, valid workflow JSON). Parse it back rather
+    // than failing a response that is semantically fine.
+    if (typeof rawWorkflow === 'string') {
+      try {
+        const parsed: unknown = JSON.parse(rawWorkflow)
+        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          this.logger.warn('WorkflowDesigner: workflow arrived as a JSON string — recovered via parse')
+          rawWorkflow = parsed
+        } else {
+          throw new ResponseParseError(
+            'generate_workflow tool call returned workflow as a JSON string that parsed to a non-object',
+          )
+        }
+      } catch (err) {
+        if (err instanceof ResponseParseError) throw err
+        throw new ResponseParseError(
+          'generate_workflow tool call returned workflow as a JSON string that could not be parsed as an object',
+          err,
+        )
+      }
     }
 
-    const workflow = input['workflow'] as N8nWorkflow
-    const credentialsNeeded = (input['credentialsNeeded'] as CredentialRequirement[] | undefined) ?? []
+    if (!rawWorkflow) {
+      throw new ResponseParseError('generate_workflow tool call missing workflow field')
+    }
+    if (typeof rawWorkflow !== 'object' || Array.isArray(rawWorkflow)) {
+      throw new ResponseParseError(
+        `generate_workflow tool call returned workflow with wrong type (${Array.isArray(rawWorkflow) ? 'array' : typeof rawWorkflow}) — expected a JSON object`,
+      )
+    }
+
+    const workflow = rawWorkflow as N8nWorkflow
+
+    // Same failure class, defensively: credentialsNeeded stringified alongside the workflow.
+    let rawCreds = input['credentialsNeeded']
+    if (typeof rawCreds === 'string') {
+      try {
+        const parsed: unknown = JSON.parse(rawCreds)
+        rawCreds = Array.isArray(parsed) ? parsed : []
+      } catch {
+        rawCreds = []
+      }
+    }
+    const credentialsNeeded = (Array.isArray(rawCreds) ? rawCreds : []) as CredentialRequirement[]
 
     return { workflow, credentialsNeeded }
   }
