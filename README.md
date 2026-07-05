@@ -191,6 +191,29 @@ npm install @kairos-sdk/core @anthropic-ai/sdk
 
 ---
 
+## Standalone Validator (`kairos-lint`)
+
+Don't need the SDK, MCP, or generation at all? The 129-rule structural validator works standalone against **any** n8n workflow JSON — hand-written, exported from n8n, or from any other tool — not just Kairos-generated ones. Fully offline: no Anthropic key, no n8n instance, no credentials of any kind.
+
+```bash
+npx @kairos-sdk/core kairos-lint my-workflow.json
+npx @kairos-sdk/core kairos-lint my-workflow.json --json   # machine-readable output
+```
+
+```
+my-workflow.json — Validation
+──────────────────────────────────────────────────
+Issues: 1 error(s), 2 warning(s)
+
+  ✗ [error] [Rule 66] Node "Fetch Data" HTTP Request URL "api.example.com/data" is missing a protocol prefix — n8n requires a full URL starting with https:// or http://.
+  ⚠ [warn]  [Rule 78] Workflow has no errorWorkflow configured in settings...
+  ⚠ [warn]  [Rule 126] Node "Fetch Data" has ID "node-1" which is not a valid UUID v4...
+```
+
+Exits `1` if any error-severity issue is found (usable directly in CI). See [Validator Rules](#validator-rules) for the full rule list this checks against.
+
+---
+
 ## Environment Variables Reference
 
 Every `KAIROS_*` variable Kairos reads, in one place (the CLI's own `--help` output has a shorter version of the same list; MCP-specific vars are covered in more depth under [MCP Permissions & Security](#mcp-permissions--security)):

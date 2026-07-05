@@ -4,6 +4,9 @@ All notable changes to `@kairos-sdk/core` are documented here. Format loosely fo
 
 ## [Unreleased]
 
+### New `kairos-lint` — the structural validator, standalone
+The 129-rule validator (`N8nValidator`) has zero runtime dependency on Claude/generation and never did — it was just never exposed as its own thing. New `src/lint-cli.ts` entry point + `kairos-lint` bin: `npx @kairos-sdk/core kairos-lint <workflow.json>` validates *any* n8n workflow JSON — hand-written, exported from n8n, or from another tool — fully offline, no API keys or n8n instance required. Matches the existing `handleValidatePack` terminal-output convention (plain glyphs, no color library, `--json` mode, exit 1 on any error-severity issue — usable directly in CI). Shipped as a new bin entry in the existing package rather than a separate `@kairos-sdk/lint` package: a genuinely separate package would need the validator's source either duplicated or re-depend on `@kairos-sdk/core` itself, both defeating the point.
+
 ### Fixed 3 real correctness/reliability gaps found by the 282-run backend-viability benchmark
 A benchmark run (94 prompts × 3 repeats, backend-API tier included) found 12 failures. Root-caused all three:
 - **`max_tokens: 8192` was hardcoded** in `src/generation/designer.ts` since the very first commit (v0.1.1), never tuned — accounted for 10/12 failures, all on 5+ integration "stress test" prompts hitting the ceiling. Raised the default to 16000 and made it configurable (`KAIROS_MAX_TOKENS` env var / `ClientOptions.maxTokens`), matching the existing `KAIROS_MODEL` convention. `pack-builder.ts`'s separate `max_tokens: 4096` (a different, smaller planning-JSON call) is untouched — not implicated by this benchmark.
