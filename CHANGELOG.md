@@ -4,6 +4,9 @@ All notable changes to `@kairos-sdk/core` are documented here. Format loosely fo
 
 ## [Unreleased]
 
+### New `BENCHMARKS.md`
+A dedicated writeup of the benchmark methodology (`--repeat`/`--isolated`/tiers), the original 20-prompt ceiling-effect finding, and the 282-run backend-viability follow-up with the three real bugs it led to fixing — every number cross-checked against the actual committed result files, not recalled from memory. Also fixes two README lines that still said "128 validator rules" in general (non-dated-snapshot) prose despite the rest of the README having been updated to 129 earlier, and trims the README's own inline backend-viability section down to a pointer at `BENCHMARKS.md` rather than maintaining the same narrative in two places.
+
 ### New `kairos-lint` — the structural validator, standalone
 The 129-rule validator (`N8nValidator`) has zero runtime dependency on Claude/generation and never did — it was just never exposed as its own thing. New `src/lint-cli.ts` entry point + `kairos-lint` bin: `npx @kairos-sdk/core kairos-lint <workflow.json>` validates *any* n8n workflow JSON — hand-written, exported from n8n, or from another tool — fully offline, no API keys or n8n instance required. Matches the existing `handleValidatePack` terminal-output convention (plain glyphs, no color library, `--json` mode, exit 1 on any error-severity issue — usable directly in CI). Shipped as a new bin entry in the existing package rather than a separate `@kairos-sdk/lint` package: a genuinely separate package would need the validator's source either duplicated or re-depend on `@kairos-sdk/core` itself, both defeating the point.
 

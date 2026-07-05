@@ -269,7 +269,7 @@ console.log(deployed.workflowId) // now live in n8n
 
 ## Benchmark Results
 
-Tested against 20 workflow prompts of varying complexity (simple triggers, multi-step conditional logic, AI agents with memory). Results measure **structural validation pass rate** — whether the generated workflow passes all 128 validator rules, not end-to-end execution correctness.
+Tested against 20 workflow prompts of varying complexity (simple triggers, multi-step conditional logic, AI agents with memory). Results measure **structural validation pass rate** — whether the generated workflow passes all 129 validator rules, not end-to-end execution correctness.
 
 ### Current results (re-run 2026-07-02, 128-rule validator)
 
@@ -281,21 +281,19 @@ Tested against 20 workflow prompts of varying complexity (simple triggers, multi
 | Avg generation time | 21.0s | 20.7s | 20.6s |
 | Failures | 0 | 0 | 0 |
 
-**Honest read of this result:** the accumulated system-prompt improvements (node catalog, connection-rule documentation, sub-patterns, intent-to-component mapping) plus the growth from 34 to 128 validator rules have together closed the gap this benchmark used to measure — even the no-library baseline now passes first-try on all 20 prompts. That's a genuinely good outcome, but it also means **this 20-prompt suite has hit a ceiling and no longer discriminates library-seeding's contribution** the way the original 55%→100% result did. The "+ 14 imported fixtures" column confirms the new `sync-templates --from-dir` bulk-import feature (see [Workflow Library & Feedback Loop](#workflow-library--feedback-loop)) doesn't regress quality — it's a null result, not a negative one — but it isn't a real test of importing hundreds or thousands of community workflows; the fixtures were 14 small, hand-authored workflows used only to exercise the import pipeline end-to-end without vendoring any third-party dataset into this repo.
+**Honest read of this result:** the accumulated system-prompt improvements (node catalog, connection-rule documentation, sub-patterns, intent-to-component mapping) plus the growth from 34 to 129 validator rules have together closed the gap this benchmark used to measure — even the no-library baseline now passes first-try on all 20 prompts. That's a genuinely good outcome, but it also means **this 20-prompt suite has hit a ceiling and no longer discriminates library-seeding's contribution** the way the original 55%→100% result did. The "+ 14 imported fixtures" column confirms the new `sync-templates --from-dir` bulk-import feature (see [Workflow Library & Feedback Loop](#workflow-library--feedback-loop)) doesn't regress quality — it's a null result, not a negative one — but it isn't a real test of importing hundreds or thousands of community workflows; the fixtures were 14 small, hand-authored workflows used only to exercise the import pipeline end-to-end without vendoring any third-party dataset into this repo.
 
 Full results: [`benchmark-results.json`](./benchmark-results.json) (baseline), [`benchmark-seeded-results.json`](./benchmark-seeded-results.json) (current library), [`benchmark-imported-results.json`](./benchmark-imported-results.json) (+ imported fixtures).
+
+**See [BENCHMARKS.md](BENCHMARKS.md) for full methodology, the 282-run backend-viability follow-up, and the three real reliability bugs that investigation found and fixed** — including one case where a result that looked like a regression turned out to be sampling noise, and the actual measurement that told the difference.
 
 **Recommendation for anyone extending this benchmark:** move to a harder prompt set (the full 94-prompt suite in `scripts/benchmark.ts`, or a curated hard subset) to get a signal that isn't already saturated at 100%.
 
 > **Note:** These results confirm that generated workflows are structurally valid and deployable to n8n. They do not verify runtime execution correctness, credential configuration, or whether the workflow output matches user intent.
 
-### Backend-API viability run (2026-07-04) and what it found
+### Backend-API viability run (2026-07-04)
 
-A 282-run pass (94 prompts × `--repeat 3`, including a new `backendApi` tier of 9 CRUD/API-contract-shaped prompts — consistent success/error response shape, lookup-by-ID with a not-found path, batch operations with per-item status, auth gating, pagination, idempotency) tested a harder, more realistic question: not just "does this pass once," but "does it pass *reliably*." Full results: [`backend-viability-results.json`](./backend-viability-results.json).
-
-- The `backendApi` tier passed cleanly — no special backend-mode prompt work needed at this complexity level.
-- The run surfaced (and this repo subsequently fixed) three real reliability gaps: a hardcoded `max_tokens: 8192` too low for the largest workflows (see `KAIROS_MAX_TOKENS` above), a hardcoded 120-second request timeout too tight once `max_tokens` was raised (see `KAIROS_TIMEOUT_MS` above), and a class of failures where large responses arrived with the workflow field JSON-stringified instead of a raw object — now recovered inline via a parse shim, and retried (with targeted correction feedback) rather than failing instantly, if the shim can't recover it.
-- `--repeat N` (run each selected prompt N times, reporting a per-prompt pass rate) and `--isolated` (scope telemetry/patterns to a temp directory for the run, so a long run's own results can't shift the system-prompt guidance injected into its own later prompts) were both added to `scripts/benchmark.ts` as part of this investigation — see the script's own header comment for full flag docs.
+A 282-run pass (94 prompts × `--repeat 3`, including a new `backendApi` tier of 9 CRUD/API-contract-shaped prompts) tested a harder question: not just "does this pass once," but "does it pass *reliably*." The `backendApi` tier passed 27/27 with zero inconsistency, and the investigation found and fixed three real reliability gaps along the way. Full writeup: **[BENCHMARKS.md](BENCHMARKS.md)**.
 
 ### Historical result (34-rule validator, superseded)
 
