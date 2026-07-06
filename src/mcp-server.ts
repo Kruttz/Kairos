@@ -34,6 +34,7 @@ import { fileURLToPath } from 'node:url'
 import { readCatalogCache, writeCatalogCache, getCatalogCachePath } from './utils/node-catalog-cache.js'
 import { coalesceAsync } from './utils/coalesce-async.js'
 import { summarizeWorkflow } from './utils/workflow-summary.js'
+import { diffWorkflows, formatDiff } from './utils/workflow-diff.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8')) as { version: string }
@@ -446,6 +447,16 @@ server.tool(
     }
 
     const client = getApiClient()
+
+    // Fetch the current deployed workflow before overwriting it, purely to compute a
+    // "what changed" diff — a fetch failure here must not block the replace itself.
+    let previousWorkflow: N8nWorkflow | null = null
+    try {
+      previousWorkflow = await client.getWorkflow(workflow_id)
+    } catch {
+      // Proceed without a diff.
+    }
+
     const stripped = stripper.stripForUpdate(parsed)
     const response = await client.updateWorkflow(workflow_id, stripped)
 
@@ -484,10 +495,16 @@ server.tool(
       PatternAnalyzer.fromEnv().analyzeAndSave().catch(() => {})
     }
 
+    const baseSummary = summarizeWorkflow(parsed, [], validation.issues)
+    const summary = previousWorkflow
+      ? `${baseSummary}\n\n${formatDiff(diffWorkflows(previousWorkflow, parsed))}`
+      : baseSummary
+
     return mcpText(JSON.stringify({
       workflowId: response.id,
       name: response.name,
       url: `${process.env['N8N_BASE_URL']}/workflow/${response.id}`,
+      summary,
     }, null, 2) + missingSessionWarning)
   },
 )

@@ -23,6 +23,7 @@ import { DeployActivationError } from './errors/deploy-activation-error.js'
 import { inferWorkflowType } from './utils/workflow-type.js'
 import { generateUUID } from './utils/uuid.js'
 import { summarizeWorkflow } from './utils/workflow-summary.js'
+import { diffWorkflows, formatDiff } from './utils/workflow-diff.js'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -284,6 +285,17 @@ export class Kairos {
     await this.emitAttemptTelemetry(description, designResult, workflowType, runId)
 
     const provider = this.requireProvider()
+
+    // Fetch the current deployed workflow before overwriting it, purely to compute a
+    // "what changed" diff for the summary — a fetch failure here must not block the
+    // replace itself, so this degrades to no diff rather than throwing.
+    let previousWorkflow: N8nWorkflow | null = null
+    try {
+      previousWorkflow = await provider.get(id)
+    } catch (err) {
+      this.logger.warn('Could not fetch previous workflow for diff — summary will not include what changed', { id, err: String(err) })
+    }
+
     const deployed = await provider.update(id, designResult.workflow)
     this.logger.info('Workflow updated in n8n', { workflowId: deployed.workflowId, name: deployed.name })
 
@@ -310,6 +322,11 @@ export class Kairos {
 
     this.updatePatterns()
 
+    const baseSummary = summarizeWorkflow(designResult.workflow, designResult.credentialsNeeded, designResult.attemptMetadata.at(-1)?.issues ?? [])
+    const summary = previousWorkflow
+      ? `${baseSummary}\n\n${formatDiff(diffWorkflows(previousWorkflow, designResult.workflow))}`
+      : baseSummary
+
     return {
       workflowId: deployed.workflowId,
       name: deployed.name,
@@ -320,7 +337,7 @@ export class Kairos {
       tokensInput: totalTokensInput,
       tokensOutput: totalTokensOutput,
       dryRun: false,
-      summary: summarizeWorkflow(designResult.workflow, designResult.credentialsNeeded, designResult.attemptMetadata.at(-1)?.issues ?? []),
+      summary,
     }
   }
 

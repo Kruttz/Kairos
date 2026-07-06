@@ -535,6 +535,17 @@ Warnings (1):
   - Node "Webhook" webhook has no authentication — anyone who knows the URL can trigger this workflow.
 ```
 
+**`kairos.replace(id, description)`** additionally fetches the currently-deployed workflow before overwriting it, and appends a structural diff to `summary` — matched by node name, since n8n workflows don't carry a stable cross-redeploy node ID:
+
+```
+What changed since the previous version:
+  ~ "Notify" changed from n8n-nodes-base.slack to n8n-nodes-base.postgres
+  + now needs a "postgres" credential
+  - no longer needs a "slackApi" credential
+```
+
+If the previous workflow can't be fetched (e.g. it was deleted, or a transient n8n API error), `replace()` still proceeds — the diff is just omitted from `summary` rather than blocking the update.
+
 ---
 
 ### `new PackBuilder(options)` + `builder.plan()` + `builder.build()`
