@@ -24,6 +24,8 @@ export interface BuildResult {
   tokensInput: number
   tokensOutput: number
   dryRun: boolean
+  /** Plain-English "what this workflow does" summary — see src/utils/workflow-summary.ts */
+  summary: string
   smokeTest?: SmokeTestResult
 }
 

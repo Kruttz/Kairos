@@ -4,6 +4,9 @@ All notable changes to `@kairos-sdk/core` are documented here. Format loosely fo
 
 ## [Unreleased]
 
+### New `BuildResult.summary` — plain-English "what this workflow does"
+A deterministic, human-readable summary generated alongside every `kairos.build()`/`kairos.replace()` result — no new Claude call, built entirely from data the build already produces: a new `src/utils/workflow-summary.ts` walks the generated workflow's trigger(s) and steps through a small node-type→plain-English-label dictionary (falls back to the raw type string for anything not in the dictionary, rather than guessing), and reuses `credentialsNeeded` and the validator's own warning message text verbatim (from the last generation attempt's `attemptMetadata.issues`) instead of re-deriving new copy. Wired into the CLI's `kairos build`/`kairos replace` output (printed to stderr alongside the JSON, also included in the JSON as `summary`) and MCP's `kairos_deploy` response. Intended to make a generated workflow reviewable by a non-technical person before deploy, not just a JSON dump. Generalizes the same idea `pack-exporter.ts`'s `generateHandoff()` already applies to whole packs, down to a single build.
+
 ### New `BENCHMARKS.md`
 A dedicated writeup of the benchmark methodology (`--repeat`/`--isolated`/tiers), the original 20-prompt ceiling-effect finding, and the 282-run backend-viability follow-up with the three real bugs it led to fixing — every number cross-checked against the actual committed result files, not recalled from memory. Also fixes two README lines that still said "128 validator rules" in general (non-dated-snapshot) prose despite the rest of the README having been updated to 129 earlier, and trims the README's own inline backend-viability section down to a pointer at `BENCHMARKS.md` rather than maintaining the same narrative in two places.
 

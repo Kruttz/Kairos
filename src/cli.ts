@@ -224,6 +224,8 @@ async function handleBuild(positional: string[], flags: Record<string, string | 
 
   console.error(`Done in ${elapsed}s (${result.generationAttempts} attempt${result.generationAttempts > 1 ? 's' : ''})`)
   console.error('')
+  console.error(result.summary)
+  console.error('')
 
   console.log(JSON.stringify({
     workflowId: result.workflowId,
@@ -232,6 +234,7 @@ async function handleBuild(positional: string[], flags: Record<string, string | 
     activationRequired: result.activationRequired,
     dryRun: result.dryRun,
     credentialsNeeded: result.credentialsNeeded,
+    summary: result.summary,
     ...(result.dryRun ? { workflow: result.workflow } : {}),
     ...(result.smokeTest ? { smokeTest: result.smokeTest } : {}),
   }, null, 2))
@@ -256,11 +259,14 @@ async function handleReplace(positional: string[]): Promise<void> {
   const elapsed = ((Date.now() - start) / 1000).toFixed(1)
   console.error(`Done in ${elapsed}s (${result.generationAttempts} attempt${result.generationAttempts > 1 ? 's' : ''})`)
   console.error('')
+  console.error(result.summary)
+  console.error('')
 
   console.log(JSON.stringify({
     workflowId: result.workflowId,
     name: result.name,
     generationAttempts: result.generationAttempts,
+    summary: result.summary,
   }, null, 2))
 }
 

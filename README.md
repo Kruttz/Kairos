@@ -514,7 +514,25 @@ const result = await kairos.build(description, {
     description: string
   }>
   dryRun: boolean
+  summary: string  // plain-English "what this workflow does" — trigger, steps, credentials, warnings
 }
+```
+
+`summary` is built deterministically from data the build already produced (no extra Claude call) — a quick, human-readable readout of what got generated, meant for a non-technical reviewer to skim before approving a deploy:
+
+```
+"Webhook → Send Welcome Email via Gmail"
+Trigger: "Webhook" — receives an incoming webhook.
+Then (3 steps):
+  - "Prepare Email Data" — transforms or sets data fields
+  - "Send Welcome Email" — sends an email via Gmail
+  - "Respond Success" — sends the webhook response
+
+Credentials needed:
+  - Gmail (gmailOAuth2): A Gmail OAuth2 credential used to send the welcome email.
+
+Warnings (1):
+  - Node "Webhook" webhook has no authentication — anyone who knows the URL can trigger this workflow.
 ```
 
 ---

@@ -22,6 +22,7 @@ import { ResponseParseError } from './errors/response-parse-error.js'
 import { DeployActivationError } from './errors/deploy-activation-error.js'
 import { inferWorkflowType } from './utils/workflow-type.js'
 import { generateUUID } from './utils/uuid.js'
+import { summarizeWorkflow } from './utils/workflow-summary.js'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -147,6 +148,8 @@ export class Kairos {
       ? { ...designResult.workflow, name: options.name }
       : designResult.workflow
 
+    const summary = summarizeWorkflow(workflow, designResult.credentialsNeeded, designResult.attemptMetadata.at(-1)?.issues ?? [])
+
     if (options?.dryRun) {
       const totalTokensInput = designResult.attemptMetadata.reduce((s, m) => s + m.tokensInput, 0)
       const totalTokensOutput = designResult.attemptMetadata.reduce((s, m) => s + m.tokensOutput, 0)
@@ -178,6 +181,7 @@ export class Kairos {
         tokensInput: designResult.attemptMetadata.reduce((s, m) => s + m.tokensInput, 0),
         tokensOutput: designResult.attemptMetadata.reduce((s, m) => s + m.tokensOutput, 0),
         dryRun: true,
+        summary,
       }
     }
 
@@ -245,6 +249,7 @@ export class Kairos {
       tokensInput: totalTokensInput,
       tokensOutput: totalTokensOutput,
       dryRun: false,
+      summary,
       ...(smokeTestResult !== undefined ? { smokeTest: smokeTestResult } : {}),
     }
   }
@@ -315,6 +320,7 @@ export class Kairos {
       tokensInput: totalTokensInput,
       tokensOutput: totalTokensOutput,
       dryRun: false,
+      summary: summarizeWorkflow(designResult.workflow, designResult.credentialsNeeded, designResult.attemptMetadata.at(-1)?.issues ?? []),
     }
   }
 

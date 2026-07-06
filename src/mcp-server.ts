@@ -33,6 +33,7 @@ import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { readCatalogCache, writeCatalogCache, getCatalogCachePath } from './utils/node-catalog-cache.js'
 import { coalesceAsync } from './utils/coalesce-async.js'
+import { summarizeWorkflow } from './utils/workflow-summary.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8')) as { version: string }
@@ -398,11 +399,14 @@ server.tool(
       PatternAnalyzer.fromEnv().analyzeAndSave().catch(() => {})
     }
 
+    const summary = summarizeWorkflow(parsed, [], validation.issues)
+
     return mcpText(JSON.stringify({
       workflowId: response.id,
       name: response.name,
       activated: activate,
       url: `${process.env['N8N_BASE_URL']}/workflow/${response.id}`,
+      summary,
     }, null, 2) + missingSessionWarning)
   },
 )
