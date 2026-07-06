@@ -60,6 +60,7 @@ function makeProvider(overrides: Partial<Record<keyof N8nApiClient, unknown>> = 
     getNodeTypes: vi.fn(),
     triggerManual: vi.fn(),
     triggerWebhookTest: vi.fn(),
+    triggerWebhookProduction: vi.fn(),
     ...overrides,
   } as unknown as N8nApiClient
   return new N8nProvider(client, new N8nFieldStripper())
@@ -150,9 +151,9 @@ describe('N8nProvider.smokeTest()', () => {
     expect(getExecution).toHaveBeenCalledTimes(3)
   })
 
-  it('webhook trigger — passed on 200 response', async () => {
-    const triggerWebhookTest = vi.fn().mockResolvedValue(200)
-    const provider = makeProvider({ triggerWebhookTest })
+  it('webhook trigger — passed on 200 response, probing the PRODUCTION url', async () => {
+    const triggerWebhookProduction = vi.fn().mockResolvedValue({ statusCode: 200, body: '{"status":"ok"}' })
+    const provider = makeProvider({ triggerWebhookProduction })
 
     const result = await provider.smokeTest('wf-1', makeWorkflow('webhook', 'my-path'))
 
@@ -160,22 +161,35 @@ describe('N8nProvider.smokeTest()', () => {
     expect(result.triggerType).toBe('webhook')
     expect(result.durationMs).toBeTypeOf('number')
     expect(result.executionId).toBeUndefined()
-    expect(triggerWebhookTest).toHaveBeenCalledWith('my-path')
+    expect(triggerWebhookProduction).toHaveBeenCalledWith('my-path', 'POST')
   })
 
-  it('webhook trigger — failed on 500 response', async () => {
-    const triggerWebhookTest = vi.fn().mockResolvedValue(500)
-    const provider = makeProvider({ triggerWebhookTest })
+  it('webhook trigger — still passed on a 500 from the workflow\'s own logic (route still dispatched)', async () => {
+    const triggerWebhookProduction = vi.fn().mockResolvedValue({ statusCode: 500, body: '{"error":"downstream failure"}' })
+    const provider = makeProvider({ triggerWebhookProduction })
+
+    const result = await provider.smokeTest('wf-1', makeWorkflow('webhook', 'my-path'))
+
+    expect(result.status).toBe('passed')
+  })
+
+  it('webhook trigger — failed with a clear "not registered" message when n8n reports the route unregistered', async () => {
+    const triggerWebhookProduction = vi.fn().mockResolvedValue({
+      statusCode: 404,
+      body: '{"code":404,"message":"The requested webhook \\"POST my-path\\" is not registered.","hint":"..."}',
+    })
+    const provider = makeProvider({ triggerWebhookProduction })
 
     const result = await provider.smokeTest('wf-1', makeWorkflow('webhook', 'my-path'))
 
     expect(result.status).toBe('failed')
-    expect(result.error).toContain('500')
+    expect(result.triggerType).toBe('webhook')
+    expect(result.error).toContain('not registered')
   })
 
   it('webhook trigger — error when request throws', async () => {
-    const triggerWebhookTest = vi.fn().mockRejectedValue(new Error('connection refused'))
-    const provider = makeProvider({ triggerWebhookTest })
+    const triggerWebhookProduction = vi.fn().mockRejectedValue(new Error('connection refused'))
+    const provider = makeProvider({ triggerWebhookProduction })
 
     const result = await provider.smokeTest('wf-1', makeWorkflow('webhook'))
 
@@ -185,17 +199,17 @@ describe('N8nProvider.smokeTest()', () => {
   })
 
   it('extracts webhook path from node parameters', async () => {
-    const triggerWebhookTest = vi.fn().mockResolvedValue(200)
-    const provider = makeProvider({ triggerWebhookTest })
+    const triggerWebhookProduction = vi.fn().mockResolvedValue({ statusCode: 200, body: '{}' })
+    const provider = makeProvider({ triggerWebhookProduction })
 
     await provider.smokeTest('wf-1', makeWorkflow('webhook', 'custom/path'))
 
-    expect(triggerWebhookTest).toHaveBeenCalledWith('custom/path')
+    expect(triggerWebhookProduction).toHaveBeenCalledWith('custom/path', 'POST')
   })
 
   it('uses "webhook" as fallback path when webhook node has no path param', async () => {
-    const triggerWebhookTest = vi.fn().mockResolvedValue(200)
-    const provider = makeProvider({ triggerWebhookTest })
+    const triggerWebhookProduction = vi.fn().mockResolvedValue({ statusCode: 200, body: '{}' })
+    const provider = makeProvider({ triggerWebhookProduction })
 
     const workflow: N8nWorkflow = {
       name: 'Test',
@@ -213,7 +227,7 @@ describe('N8nProvider.smokeTest()', () => {
     }
     await provider.smokeTest('wf-1', workflow)
 
-    expect(triggerWebhookTest).toHaveBeenCalledWith('webhook')
+    expect(triggerWebhookProduction).toHaveBeenCalledWith('webhook', 'POST')
   })
 })
 

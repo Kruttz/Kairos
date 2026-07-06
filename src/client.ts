@@ -24,6 +24,7 @@ import { inferWorkflowType } from './utils/workflow-type.js'
 import { generateUUID } from './utils/uuid.js'
 import { summarizeWorkflow } from './utils/workflow-summary.js'
 import { diffWorkflows, formatDiff } from './utils/workflow-diff.js'
+import type { WebhookReachabilityResult } from './utils/webhook-verify.js'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -192,6 +193,7 @@ export class Kairos {
     // lets the user manually locate and clean up the orphaned workflow in n8n.
     this.logger.info('Workflow deployed to n8n', { workflowId: deployed.workflowId, name: deployed.name })
 
+    let webhookVerification: WebhookReachabilityResult | null = null
     if (options?.activate) {
       try {
         await provider.activate(deployed.workflowId)
@@ -202,6 +204,12 @@ export class Kairos {
           deployed.workflowId,
           err,
         )
+      }
+
+      // smokeTest, if requested, already runs the equivalent check via its own webhook
+      // branch below — avoid firing two near-identical probes at the same fresh webhook.
+      if (!options?.smokeTest) {
+        webhookVerification = await provider.checkWebhookReachable(workflow)
       }
     }
 
@@ -218,6 +226,13 @@ export class Kairos {
         return { status: 'error', triggerType: 'manual', error: String(err) }
       })
       this.logger.info('Smoke test complete', { status: smokeTestResult.status, triggerType: smokeTestResult.triggerType })
+
+      if (smokeTestResult.triggerType === 'webhook') {
+        webhookVerification = {
+          reachable: smokeTestResult.status === 'passed' ? true : smokeTestResult.status === 'failed' ? false : null,
+          detail: smokeTestResult.error ?? 'Production webhook responded successfully.',
+        }
+      }
     }
 
     const totalTokensInput = designResult.attemptMetadata.reduce((s, m) => s + m.tokensInput, 0)
@@ -240,6 +255,8 @@ export class Kairos {
 
     this.updatePatterns()
 
+    const finalSummary = summarizeWorkflow(workflow, designResult.credentialsNeeded, designResult.attemptMetadata.at(-1)?.issues ?? [], webhookVerification)
+
     return {
       workflowId: deployed.workflowId,
       name: deployed.name,
@@ -250,8 +267,9 @@ export class Kairos {
       tokensInput: totalTokensInput,
       tokensOutput: totalTokensOutput,
       dryRun: false,
-      summary,
+      summary: finalSummary,
       ...(smokeTestResult !== undefined ? { smokeTest: smokeTestResult } : {}),
+      ...(webhookVerification !== null ? { webhookVerification } : {}),
     }
   }
 

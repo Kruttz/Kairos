@@ -7,13 +7,14 @@ import { ProviderError } from '../../errors/provider-error.js'
 import { ApiError } from '../../errors/api-error.js'
 import { N8nApiClient } from './api-client.js'
 import { N8nFieldStripper } from './stripper.js'
+import { verifyWebhookReachable, type WebhookReachabilityResult } from '../../utils/webhook-verify.js'
 
 const SMOKE_TEST_TIMEOUT_MS = 30_000
 const SMOKE_TEST_POLL_INTERVAL_MS = 1_000
 
 type TriggerInfo =
   | { type: 'manual' }
-  | { type: 'webhook'; path: string }
+  | { type: 'webhook' }
   | { type: 'unsupported' }
 
 export class N8nProvider implements IProvider {
@@ -128,26 +129,35 @@ export class N8nProvider implements IProvider {
     }
 
     // webhook
-    try {
-      const statusCode = await this.client.triggerWebhookTest(trigger.path)
-      const durationMs = Date.now() - start
-      if (statusCode >= 200 && statusCode < 300) {
-        return { status: 'passed', triggerType: 'webhook', durationMs }
-      }
-      return { status: 'failed', triggerType: 'webhook', durationMs, error: `Webhook returned HTTP ${statusCode}` }
-    } catch (err) {
-      return { status: 'error', triggerType: 'webhook', durationMs: Date.now() - start, error: String(err) }
+    const result = await this.checkWebhookReachable(workflow)
+    const durationMs = Date.now() - start
+    if (!result) {
+      // detectTrigger already confirmed a webhook node exists, so this shouldn't happen --
+      // defensive fallback only.
+      return { status: 'not-applicable', triggerType: 'not-applicable' }
     }
+    if (result.reachable === true) {
+      return { status: 'passed', triggerType: 'webhook', durationMs }
+    }
+    if (result.reachable === false) {
+      return { status: 'failed', triggerType: 'webhook', durationMs, error: result.detail }
+    }
+    return { status: 'error', triggerType: 'webhook', durationMs, error: result.detail }
+  }
+
+  /**
+   * Fires one real request at the workflow's production webhook URL to verify it's actually
+   * reachable -- n8n's `active: true` does not reliably mean the webhook route was
+   * registered. Returns null if the workflow has no webhook trigger.
+   */
+  async checkWebhookReachable(workflow: N8nWorkflow): Promise<WebhookReachabilityResult | null> {
+    return verifyWebhookReachable(this.client, workflow)
   }
 
   private detectTrigger(workflow: N8nWorkflow): TriggerInfo {
     for (const node of workflow.nodes) {
       if (node.type === 'n8n-nodes-base.manualTrigger') return { type: 'manual' }
-      if (node.type === 'n8n-nodes-base.webhook') {
-        const params = node.parameters as Record<string, unknown> | undefined
-        const path = typeof params?.['path'] === 'string' ? params['path'] : 'webhook'
-        return { type: 'webhook', path }
-      }
+      if (node.type === 'n8n-nodes-base.webhook') return { type: 'webhook' }
     }
     return { type: 'unsupported' }
   }

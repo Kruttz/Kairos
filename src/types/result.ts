@@ -27,6 +27,8 @@ export interface BuildResult {
   /** Plain-English "what this workflow does" summary — see src/utils/workflow-summary.ts */
   summary: string
   smokeTest?: SmokeTestResult
+  /** Set only for webhook-triggered workflows built with activate: true — see src/utils/webhook-verify.ts */
+  webhookVerification?: import('../utils/webhook-verify.js').WebhookReachabilityResult
 }
 
 export interface DeployResult {

@@ -240,6 +240,28 @@ export class N8nApiClient {
     }
   }
 
+  async triggerWebhookProduction(path: string, httpMethod: string): Promise<{ statusCode: number; body: string }> {
+    const cleanPath = path.startsWith('/') ? path : `/${path}`
+    const url = `${this.baseUrl.replace(/\/$/, '')}/webhook${cleanPath}`
+    const method = httpMethod.toUpperCase()
+    this.logger.debug(`n8n ${method} webhook ${cleanPath}`)
+    try {
+      const response = await fetchWithTimeout(
+        url,
+        {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          ...(method === 'GET' ? {} : { body: JSON.stringify({}) }),
+        },
+        REQUEST_TIMEOUT_MS,
+      )
+      const body = await response.text()
+      return { statusCode: response.status, body }
+    } catch (err) {
+      throw new ProviderError(`Production webhook request failed for path "${path}"`, err)
+    }
+  }
+
   private mapExecution(e: N8nExecutionResponse): ExecutionSummary {
     return {
       id: e.id,

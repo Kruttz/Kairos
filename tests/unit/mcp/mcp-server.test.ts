@@ -531,3 +531,136 @@ describe('Kairos MCP Server — H6 missing-session warning wording', () => {
     expect(deployResult.content[0].text).not.toContain('Note:')
   }, 15_000)
 })
+
+describe('Kairos MCP Server — kairos_deploy webhook reachability verification', () => {
+  let mockN8n: Server
+  let mockN8nUrl: string
+  let webhookProbeResponse: { status: number; body: string }
+
+  const WEBHOOK_WORKFLOW = JSON.stringify({
+    name: 'Webhook Verify Test',
+    nodes: [{
+      id: '550e8400-e29b-41d4-a716-446655440088',
+      type: 'n8n-nodes-base.webhook',
+      typeVersion: 2,
+      name: 'Webhook',
+      position: [250, 300],
+      parameters: { httpMethod: 'POST', path: 'verify-test' },
+    }],
+    connections: {},
+    settings: { executionOrder: 'v1' },
+  })
+
+  beforeAll(async () => {
+    mockN8n = createServer((req, res) => {
+      if (req.method === 'GET' && req.url === '/api/v1/node-types') {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ data: [] }))
+        return
+      }
+      if (req.method === 'POST' && req.url === '/api/v1/workflows') {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ id: 'wf-verify-test', name: 'Webhook Verify Test' }))
+        return
+      }
+      if (req.method === 'POST' && req.url === '/api/v1/workflows/wf-verify-test/activate') {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ id: 'wf-verify-test', active: true }))
+        return
+      }
+      if (req.method === 'POST' && req.url === '/webhook/verify-test') {
+        res.writeHead(webhookProbeResponse.status, { 'Content-Type': 'application/json' })
+        res.end(webhookProbeResponse.body)
+        return
+      }
+      res.writeHead(404)
+      res.end()
+    })
+    await new Promise<void>((r) => mockN8n.listen(0, '127.0.0.1', r))
+    const addr = mockN8n.address()
+    if (addr === null || typeof addr === 'string') throw new Error('mock server failed to bind')
+    mockN8nUrl = `http://127.0.0.1:${addr.port}`
+  })
+
+  afterAll(async () => {
+    await new Promise<void>((r) => mockN8n.close(() => r()))
+  })
+
+  function startServerWithMockN8n(): McpClient {
+    const proc = spawn('node', [SERVER_PATH], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        N8N_BASE_URL: mockN8nUrl,
+        N8N_API_KEY: 'test-key',
+        KAIROS_MCP_ALLOW_DEPLOY: 'true',
+        KAIROS_MCP_ALLOW_ACTIVATE: 'true',
+      },
+    })
+    let buffer = ''
+    const responses = new Map<number, Record<string, unknown>>()
+    const waiters = new Map<number, (v: Record<string, unknown>) => void>()
+    proc.stdout!.on('data', (data: Buffer) => {
+      buffer += data.toString()
+      const lines = buffer.split('\n')
+      buffer = lines.pop()!
+      for (const line of lines) {
+        if (!line.trim()) continue
+        const parsed = JSON.parse(line) as Record<string, unknown>
+        const id = parsed['id'] as number
+        responses.set(id, parsed)
+        waiters.get(id)?.(parsed)
+        waiters.delete(id)
+      }
+    })
+    return {
+      proc,
+      send(msg: object) { proc.stdin!.write(JSON.stringify(msg) + '\n') },
+      waitForResponse(id: number): Promise<Record<string, unknown>> {
+        const existing = responses.get(id)
+        if (existing) return Promise.resolve(existing)
+        return new Promise((resolve) => { waiters.set(id, resolve) })
+      },
+      close() { proc.kill() },
+    }
+  }
+
+  async function initClient(client: McpClient): Promise<void> {
+    client.send({ jsonrpc: '2.0', id: 0, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1.0' } } })
+    await client.waitForResponse(0)
+  }
+
+  it('reports the webhook as reachable when the production probe succeeds', async () => {
+    webhookProbeResponse = { status: 200, body: '{"status":"ok"}' }
+    const c = startServerWithMockN8n()
+    await initClient(c)
+    c.send({
+      jsonrpc: '2.0', id: 1, method: 'tools/call',
+      params: { name: 'kairos_deploy', arguments: { workflow: WEBHOOK_WORKFLOW, activate: true } },
+    })
+    const resp = await c.waitForResponse(1)
+    const result = resp['result'] as { content: Array<{ text: string }> }
+    c.close()
+
+    expect(result.content[0].text).toContain('Production webhook verified reachable.')
+  }, 15_000)
+
+  it('reports the webhook as NOT reachable when n8n returns its "not registered" signature', async () => {
+    webhookProbeResponse = {
+      status: 404,
+      body: '{"code":404,"message":"The requested webhook \\"POST verify-test\\" is not registered.","hint":"..."}',
+    }
+    const c = startServerWithMockN8n()
+    await initClient(c)
+    c.send({
+      jsonrpc: '2.0', id: 1, method: 'tools/call',
+      params: { name: 'kairos_deploy', arguments: { workflow: WEBHOOK_WORKFLOW, activate: true } },
+    })
+    const resp = await c.waitForResponse(1)
+    const result = resp['result'] as { content: Array<{ text: string }> }
+    c.close()
+
+    expect(result.content[0].text).toContain('Production webhook NOT reachable')
+    expect(result.content[0].text).toContain('not registered')
+  }, 15_000)
+})

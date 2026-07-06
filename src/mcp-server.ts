@@ -35,6 +35,7 @@ import { readCatalogCache, writeCatalogCache, getCatalogCachePath } from './util
 import { coalesceAsync } from './utils/coalesce-async.js'
 import { summarizeWorkflow } from './utils/workflow-summary.js'
 import { diffWorkflows, formatDiff } from './utils/workflow-diff.js'
+import { verifyWebhookReachable, type WebhookReachabilityResult } from './utils/webhook-verify.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8')) as { version: string }
@@ -349,6 +350,7 @@ server.tool(
     const stripped = stripper.stripForCreate(parsed)
     const response = await client.createWorkflow(stripped)
 
+    let webhookVerification: WebhookReachabilityResult | null = null
     if (activate) {
       if (!isAllowed('activate')) {
         return mcpText(JSON.stringify({
@@ -360,6 +362,7 @@ server.tool(
         }, null, 2))
       }
       await client.activateWorkflow(response.id)
+      webhookVerification = await verifyWebhookReachable(client, parsed)
     }
 
     const session = kairos_run_id ? mcpSessions.get(kairos_run_id) : undefined
@@ -400,7 +403,7 @@ server.tool(
       PatternAnalyzer.fromEnv().analyzeAndSave().catch(() => {})
     }
 
-    const summary = summarizeWorkflow(parsed, [], validation.issues)
+    const summary = summarizeWorkflow(parsed, [], validation.issues, webhookVerification)
 
     return mcpText(JSON.stringify({
       workflowId: response.id,
@@ -691,7 +694,17 @@ server.tool(
     const client = getApiClient()
     await client.activateWorkflow(workflow_id)
 
-    return mcpText(`Activated workflow ${workflow_id}`)
+    const workflow = await client.getWorkflow(workflow_id).catch(() => null)
+    const webhookVerification = workflow ? await verifyWebhookReachable(client, workflow) : null
+    const verificationNote = webhookVerification
+      ? webhookVerification.reachable === true
+        ? '\n\n✓ Production webhook verified reachable.'
+        : webhookVerification.reachable === false
+          ? `\n\n⚠ Production webhook NOT reachable — ${webhookVerification.detail}`
+          : `\n\n⚠ Could not verify production webhook reachability — ${webhookVerification.detail}`
+      : ''
+
+    return mcpText(`Activated workflow ${workflow_id}${verificationNote}`)
   },
 )
 

@@ -515,6 +515,8 @@ const result = await kairos.build(description, {
   }>
   dryRun: boolean
   summary: string  // plain-English "what this workflow does" — trigger, steps, credentials, warnings
+  smokeTest?: SmokeTestResult                 // set when { smokeTest: true } was passed
+  webhookVerification?: WebhookReachabilityResult  // set for webhook-triggered workflows built with { activate: true }
 }
 ```
 
@@ -545,6 +547,17 @@ What changed since the previous version:
 ```
 
 If the previous workflow can't be fetched (e.g. it was deleted, or a transient n8n API error), `replace()` still proceeds — the diff is just omitted from `summary` rather than blocking the update.
+
+**Webhook reachability verification (`{ activate: true }`)**: n8n's `active: true` on a workflow does not reliably mean its webhook route was actually registered — confirmed directly against a live n8n Cloud instance, where a workflow survived a manual UI toggle, a fresh webhook path, and a deactivate→reactivate cycle, and its production webhook still 404'd "not registered" every time. Because of this, building a webhook-triggered workflow with `activate: true` fires one real request at the workflow's own production webhook URL right after activation, and reports the honest result:
+
+```
+⚠ Production webhook NOT reachable — n8n reports this workflow as active, but its production
+webhook returned 404 "not registered" — the route was not actually wired up. This is a known
+n8n platform gap, not a Kairos error; the active flag alone cannot be trusted for
+webhook-triggered workflows.
+```
+
+This only applies to webhook-triggered workflows (nothing to probe for schedule/manual triggers) and only runs once per build — if `{ smokeTest: true }` is also passed, its result is reused instead of firing a second probe. `{ smokeTest: true }` (opt-in, requires `activate`) runs a fuller check and, for webhook triggers, uses this same production-URL probe — **this replaces a previous implementation that tested the wrong URL** (`/webhook-test/...`, which only works if a human has just clicked "Execute workflow" in n8n's own editor) and so gave false "passed" results in real automated use.
 
 ---
 

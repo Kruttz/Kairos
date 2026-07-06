@@ -1,6 +1,7 @@
 import type { N8nWorkflow, N8nNode } from '../types/workflow.js'
 import type { CredentialRequirement } from '../types/result.js'
 import type { ValidationIssue } from '../validation/types.js'
+import type { WebhookReachabilityResult } from './webhook-verify.js'
 import { NodeRegistry, DEFAULT_REGISTRY } from '../validation/registry.js'
 
 const registry = new NodeRegistry(DEFAULT_REGISTRY)
@@ -70,6 +71,7 @@ export function summarizeWorkflow(
   workflow: N8nWorkflow,
   credentialsNeeded: CredentialRequirement[],
   issues: ValidationIssue[],
+  webhookVerification?: WebhookReachabilityResult | null,
 ): string {
   const lines: string[] = []
   const triggers = workflow.nodes.filter((n) => isTriggerType(n.type))
@@ -106,6 +108,17 @@ export function summarizeWorkflow(
     lines.push(`Warnings (${warnings.length}):`)
     for (const w of warnings) {
       lines.push(`  - ${w.message}`)
+    }
+  }
+
+  if (webhookVerification) {
+    lines.push('')
+    if (webhookVerification.reachable === true) {
+      lines.push('✓ Production webhook verified reachable.')
+    } else if (webhookVerification.reachable === false) {
+      lines.push(`⚠ Production webhook NOT reachable — ${webhookVerification.detail}`)
+    } else {
+      lines.push(`⚠ Could not verify production webhook reachability — ${webhookVerification.detail}`)
     }
   }
 
