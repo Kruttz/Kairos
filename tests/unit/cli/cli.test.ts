@@ -511,4 +511,88 @@ describe('CLI — parseArgs / routing', () => {
       }, 15_000)
     })
   })
+
+  describe('pack export --workflow-json', () => {
+    it('fetches each workflow live from n8n and writes stripped workflow.json files, skipping ones that fail', async () => {
+      const mockN8n = createServer((req, res) => {
+        if (req.method === 'GET' && req.url === '/api/v1/workflows/wf-good') {
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            id: 'wf-good', name: 'Referral Intake', active: true,
+            nodes: [{ id: 'n1', name: 'Start', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 0], parameters: {} }],
+            connections: {}, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+          }))
+          return
+        }
+        if (req.method === 'GET' && req.url === '/api/v1/workflows/wf-bad') {
+          res.writeHead(404, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ message: 'not found' }))
+          return
+        }
+        res.writeHead(404)
+        res.end()
+      })
+      await new Promise<void>((resolve) => mockN8n.listen(0, '127.0.0.1', resolve))
+      const addr = mockN8n.address()
+      if (addr === null || typeof addr === 'string') throw new Error('mock server failed to bind')
+      const mockN8nUrl = `http://127.0.0.1:${addr.port}`
+
+      const fakeHome = await mkdtemp(join(tmpdir(), 'kairos-cli-pack-export-'))
+      const outDir = join(fakeHome, 'out')
+      try {
+        const { mkdir, writeFile } = await import('node:fs/promises')
+        const packsDir = join(fakeHome, '.kairos', 'packs')
+        await mkdir(packsDir, { recursive: true })
+        await writeFile(join(packsDir, 'test-pack.json'), JSON.stringify({
+          businessContext: 'Test Co', packName: 'test-pack', status: 'ready_for_test',
+          workflows: [
+            { name: 'Referral Intake', purpose: 'x', workflowId: 'wf-good', deployed: true, generationAttempts: 1, credentialsNeeded: [] },
+            { name: 'Broken One', purpose: 'x', workflowId: 'wf-bad', deployed: true, generationAttempts: 1, credentialsNeeded: [] },
+          ],
+          allCredentials: [], sheetsColumns: [], assumptions: [], testChecklist: [], builtAt: '2026-01-01T00:00:00.000Z',
+        }))
+
+        const child = spawn(TSX, [CLI, 'pack', 'export', 'test-pack', '--workflow-json', outDir], {
+          encoding: 'utf-8',
+          env: { ...process.env, HOME: fakeHome, N8N_BASE_URL: mockN8nUrl, N8N_API_KEY: 'test-key' },
+        })
+        let stderr = ''
+        child.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
+        const exitCode = await new Promise<number | null>((resolve) => child.on('close', resolve))
+
+        expect(exitCode).toBe(0)
+        expect(stderr).toContain('1 workflow.json file(s) written')
+        expect(stderr).toContain('1 skipped')
+        expect(stderr).toContain('Broken One')
+
+        const written = JSON.parse(await readFile(join(outDir, 'referral-intake.workflow.json'), 'utf-8'))
+        expect(written).toEqual({
+          name: 'Referral Intake',
+          nodes: [{ id: 'n1', name: 'Start', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 0], parameters: {} }],
+          connections: {},
+        })
+      } finally {
+        await new Promise<void>((resolve) => mockN8n.close(() => resolve()))
+        await rm(fakeHome, { recursive: true, force: true })
+      }
+    }, 15_000)
+
+    it('exits 1 with a clear message when N8N_BASE_URL/N8N_API_KEY are missing', async () => {
+      const fakeHome = await mkdtemp(join(tmpdir(), 'kairos-cli-pack-export-noenv-'))
+      try {
+        const { mkdir, writeFile } = await import('node:fs/promises')
+        const packsDir = join(fakeHome, '.kairos', 'packs')
+        await mkdir(packsDir, { recursive: true })
+        await writeFile(join(packsDir, 'test-pack.json'), JSON.stringify({
+          businessContext: 'Test Co', packName: 'test-pack', status: 'ready_for_test',
+          workflows: [], allCredentials: [], sheetsColumns: [], assumptions: [], testChecklist: [], builtAt: '2026-01-01T00:00:00.000Z',
+        }))
+        const r = run(['pack', 'export', 'test-pack', '--workflow-json', '/tmp/out'], { HOME: fakeHome, N8N_BASE_URL: '', N8N_API_KEY: '' })
+        expect(r.status).toBe(1)
+        expect(r.stderr).toContain('N8N_BASE_URL and N8N_API_KEY are required')
+      } finally {
+        await rm(fakeHome, { recursive: true, force: true })
+      }
+    })
+  })
 })

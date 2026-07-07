@@ -901,7 +901,7 @@ async function handleBuildPack(positional: string[], flags: Record<string, strin
 async function handlePackExport(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const packName = positional[0]
   if (!packName) {
-    console.error('Usage: kairos pack export <pack-name> [--handoff]')
+    console.error('Usage: kairos pack export <pack-name> [--handoff] [--workflow-json <dir>]')
     process.exit(1)
   }
 
@@ -919,6 +919,23 @@ async function handlePackExport(positional: string[], flags: Record<string, stri
     console.error(`Pack not found: ${packPath}`)
     console.error('Run "kairos build-pack <context>" to create one.')
     process.exit(1)
+  }
+
+  if (typeof flags['workflow-json'] === 'string') {
+    const outDir = flags['workflow-json']
+    const n8nBaseUrl = process.env['N8N_BASE_URL']
+    const n8nApiKey = process.env['N8N_API_KEY']
+    if (!n8nBaseUrl || !n8nApiKey) {
+      console.error('N8N_BASE_URL and N8N_API_KEY are required for --workflow-json (fetches each workflow live from n8n).')
+      process.exit(1)
+    }
+    const { writeWorkflowJsonFiles } = await import('./pack/pack-bundle.js')
+    const client = new N8nApiClient(n8nBaseUrl, n8nApiKey, CLI_LOGGER)
+    const result = await writeWorkflowJsonFiles(pack.workflows, client, outDir)
+    for (const w of result.written) console.error(`Wrote ${w.path}`)
+    for (const s of result.skipped) console.error(`Skipped "${s.workflowName}": ${s.reason}`)
+    console.error(`\n${result.written.length} workflow.json file(s) written to ${outDir}, ${result.skipped.length} skipped.`)
+    return
   }
 
   if (flags['handoff'] === true) {

@@ -811,6 +811,11 @@ kairos validate-pack my-pack
 kairos pack export my-pack
 kairos pack export my-pack --handoff
 
+# Fetch each workflow's current live n8n definition and write one <name>.workflow.json
+# per workflow into a directory (requires N8N_BASE_URL/N8N_API_KEY; skips workflows
+# that were never deployed or that n8n can no longer be reached for)
+kairos pack export my-pack --workflow-json ./deliverables
+
 # Record a deployed workflow's latest n8n execution into the library (improves retrieval)
 kairos trace record <n8n-workflow-id>
 

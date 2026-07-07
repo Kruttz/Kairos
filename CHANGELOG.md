@@ -4,6 +4,17 @@ All notable changes to `@kairos-sdk/core` are documented here. Format loosely fo
 
 ## [Unreleased]
 
+### New: `kairos pack export --workflow-json <dir>` (Delivery Bundle, Phase 1)
+First of six new client-deliverable artifacts, prompted by an external review proposing every generated pack ship as a full client handoff bundle, not just a workflow JSON. Sorted the proposal by real marginal cost before building anything -- this is the one genuine prerequisite the others share: `PackWorkflowResult` (the per-workflow record inside a saved pack) only ever stored `workflowId`, a string reference into n8n, never the actual node/connection graph -- the full `N8nWorkflow` was fetched during generation but discarded before being persisted to the pack file.
+
+New `src/pack/pack-bundle.ts`: `fetchWorkflowJson(workflowId, client)` fetches a workflow's *current* live n8n definition via the existing `N8nApiClient.getWorkflow(id)` and strips n8n-internal fields (`id`, `active`, `versionId`, `meta`, etc.) down to the portable `N8nWorkflow` shape -- deliberately live, not cached from build time, so a client's workflow.json always reflects reality even if the workflow was hand-edited in n8n since Kairos built it. Returns `null` (not a throw) on a fetch failure so one broken workflow in a multi-workflow pack never blocks exporting the rest.
+
+`kairos pack export <name> --workflow-json <dir>` writes one `<slug>.workflow.json` per workflow, skipping (with a printed reason, not a hard failure) any workflow with no `workflowId` or whose n8n fetch fails. Requires `N8N_BASE_URL`/`N8N_API_KEY`, same as every other n8n-touching command -- fails fast with a clear message if missing.
+
+This is the first of six planned artifacts (`workflow.json`, `credentials.md`, `risk-report.md`, `monitoring-plan.md`, `test-payloads.json`, `contract.openapi.json`) that will fold into a single `--bundle <dir>` command once all six exist. Naming note: deliberately called "the delivery bundle" in code/docs, not "Contract Pack" or similar, to avoid colliding with the existing `WorkflowPackResult`/`PackBuilder` "pack" concept.
+
+Tests: 9 unit tests (`fetchWorkflowJson`/`writeWorkflowJsonFiles`/`slugifyWorkflowName` — success, field-stripping, fetch failure, partial-failure graceful degradation, output-dir auto-creation) + 2 CLI integration tests spawning the real CLI against a mock n8n HTTP server. 1058/1058 passing overall. Typecheck/lint clean.
+
 ### New: always-on pattern audit trail + opt-in human-gated pattern promotion (`KAIROS_PATTERN_REVIEW`)
 Fourth and final concept from the SOLIVEN comparison, closing out the Tier 1+2 transfer plan — SOLIVEN's best governance idea Kairos lacked: state changes to learned behavior can require human sign-off, and every change is auditable. For a client-facing service, "why does your AI believe this?" needs an answer.
 
