@@ -21,6 +21,7 @@ Usage:
   kairos validate-pack <name>
   kairos trace record <n8n-workflow-id>
   kairos replace <n8n-id> <description>
+  kairos memory add|list|search|forget|rebuild-index <client-id> [...]
   kairos patterns [options]
   kairos sessions [options]
   kairos list
@@ -164,7 +165,7 @@ async function loadNodeRegistry(): Promise<NodeRegistry | undefined> {
   return cached?.registry
 }
 
-async function createClient(): Promise<Kairos> {
+async function createClient(clientId?: string): Promise<Kairos> {
   const telemetry = getTelemetryOption()
   const nodeRegistry = await loadNodeRegistry()
   return new Kairos({
@@ -176,12 +177,13 @@ async function createClient(): Promise<Kairos> {
     ...(process.env['KAIROS_TIMEOUT_MS'] ? { timeoutMs: parseInt(process.env['KAIROS_TIMEOUT_MS'], 10) } : {}),
     ...(telemetry !== undefined ? { telemetry } : {}),
     ...(nodeRegistry ? { nodeRegistry } : {}),
+    ...(clientId ? { clientId } : {}),
     library: createLibrary(),
     logger: CLI_LOGGER,
   })
 }
 
-async function createDryRunClient(): Promise<Kairos> {
+async function createDryRunClient(clientId?: string): Promise<Kairos> {
   const telemetry = getTelemetryOption()
   const nodeRegistry = await loadNodeRegistry()
   return new Kairos({
@@ -193,6 +195,7 @@ async function createDryRunClient(): Promise<Kairos> {
     ...(process.env['KAIROS_TIMEOUT_MS'] ? { timeoutMs: parseInt(process.env['KAIROS_TIMEOUT_MS'], 10) } : {}),
     ...(telemetry !== undefined ? { telemetry } : {}),
     ...(nodeRegistry ? { nodeRegistry } : {}),
+    ...(clientId ? { clientId } : {}),
     library: createLibrary(),
     logger: CLI_LOGGER,
   })
@@ -201,12 +204,13 @@ async function createDryRunClient(): Promise<Kairos> {
 async function handleBuild(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const description = positional.join(' ')
   if (!description) {
-    console.error('Usage: kairos build <description> [--dry-run] [--name <name>] [--activate] [--smoke-test]')
+    console.error('Usage: kairos build <description> [--dry-run] [--name <name>] [--activate] [--smoke-test] [--client <id>]')
     process.exit(1)
   }
 
   const isDryRun = flags['dry-run'] === true
-  const kairos = isDryRun ? await createDryRunClient() : await createClient()
+  const clientId = typeof flags['client'] === 'string' ? flags['client'] : undefined
+  const kairos = isDryRun ? await createDryRunClient(clientId) : await createClient(clientId)
   const start = Date.now()
 
   console.error(`Generating workflow...`)
@@ -240,16 +244,17 @@ async function handleBuild(positional: string[], flags: Record<string, string | 
   }, null, 2))
 }
 
-async function handleReplace(positional: string[]): Promise<void> {
+async function handleReplace(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const id = positional[0]
   const description = positional.slice(1).join(' ')
 
   if (!id || !description) {
-    console.error('Usage: kairos replace <n8n-workflow-id> <description>')
+    console.error('Usage: kairos replace <n8n-workflow-id> <description> [--client <id>]')
     process.exit(1)
   }
 
-  const kairos = await createClient()
+  const clientId = typeof flags['client'] === 'string' ? flags['client'] : undefined
+  const kairos = await createClient(clientId)
   const start = Date.now()
   console.error(`Replacing workflow ${id}...`)
 
@@ -268,6 +273,114 @@ async function handleReplace(positional: string[]): Promise<void> {
     generationAttempts: result.generationAttempts,
     summary: result.summary,
   }, null, 2))
+}
+
+const MEMORY_TYPES = ['preference', 'history', 'incident', 'reference'] as const
+
+async function handleMemoryAdd(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const clientId = positional[0]
+  const type = positional[1]
+  const description = positional.slice(2).join(' ')
+
+  if (!clientId || !type || !(MEMORY_TYPES as readonly string[]).includes(type) || !description) {
+    console.error(`Usage: kairos memory add <client-id> <${MEMORY_TYPES.join('|')}> <description> [--body <text>] [--tags a,b,c]`)
+    process.exit(1)
+  }
+
+  const { ClientMemoryStore } = await import('./memory/store.js')
+  const store = new ClientMemoryStore(clientId)
+  const body = typeof flags['body'] === 'string' ? flags['body'] : description
+  const tags = typeof flags['tags'] === 'string'
+    ? flags['tags'].split(',').map((t) => t.trim()).filter(Boolean)
+    : []
+
+  const node = await store.remember({
+    type: type as typeof MEMORY_TYPES[number],
+    description,
+    body,
+    tags,
+    source: 'user',
+  })
+  console.log(JSON.stringify(node, null, 2))
+}
+
+async function handleMemoryList(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const clientId = positional[0]
+  if (!clientId) {
+    console.error('Usage: kairos memory list <client-id> [--type <type>] [--json]')
+    process.exit(1)
+  }
+
+  const { ClientMemoryStore } = await import('./memory/store.js')
+  const store = new ClientMemoryStore(clientId)
+  const nodes = await store.loadAllNodes()
+  const filterType = typeof flags['type'] === 'string' ? flags['type'] : undefined
+  const filtered = filterType ? nodes.filter((n) => n.type === filterType) : nodes
+
+  if (flags['json'] === true) {
+    console.log(JSON.stringify(filtered, null, 2))
+    return
+  }
+
+  console.error(`${filtered.length} memory node(s) for client "${clientId}"`)
+  for (const n of filtered) {
+    console.error(`  [${n.type}] ${n.id.slice(0, 8)} — ${n.description}`)
+  }
+}
+
+async function handleMemorySearch(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const clientId = positional[0]
+  const query = positional.slice(1).join(' ')
+  if (!clientId || !query) {
+    console.error('Usage: kairos memory search <client-id> <query> [--k <n>] [--json]')
+    process.exit(1)
+  }
+
+  const { ClientMemoryStore } = await import('./memory/store.js')
+  const store = new ClientMemoryStore(clientId)
+  const k = typeof flags['k'] === 'string' ? parseInt(flags['k'], 10) : 5
+  const results = await store.retrieve(query, k)
+
+  if (flags['json'] === true) {
+    console.log(JSON.stringify(results, null, 2))
+    return
+  }
+
+  console.error(`${results.length} result(s) for "${query}"`)
+  for (const n of results) {
+    console.error(`  [${n.type}] ${n.description}`)
+  }
+}
+
+async function handleMemoryForget(positional: string[]): Promise<void> {
+  const clientId = positional[0]
+  const id = positional[1]
+  if (!clientId || !id) {
+    console.error('Usage: kairos memory forget <client-id> <memory-id>')
+    process.exit(1)
+  }
+
+  const { ClientMemoryStore } = await import('./memory/store.js')
+  const store = new ClientMemoryStore(clientId)
+  const removed = await store.forget(id)
+  if (!removed) {
+    console.error(`No memory found with id "${id}"`)
+    process.exit(1)
+  }
+  console.error(`Forgot memory ${id}`)
+}
+
+async function handleMemoryRebuildIndex(positional: string[]): Promise<void> {
+  const clientId = positional[0]
+  if (!clientId) {
+    console.error('Usage: kairos memory rebuild-index <client-id>')
+    process.exit(1)
+  }
+
+  const { ClientMemoryStore } = await import('./memory/store.js')
+  const store = new ClientMemoryStore(clientId)
+  const count = await store.rebuildIndex()
+  console.error(`Rebuilt index: ${count} memory node(s) for client "${clientId}"`)
 }
 
 async function handleList(): Promise<void> {
@@ -1105,7 +1218,7 @@ async function main(): Promise<void> {
       await handleBuildPack(positional, flags)
       break
     case 'replace':
-      await handleReplace(positional)
+      await handleReplace(positional, flags)
       break
     case 'patterns':
       await handlePatterns(flags)
@@ -1144,6 +1257,26 @@ async function main(): Promise<void> {
       } else {
         console.error(`Unknown pack subcommand: ${subcommand ?? '(none)'}`)
         console.error('Available: kairos pack export <name> [--handoff] | kairos pack wire <name> [options]')
+        process.exit(1)
+      }
+      break
+    }
+    case 'memory': {
+      const subcommand = positional[0]
+      const subPositional = positional.slice(1)
+      if (subcommand === 'add') {
+        await handleMemoryAdd(subPositional, flags)
+      } else if (subcommand === 'list') {
+        await handleMemoryList(subPositional, flags)
+      } else if (subcommand === 'search') {
+        await handleMemorySearch(subPositional, flags)
+      } else if (subcommand === 'forget') {
+        await handleMemoryForget(subPositional)
+      } else if (subcommand === 'rebuild-index') {
+        await handleMemoryRebuildIndex(subPositional)
+      } else {
+        console.error(`Unknown memory subcommand: ${subcommand ?? '(none)'}`)
+        console.error('Available: kairos memory add|list|search|forget|rebuild-index <client-id> [...]')
         process.exit(1)
       }
       break

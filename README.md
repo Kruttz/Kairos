@@ -152,8 +152,8 @@ Kairos's MCP server blocks destructive operations by default — deploying, acti
 
 | Mode | Behavior |
 |---|---|
-| `readonly` | Blocks `kairos_deploy`, `kairos_replace`, `kairos_activate`, `kairos_delete` unconditionally — overrides the `ALLOW_*` flags below entirely |
-| `validate` | Same as `readonly` — read/validate/search tools work, all write operations are blocked |
+| `readonly` | Blocks `kairos_deploy`, `kairos_replace`, `kairos_activate`, `kairos_delete`, `kairos_remember`, and `kairos_recall` unconditionally — overrides the `ALLOW_*` flags below entirely |
+| `validate` | Same as `readonly` — read/validate/search tools work, all write operations (and memory, read or write) are blocked |
 | `deploy` (default) | Write operations are *possible*, but each one still needs its own explicit `ALLOW_*` flag below — `deploy` mode does not auto-enable anything by itself |
 
 **Per-action opt-in flags** (only relevant in `deploy` mode — `readonly`/`validate` block these regardless):
@@ -163,6 +163,7 @@ Kairos's MCP server blocks destructive operations by default — deploying, acti
 | `KAIROS_MCP_ALLOW_DEPLOY` | `kairos_deploy`, `kairos_replace` — set to exactly `true` |
 | `KAIROS_MCP_ALLOW_ACTIVATE` | `kairos_activate`, and the `activate: true` option on `kairos_deploy` |
 | `KAIROS_MCP_ALLOW_DELETE` | `kairos_delete` |
+| `KAIROS_MCP_ALLOW_MEMORY` | `kairos_remember` and `kairos_recall` — gated together, deliberately more conservative than the other read-only tools (`kairos_search`/`kairos_list`), since client memory can hold business-sensitive context, not just generic workflow templates |
 
 **Optional shared-secret auth:** set `KAIROS_MCP_SECRET` and every write-capable tool call must include a matching `kairos_secret` argument, or it's rejected as unauthorized — useful if the server is reachable by more than just your own trusted agent.
 
@@ -230,9 +231,10 @@ Every `KAIROS_*` variable Kairos reads, in one place (the CLI's own `--help` out
 | `KAIROS_REGISTRY_STRICT` | SDK, CLI, MCP | Set to `true` to warn on any node `typeVersion` above the registry's known-safe range. Default (unset/`false`) is lenient — a version higher than the known max is treated as a newer n8n release, not an error |
 | `KAIROS_WEIGHT_TFIDF` / `KAIROS_WEIGHT_JACCARD` / `KAIROS_WEIGHT_OUTCOME` / `KAIROS_WEIGHT_DEPLOY` / `KAIROS_WEIGHT_COSINE` | SDK, CLI, MCP | Retrieval scoring weights — see [How retrieval works](#workflow-library--feedback-loop) |
 | `KAIROS_MCP_MODE` | MCP | `readonly` \| `validate` \| `deploy` (default) — see [MCP Permissions & Security](#mcp-permissions--security) |
-| `KAIROS_MCP_ALLOW_DEPLOY` / `KAIROS_MCP_ALLOW_ACTIVATE` / `KAIROS_MCP_ALLOW_DELETE` | MCP | Per-action opt-in for write operations — see [MCP Permissions & Security](#mcp-permissions--security) |
+| `KAIROS_MCP_ALLOW_DEPLOY` / `KAIROS_MCP_ALLOW_ACTIVATE` / `KAIROS_MCP_ALLOW_DELETE` / `KAIROS_MCP_ALLOW_MEMORY` | MCP | Per-action opt-in for write operations — see [MCP Permissions & Security](#mcp-permissions--security) |
 | `KAIROS_MCP_SECRET` | MCP | Optional shared secret required on write-capable tool calls |
 | `KAIROS_MCP_PORT` | MCP | HTTP transport port when running `kairos-mcp --http` (default: `3000`) |
+| `KAIROS_CLIENT_ID` | SDK, CLI | Enables the [per-client memory layer](#per-client-memory) — must match `^[a-z0-9][a-z0-9-]{0,63}$`. Omit to leave memory fully inert (default) |
 
 ---
 
@@ -603,6 +605,52 @@ if (pack.escalation) {
 
 Pass `buildDespiteBlocking: true` to restore the previous behavior (build everything, just refuse activation). The existing never-activate-when-blocking safety gate still applies regardless. `kairos build-pack` exits with code `2` (not `1`) when it escalates, so scripts can branch on it.
 
+### Per-Client Memory
+
+Set `clientId` (constructor option, `KAIROS_CLIENT_ID` env var, or CLI `--client <id>`) to give Kairos persistent, per-client memory across builds — preferences, build history, incidents, and reference facts, stored as human-readable markdown and read back into future prompts automatically. Fully inert and zero filesystem access when unset (the default) — nothing about existing behavior changes unless you opt in.
+
+```ts
+const kairos = new Kairos({ anthropicApiKey, n8nBaseUrl, n8nApiKey, clientId: 'empire-homecare' })
+
+// Explicit write — e.g. a preference you learned in conversation
+await kairos.remember({
+  type: 'preference',
+  description: 'Prefers concise Slack notifications, no emoji',
+  body: 'Client explicitly asked for short, plain-text alerts.',
+  tags: ['slack', 'tone'],
+})
+
+// Every successful build/replace also writes a `history` node automatically —
+// no action needed. The next build for this client will have it available.
+await kairos.build('When a webhook receives an order, notify #orders on Slack')
+// The generation prompt now includes:
+//   [Client Context — accumulated from prior work with this client]
+//   - (preference) Prefers concise Slack notifications, no emoji
+//     Client explicitly asked for short, plain-text alerts.
+//   - (history) Built "Order Notifier": ...
+
+// Explicit read
+const relevant = await kairos.recall('slack notification tone', 5)
+```
+
+- **Storage**: `~/.kairos/clients/<clientId>/memory/<type>/*.md` — one markdown file per memory, human-readable and git-diffable, plus a derived `index.json` that's always rebuildable (`kairos memory rebuild-index <client-id>`) rather than hand-maintained.
+- **Types**: `preference` (how this client wants things done), `history` (what was built/changed), `incident` (escalations/failures), `reference` (external facts like sheet IDs or channel names). `preference`/`reference` are never auto-evicted; `history`/`incident` are capped (`KAIROS_MEMORY_CAP`, default 500) and evicted oldest-first.
+- **Retrieval**: pure-TypeScript BM25 over each node's description + body + tags, weighted by recency (90-day half-life, floored) and a small boost for `preference` nodes. No embeddings, no external services, no API cost.
+- **Safety**: every clientId is validated (`^[a-z0-9][a-z0-9-]{0,63}$`) before any filesystem access — a rejected id can never traverse outside its own directory or reach another client's memory. Every write is scrubbed for credential-shaped text (API keys, bearer tokens, long hex/base64 runs) and rejected if found — memory nodes should only ever reference credential *types*, never values. A memory read/write failure never blocks a build; it's logged and the build proceeds without it.
+
+CLI:
+
+```bash
+kairos memory add empire-homecare preference "Prefers concise Slack notifications" --tags slack,tone
+kairos memory list empire-homecare [--type preference] [--json]
+kairos memory search empire-homecare "slack tone" [--k 5]
+kairos memory forget empire-homecare <memory-id>
+kairos memory rebuild-index empire-homecare
+kairos build "..." --client empire-homecare
+```
+
+MCP: `kairos_remember` / `kairos_recall` tools, disabled by default — set `KAIROS_MCP_ALLOW_MEMORY=true` to enable.
+
 ### `validatePack(pack)` + `generateHandoff(pack)`
 
 Check a built pack for issues, and generate a client-ready handoff document:
@@ -788,6 +836,14 @@ kairos sessions --limit 50 --json
 
 # Regenerate an existing n8n workflow from a new description (re-validates, preserves workflow ID)
 kairos replace <n8n-workflow-id> "updated description of what this workflow should do"
+
+# Per-client persistent memory (see Per-Client Memory above) — inert unless a client id is given
+kairos memory add empire-homecare preference "Prefers concise Slack notifications" --tags slack,tone
+kairos memory list empire-homecare [--type preference] [--json]
+kairos memory search empire-homecare "slack tone" [--k 5]
+kairos memory forget empire-homecare <memory-id>
+kairos memory rebuild-index empire-homecare
+kairos build "..." --client empire-homecare
 
 # Manage workflows
 kairos list

@@ -87,7 +87,7 @@ export class WorkflowDesigner {
     this.promptBuilder = new PromptBuilder(patternsPath)
   }
 
-  async design(request: DesignRequest, matches: WorkflowMatch[], globalFailureRates: RuleFailureRate[] = []): Promise<DesignResult> {
+  async design(request: DesignRequest, matches: WorkflowMatch[], globalFailureRates: RuleFailureRate[] = [], clientContext?: string): Promise<DesignResult> {
     const attemptMetadata: AttemptMetadata[] = []
     // Deliberately holds ALL issues (errors + warnings) from the previous attempt, not
     // just errors — so a build that's already retrying for a real error also gets a
@@ -104,7 +104,7 @@ export class WorkflowDesigner {
     // nothing new about them this round). Cleared the moment a later attempt parses cleanly.
     let lastParseError: ResponseParseError | ResponseTruncationError | null = null
     let attempts = 0
-    const built = this.promptBuilder.build(request, matches, globalFailureRates)
+    const built = this.promptBuilder.build(request, matches, globalFailureRates, undefined, clientContext)
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       attempts = attempt

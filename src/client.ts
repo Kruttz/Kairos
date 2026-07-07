@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { N8nWorkflow, Tag } from './types/workflow.js'
-import type { BuildResult, WorkflowListItem, ExecutionSummary, ExecutionDetail, SmokeTestResult } from './types/result.js'
+import type { BuildResult, WorkflowListItem, ExecutionSummary, ExecutionDetail, SmokeTestResult, CredentialRequirement } from './types/result.js'
 import type { ClientOptions, BuildOptions, DeleteOptions, ExecutionFilter } from './types/options.js'
 import type { IWorkflowLibrary, WorkflowMatch, WorkflowMetadataInput } from './library/types.js'
 import { NullLibrary } from './library/null-library.js'
@@ -25,6 +25,9 @@ import { generateUUID } from './utils/uuid.js'
 import { summarizeWorkflow } from './utils/workflow-summary.js'
 import { diffWorkflows, formatDiff } from './utils/workflow-diff.js'
 import type { WebhookReachabilityResult } from './utils/webhook-verify.js'
+import { ClientMemoryStore } from './memory/store.js'
+import { formatClientContext } from './memory/format.js'
+import type { RememberInput, MemoryNode } from './memory/types.js'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -41,6 +44,7 @@ export class Kairos {
   private readonly telemetryReader: TelemetryReader | null
   private readonly patternAnalyzer: PatternAnalyzer | null
   private readonly model: string
+  private readonly memoryStore: ClientMemoryStore
   private saveQueue: Promise<string | null> = Promise.resolve(null)
 
   constructor(options: ClientOptions) {
@@ -69,6 +73,7 @@ export class Kairos {
     this.designer = new WorkflowDesigner(anthropic, this.model, logger, patternsPath, options.nodeRegistry, maxTokens, timeoutMs)
     this.library = options.library ?? new NullLibrary()
     this.logger = logger
+    this.memoryStore = new ClientMemoryStore(options.clientId ?? process.env['KAIROS_CLIENT_ID'], { logger })
 
     if (options.telemetry === true) {
       this.telemetry = new TelemetryCollector()
@@ -96,6 +101,35 @@ export class Kairos {
     if (!description || description.trim().length === 0) {
       throw new GuardError('Description is required and must be non-empty')
     }
+  }
+
+  /** Explicitly writes a client memory node. No-op (returns null) when clientId isn't set. */
+  async remember(input: RememberInput): Promise<MemoryNode | null> {
+    return this.memoryStore.remember(input)
+  }
+
+  /** Retrieves relevant client memory nodes for a query. Returns [] when clientId isn't set. */
+  async recall(query: string, k = 5): Promise<MemoryNode[]> {
+    return this.memoryStore.retrieve(query, k)
+  }
+
+  /** Records a successful build/replace as a `history` memory node. Never fails the caller —
+   * a write failure is logged and swallowed, matching the "memory never blocks a build" rule. */
+  private async recordBuildHistory(
+    verb: 'Built' | 'Replaced',
+    name: string,
+    workflowId: string | null,
+    description: string,
+    credentialsNeeded: CredentialRequirement[],
+  ): Promise<void> {
+    if (!this.memoryStore.isActive) return
+    const credTypes = credentialsNeeded.map((c) => c.credentialType).join(', ') || 'none'
+    await this.memoryStore.remember({
+      type: 'history',
+      description: `${verb} "${name}": ${description}`,
+      body: `Workflow ID: ${workflowId ?? 'n/a'}\nCredentials needed: ${credTypes}`,
+      source: 'build',
+    }).catch((err) => this.logger.warn('Failed to write build history to client memory', { err: String(err) }))
   }
 
   async build(description: string, options?: BuildOptions): Promise<BuildResult> {
@@ -130,12 +164,16 @@ export class Kairos {
       }
     }
 
+    const clientMemories = await this.memoryStore.retrieve(description, 5)
+    const clientContext = formatClientContext(clientMemories) ?? undefined
+
     let designResult: DesignResult
     try {
       designResult = await this.designer.design(
         { description, ...(options?.name ? { name: options.name } : {}) },
         matches,
         globalFailureRates,
+        clientContext,
       )
     } catch (err) {
       if (err instanceof ValidationError || err instanceof GenerationError || err instanceof ResponseParseError) {
@@ -254,6 +292,7 @@ export class Kairos {
     }, runId)
 
     this.updatePatterns()
+    await this.recordBuildHistory('Built', deployed.name, deployed.workflowId, description, designResult.credentialsNeeded)
 
     const finalSummary = summarizeWorkflow(workflow, designResult.credentialsNeeded, designResult.attemptMetadata.at(-1)?.issues ?? [], webhookVerification)
 
@@ -289,10 +328,12 @@ export class Kairos {
     await this.library.initialize()
     const matches = await this.library.search(description)
     const globalFailureRates = await this.telemetryReader?.getFailureRates() ?? []
+    const clientMemories = await this.memoryStore.retrieve(description, 5)
+    const clientContext = formatClientContext(clientMemories) ?? undefined
 
     let designResult: DesignResult
     try {
-      designResult = await this.designer.design({ description }, matches, globalFailureRates)
+      designResult = await this.designer.design({ description }, matches, globalFailureRates, clientContext)
     } catch (err) {
       if (err instanceof ValidationError || err instanceof GenerationError || err instanceof ResponseParseError) {
         await this.emitFailureTelemetry(err, description, workflowType, runId, buildStart, false)
@@ -339,6 +380,7 @@ export class Kairos {
     }, runId)
 
     this.updatePatterns()
+    await this.recordBuildHistory('Replaced', deployed.name, deployed.workflowId, description, designResult.credentialsNeeded)
 
     const baseSummary = summarizeWorkflow(designResult.workflow, designResult.credentialsNeeded, designResult.attemptMetadata.at(-1)?.issues ?? [])
     const summary = previousWorkflow

@@ -104,7 +104,7 @@ function getMcpMode(): McpMode {
   return 'deploy'
 }
 
-function isAllowed(action: 'deploy' | 'activate' | 'delete'): boolean {
+function isAllowed(action: 'deploy' | 'activate' | 'delete' | 'memory'): boolean {
   // readonly and validate modes block all write ops — mode restriction overrides ALLOW_* flags
   const mode = getMcpMode()
   if (mode === 'readonly' || mode === 'validate') return false
@@ -805,6 +805,56 @@ server.tool(
       slowestNode: slowestNode ? { name: slowestNode[0], ms: slowestNode[1] } : null,
       drift,
     }, null, 2))
+  },
+)
+
+const MEMORY_TYPES = ['preference', 'history', 'incident', 'reference'] as const
+
+server.tool(
+  'kairos_remember',
+  'Write a persistent memory node for a client — a preference, a history event, an incident, or a reference fact. Disabled by default; set KAIROS_MCP_ALLOW_MEMORY=true to enable. Memory nodes must never contain credential values (only credential types/descriptions) — writes containing secret-shaped text are rejected.',
+  {
+    client_id: z.string().describe('Client identifier — lowercase alphanumeric plus hyphens, max 64 chars'),
+    type: z.enum(MEMORY_TYPES).describe('preference = how this client wants things done; history = what was built/changed; incident = escalations/failures/drift; reference = external facts'),
+    description: z.string().describe('One-line summary of this memory'),
+    body: z.string().optional().describe('Fuller detail — defaults to the description if omitted'),
+    tags: z.array(z.string()).optional().describe('Optional tags for filtering'),
+  },
+  async ({ client_id, type, description, body, tags }) => {
+    if (!isAllowed('memory')) {
+      return mcpError(JSON.stringify({ error: 'Memory is disabled. Set KAIROS_MCP_ALLOW_MEMORY=true to enable.' }))
+    }
+    const { ClientMemoryStore } = await import('./memory/store.js')
+    try {
+      const store = new ClientMemoryStore(client_id)
+      const node = await store.remember({ type, description, body: body ?? description, tags: tags ?? [], source: 'user' })
+      return mcpText(JSON.stringify(node, null, 2))
+    } catch (err) {
+      return mcpError(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }))
+    }
+  },
+)
+
+server.tool(
+  'kairos_recall',
+  'Retrieve relevant persistent memory nodes for a client, ranked by relevance and recency. Disabled by default; set KAIROS_MCP_ALLOW_MEMORY=true to enable.',
+  {
+    client_id: z.string().describe('Client identifier — lowercase alphanumeric plus hyphens, max 64 chars'),
+    query: z.string().describe('What to search for'),
+    k: z.number().optional().describe('Max results to return (default 5)'),
+  },
+  async ({ client_id, query, k }) => {
+    if (!isAllowed('memory')) {
+      return mcpError(JSON.stringify({ error: 'Memory is disabled. Set KAIROS_MCP_ALLOW_MEMORY=true to enable.' }))
+    }
+    const { ClientMemoryStore } = await import('./memory/store.js')
+    try {
+      const store = new ClientMemoryStore(client_id)
+      const results = await store.retrieve(query, k ?? 5)
+      return mcpText(JSON.stringify(results, null, 2))
+    } catch (err) {
+      return mcpError(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }))
+    }
   },
 )
 

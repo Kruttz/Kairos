@@ -39,9 +39,9 @@ export class PromptBuilder {
     return 10
   }
 
-  build(request: DesignRequest, matches: WorkflowMatch[], globalFailureRates: RuleFailureRate[] = [], dynamicCatalog?: string): BuiltPrompt {
+  build(request: DesignRequest, matches: WorkflowMatch[], globalFailureRates: RuleFailureRate[] = [], dynamicCatalog?: string, clientContext?: string): BuiltPrompt {
     const mode = this.resolveMode(matches)
-    const system = this.buildSystem(matches, mode, globalFailureRates, dynamicCatalog, request.description)
+    const system = this.buildSystem(matches, mode, globalFailureRates, dynamicCatalog, request.description, clientContext)
     const userMessage = this.buildUserMessage(request, matches, mode)
     return { system, userMessage, mode, matches }
   }
@@ -85,7 +85,7 @@ Fix ALL of the above issues in your new response. Do not repeat any of these mis
     return scoreToMode(top.score)
   }
 
-  private buildSystem(matches: WorkflowMatch[], mode: 'direct' | 'reference' | 'scratch', globalFailureRates: RuleFailureRate[] = [], dynamicCatalog?: string, description?: string): SystemPromptBlock[] {
+  private buildSystem(matches: WorkflowMatch[], mode: 'direct' | 'reference' | 'scratch', globalFailureRates: RuleFailureRate[] = [], dynamicCatalog?: string, description?: string, clientContext?: string): SystemPromptBlock[] {
     let basePrompt = SYSTEM_PROMPT_V1
     if (dynamicCatalog) {
       basePrompt = basePrompt.replace(
@@ -191,6 +191,10 @@ Fix ALL of the above issues in your new response. Do not repeat any of these mis
       if (!expressionAlreadyCovered) {
         blocks.push({ type: 'text', text: PROACTIVE_EXPRESSION_GUIDANCE })
       }
+    }
+
+    if (clientContext) {
+      blocks.push({ type: 'text', text: clientContext })
     }
 
     return blocks

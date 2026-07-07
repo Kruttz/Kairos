@@ -97,7 +97,9 @@ describe('Kairos MCP Server', () => {
     expect(names).toContain('kairos_library')
     expect(names).toContain('kairos_outcome')
     expect(names).toContain('kairos_record_trace')
-    expect(names).toHaveLength(16)
+    expect(names).toContain('kairos_remember')
+    expect(names).toContain('kairos_recall')
+    expect(names).toHaveLength(18)
   })
 
   it('kairos_prompt returns a prompt even without n8n credentials (graceful fallback)', async () => {
@@ -302,6 +304,32 @@ describe('Kairos MCP Server', () => {
     expect(content.recorded).toBe(true)
     expect(content.libraryId).toBe('nonexistent-id')
   })
+
+  it('kairos_remember is blocked by default', async () => {
+    client.send({
+      jsonrpc: '2.0', id: 14, method: 'tools/call',
+      params: { name: 'kairos_remember', arguments: { client_id: 'test-client', type: 'preference', description: 'x' } },
+    })
+    const resp = await client.waitForResponse(14)
+    const result = resp['result'] as { content: Array<{ text: string }>; isError?: boolean }
+    const content = JSON.parse(result.content[0].text)
+
+    expect(result.isError).toBe(true)
+    expect(content.error).toContain('KAIROS_MCP_ALLOW_MEMORY')
+  })
+
+  it('kairos_recall is blocked by default', async () => {
+    client.send({
+      jsonrpc: '2.0', id: 15, method: 'tools/call',
+      params: { name: 'kairos_recall', arguments: { client_id: 'test-client', query: 'x' } },
+    })
+    const resp = await client.waitForResponse(15)
+    const result = resp['result'] as { content: Array<{ text: string }>; isError?: boolean }
+    const content = JSON.parse(result.content[0].text)
+
+    expect(result.isError).toBe(true)
+    expect(content.error).toContain('KAIROS_MCP_ALLOW_MEMORY')
+  })
 })
 
 describe('Kairos MCP Server — role modes', () => {
@@ -388,6 +416,18 @@ describe('Kairos MCP Server — role modes', () => {
     // deploy mode doesn't auto-allow — still requires explicit ALLOW_DEPLOY=true
     expect(result.isError).toBe(true)
     expect(content.error).toContain('KAIROS_MCP_ALLOW_DEPLOY')
+  }, 15_000)
+
+  it('KAIROS_MCP_MODE=readonly blocks kairos_recall too (memory read gated the same as write)', async () => {
+    const c = startServerWithMode('readonly')
+    await initClient(c)
+    c.send({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'kairos_recall', arguments: { client_id: 'test', query: 'x' } } })
+    const resp = await c.waitForResponse(1)
+    const result = resp['result'] as { content: Array<{ text: string }>; isError?: boolean }
+    const content = JSON.parse(result.content[0].text)
+    c.close()
+    expect(result.isError).toBe(true)
+    expect(content.error).toMatch(/disabled/i)
   }, 15_000)
 })
 
@@ -662,5 +702,129 @@ describe('Kairos MCP Server — kairos_deploy webhook reachability verification'
 
     expect(result.content[0].text).toContain('Production webhook NOT reachable')
     expect(result.content[0].text).toContain('not registered')
+  }, 15_000)
+})
+
+describe('Kairos MCP Server — kairos_remember / kairos_recall (enabled)', () => {
+  let fakeHome: string
+
+  beforeAll(async () => {
+    fakeHome = await mkdtemp(join(tmpdir(), 'kairos-mcp-memory-'))
+  })
+
+  afterAll(async () => {
+    await rm(fakeHome, { recursive: true, force: true })
+  })
+
+  function startServerWithMemoryEnabled(): McpClient {
+    const proc = spawn('node', [SERVER_PATH], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        N8N_BASE_URL: undefined,
+        N8N_API_KEY: undefined,
+        HOME: fakeHome,
+        KAIROS_MCP_ALLOW_MEMORY: 'true',
+      },
+    })
+    let buffer = ''
+    const responses = new Map<number, Record<string, unknown>>()
+    const waiters = new Map<number, (v: Record<string, unknown>) => void>()
+    proc.stdout!.on('data', (data: Buffer) => {
+      buffer += data.toString()
+      const lines = buffer.split('\n')
+      buffer = lines.pop()!
+      for (const line of lines) {
+        if (!line.trim()) continue
+        const parsed = JSON.parse(line) as Record<string, unknown>
+        const id = parsed['id'] as number
+        responses.set(id, parsed)
+        waiters.get(id)?.(parsed)
+        waiters.delete(id)
+      }
+    })
+    return {
+      proc,
+      send(msg: object) { proc.stdin!.write(JSON.stringify(msg) + '\n') },
+      waitForResponse(id: number): Promise<Record<string, unknown>> {
+        const existing = responses.get(id)
+        if (existing) return Promise.resolve(existing)
+        return new Promise((resolve) => { waiters.set(id, resolve) })
+      },
+      close() { proc.kill() },
+    }
+  }
+
+  async function initClient(client: McpClient): Promise<void> {
+    client.send({ jsonrpc: '2.0', id: 0, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1.0' } } })
+    await client.waitForResponse(0)
+  }
+
+  it('writes a memory node with kairos_remember and retrieves it with kairos_recall', async () => {
+    const c = startServerWithMemoryEnabled()
+    await initClient(c)
+
+    c.send({
+      jsonrpc: '2.0', id: 1, method: 'tools/call',
+      params: {
+        name: 'kairos_remember',
+        arguments: { client_id: 'mcp-test-client', type: 'preference', description: 'Prefers concise Slack alerts', tags: ['slack'] },
+      },
+    })
+    const rememberResp = await c.waitForResponse(1)
+    const rememberResult = rememberResp['result'] as { content: Array<{ text: string }>; isError?: boolean }
+    expect(rememberResult.isError).toBeUndefined()
+    const node = JSON.parse(rememberResult.content[0].text) as { id: string; type: string }
+    expect(node.type).toBe('preference')
+
+    c.send({
+      jsonrpc: '2.0', id: 2, method: 'tools/call',
+      params: { name: 'kairos_recall', arguments: { client_id: 'mcp-test-client', query: 'concise slack alerts' } },
+    })
+    const recallResp = await c.waitForResponse(2)
+    const recallResult = recallResp['result'] as { content: Array<{ text: string }> }
+    const results = JSON.parse(recallResult.content[0].text) as Array<{ description: string }>
+    c.close()
+
+    expect(results.length).toBeGreaterThan(0)
+    expect(results[0]!.description).toBe('Prefers concise Slack alerts')
+  }, 15_000)
+
+  it('kairos_remember rejects a memory containing a secret-shaped string', async () => {
+    const c = startServerWithMemoryEnabled()
+    await initClient(c)
+
+    c.send({
+      jsonrpc: '2.0', id: 1, method: 'tools/call',
+      params: {
+        name: 'kairos_remember',
+        arguments: { client_id: 'mcp-test-client-2', type: 'reference', description: 'API key is sk-ant-api03-abcdefghij1234567890' },
+      },
+    })
+    const resp = await c.waitForResponse(1)
+    const result = resp['result'] as { content: Array<{ text: string }>; isError?: boolean }
+    c.close()
+
+    expect(result.isError).toBe(true)
+    expect(result.content[0].text).toContain('Refusing to store')
+  }, 15_000)
+
+  it('kairos_remember rejects an invalid client_id (fail-closed)', async () => {
+    const c = startServerWithMemoryEnabled()
+    await initClient(c)
+
+    c.send({
+      jsonrpc: '2.0', id: 1, method: 'tools/call',
+      params: {
+        name: 'kairos_remember',
+        arguments: { client_id: '../../etc', type: 'reference', description: 'x' },
+      },
+    })
+    const resp = await c.waitForResponse(1)
+    const result = resp['result'] as { content: Array<{ text: string }>; isError?: boolean }
+    c.close()
+
+    expect(result.isError).toBe(true)
+    expect(result.content[0].text).toContain('Invalid clientId')
   }, 15_000)
 })

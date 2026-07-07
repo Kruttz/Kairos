@@ -21,6 +21,11 @@ export interface ClientOptions {
    * synced from a live n8n instance via `kairos sync-nodes`. Defaults to the built-in
    * static registry when omitted. */
   nodeRegistry?: NodeRegistry
+  /** Enables the per-client persistent memory layer (or KAIROS_CLIENT_ID env var) — must
+   * match ^[a-z0-9][a-z0-9-]{0,63}$. Builds/replaces read relevant prior context into the
+   * prompt and write a history entry after each successful deploy. Omit to leave memory
+   * fully inert (default — no filesystem access, no behavior change). */
+  clientId?: string
 }
 
 export interface BuildOptions {
