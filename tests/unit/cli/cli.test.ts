@@ -566,6 +566,88 @@ describe('CLI — parseArgs / routing', () => {
     })
   })
 
+  describe('pack export --monitoring-plan', () => {
+    it('reports live status and latest execution, requires N8N_BASE_URL/N8N_API_KEY', async () => {
+      const mockN8n = createServer((req, res) => {
+        if (req.method === 'GET' && req.url === '/api/v1/workflows/wf-1') {
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            id: 'wf-1', name: 'Missed-Call Text-Back', active: true,
+            nodes: [], connections: {}, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+          }))
+          return
+        }
+        if (req.method === 'GET' && req.url?.startsWith('/api/v1/executions?')) {
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ data: [{ id: 'exec-1', workflowId: 'wf-1', status: 'success', startedAt: '2026-01-01T00:00:00.000Z', stoppedAt: '2026-01-01T00:00:01.000Z', mode: 'trigger' }], nextCursor: null }))
+          return
+        }
+        if (req.method === 'GET' && req.url === '/api/v1/executions/exec-1') {
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            id: 'exec-1', workflowId: 'wf-1', status: 'success', startedAt: '2026-01-01T00:00:00.000Z', stoppedAt: '2026-01-01T00:00:01.000Z', mode: 'trigger',
+            data: { resultData: { runData: { 'Send SMS': [{ executionTime: 250 }] } } },
+          }))
+          return
+        }
+        res.writeHead(404)
+        res.end()
+      })
+      await new Promise<void>((resolve) => mockN8n.listen(0, '127.0.0.1', resolve))
+      const addr = mockN8n.address()
+      if (addr === null || typeof addr === 'string') throw new Error('mock server failed to bind')
+      const mockN8nUrl = `http://127.0.0.1:${addr.port}`
+
+      const fakeHome = await mkdtemp(join(tmpdir(), 'kairos-cli-pack-monitoring-'))
+      try {
+        const { mkdir, writeFile } = await import('node:fs/promises')
+        const packsDir = join(fakeHome, '.kairos', 'packs')
+        await mkdir(packsDir, { recursive: true })
+        await writeFile(join(packsDir, 'test-pack.json'), JSON.stringify({
+          businessContext: 'Empire Homecare', packName: 'test-pack', status: 'active',
+          workflows: [{ name: 'Missed-Call Text-Back', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1, credentialsNeeded: [] }],
+          allCredentials: [], sheetsColumns: [], assumptions: [], testChecklist: [], builtAt: '2026-01-01T00:00:00.000Z',
+        }))
+
+        const child = spawn(TSX, [CLI, 'pack', 'export', 'test-pack', '--monitoring-plan'], {
+          encoding: 'utf-8',
+          env: { ...process.env, HOME: fakeHome, N8N_BASE_URL: mockN8nUrl, N8N_API_KEY: 'test-key' },
+        })
+        let stdout = ''
+        child.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
+        const exitCode = await new Promise<number | null>((resolve) => child.on('close', resolve))
+
+        expect(exitCode).toBe(0)
+        expect(stdout).toContain('# Empire Homecare — Monitoring Plan')
+        expect(stdout).toContain('**Status:** Active')
+        expect(stdout).toContain('Send SMS (250ms)')
+        expect(stdout).toContain('Insufficient history for drift comparison')
+        expect(stdout).toContain('## Weekly Checklist')
+      } finally {
+        await new Promise<void>((resolve) => mockN8n.close(() => resolve()))
+        await rm(fakeHome, { recursive: true, force: true })
+      }
+    }, 15_000)
+
+    it('exits 1 when N8N_BASE_URL/N8N_API_KEY are missing', async () => {
+      const fakeHome = await mkdtemp(join(tmpdir(), 'kairos-cli-pack-monitoring-noenv-'))
+      try {
+        const { mkdir, writeFile } = await import('node:fs/promises')
+        const packsDir = join(fakeHome, '.kairos', 'packs')
+        await mkdir(packsDir, { recursive: true })
+        await writeFile(join(packsDir, 'test-pack.json'), JSON.stringify({
+          businessContext: 'Test Co', packName: 'test-pack', status: 'ready_for_test',
+          workflows: [], allCredentials: [], sheetsColumns: [], assumptions: [], testChecklist: [], builtAt: '2026-01-01T00:00:00.000Z',
+        }))
+        const r = run(['pack', 'export', 'test-pack', '--monitoring-plan'], { HOME: fakeHome, N8N_BASE_URL: '', N8N_API_KEY: '' })
+        expect(r.status).toBe(1)
+        expect(r.stderr).toContain('N8N_BASE_URL and N8N_API_KEY are required')
+      } finally {
+        await rm(fakeHome, { recursive: true, force: true })
+      }
+    })
+  })
+
   describe('pack export --workflow-json', () => {
     it('fetches each workflow live from n8n and writes stripped workflow.json files, skipping ones that fail', async () => {
       const mockN8n = createServer((req, res) => {

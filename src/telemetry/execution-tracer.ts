@@ -89,6 +89,14 @@ export function parseExecutionTrace(execution: ExecutionDetail): ExecutionTrace 
   }
 }
 
+/** Top N slowest nodes from a trace's nodeDurations, sorted descending by ms. */
+export function getSlowestNodes(nodeDurations: Record<string, number>, n = 3): Array<{ name: string; ms: number }> {
+  return Object.entries(nodeDurations)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, n)
+    .map(([name, ms]) => ({ name, ms }))
+}
+
 const MAX_TRACES_PER_WORKFLOW = 10
 
 /**

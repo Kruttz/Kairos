@@ -3,6 +3,7 @@ import {
   parseExecutionTrace,
   computeRuntimeReliability,
   mergeTraces,
+  getSlowestNodes,
 } from '../../../src/telemetry/execution-tracer.js'
 import type { ExecutionDetail } from '../../../src/types/result.js'
 import type { ExecutionTrace } from '../../../src/library/types.js'
@@ -218,5 +219,32 @@ describe('mergeTraces', () => {
     expect(merged.some(t => t.executionId === 'exec-newest')).toBe(true)
     // Oldest should be evicted
     expect(merged.some(t => t.executionId === 'exec-0')).toBe(false)
+  })
+})
+
+describe('getSlowestNodes', () => {
+  it('returns the top N nodes sorted descending by duration', () => {
+    const result = getSlowestNodes({ a: 100, b: 500, c: 300 }, 2)
+    expect(result).toEqual([{ name: 'b', ms: 500 }, { name: 'c', ms: 300 }])
+  })
+
+  it('returns an empty array for an empty map', () => {
+    expect(getSlowestNodes({})).toEqual([])
+  })
+
+  it('returns all entries when n exceeds the number available', () => {
+    const result = getSlowestNodes({ a: 10, b: 20 }, 10)
+    expect(result).toHaveLength(2)
+  })
+
+  it('defaults to top 3 when n is not provided', () => {
+    const result = getSlowestNodes({ a: 1, b: 2, c: 3, d: 4 })
+    expect(result).toHaveLength(3)
+    expect(result.map(r => r.name)).toEqual(['d', 'c', 'b'])
+  })
+
+  it('handles ties stably (does not throw, includes both)', () => {
+    const result = getSlowestNodes({ a: 100, b: 100 }, 2)
+    expect(result.map(r => r.ms)).toEqual([100, 100])
   })
 })

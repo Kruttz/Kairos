@@ -826,6 +826,11 @@ kairos pack export my-pack --credentials
 # overall READY / NEEDS ATTENTION / NOT READY verdict (no n8n required)
 kairos pack export my-pack --risk-report
 
+# Print a monitoring plan -- each workflow's current active/inactive status and latest
+# execution (status, duration, slowest nodes), plus a static weekly checklist (requires
+# N8N_BASE_URL/N8N_API_KEY -- checks live n8n state)
+kairos pack export my-pack --monitoring-plan
+
 # Record a deployed workflow's latest n8n execution into the library (improves retrieval)
 kairos trace record <n8n-workflow-id>
 

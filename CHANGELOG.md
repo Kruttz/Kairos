@@ -4,6 +4,17 @@ All notable changes to `@kairos-sdk/core` are documented here. Format loosely fo
 
 ## [Unreleased]
 
+### New: `kairos pack export --monitoring-plan` (Delivery Bundle, Phase 4)
+Fourth of six new client-deliverable artifacts. Generalizes the existing single-workflow `kairos trace record` (CLI) / `kairos_record_trace` (MCP) infrastructure to "for every workflow in this pack, tell me its current health" -- reusing `parseExecutionTrace()` and a newly-shared `getSlowestNodes()` helper rather than any new trace-parsing logic.
+
+Small refactor first: the "top N slowest nodes from `nodeDurations`" sort-and-slice was duplicated inline in both `cli.ts`'s `handleTrace` and `mcp-server.ts`'s `kairos_record_trace` -- factored into one new exported `getSlowestNodes(nodeDurations, n)` in `execution-tracer.ts`, both call sites updated, output byte-identical (verified: full suite green before and after, no test needed updating).
+
+`generateMonitoringPlan(pack, client)` reports each workflow's live active/inactive status and its single latest execution (status, duration, slowest nodes) -- and deliberately does NOT claim a drift comparison happened. A true drift comparison (`detectExecutionDrift()`) needs multiple historical traces (`StoredWorkflow.executionTraces`), which pack export has no access to -- that's the library's stored record, not derivable from one live fetch. Says so explicitly ("insufficient history for drift comparison -- run `kairos trace record <id>` periodically") rather than rendering an empty or misleading drift section. One workflow's fetch failure (n8n unreachable, workflow deleted) is reported and skipped, not fatal to the rest of the report.
+
+Requires `N8N_BASE_URL`/`N8N_API_KEY` (live fetch per workflow), unlike `--credentials`/`--risk-report`.
+
+Tests: 5 new `getSlowestNodes()` unit tests (top-N sort, empty map, n-exceeds-available, default n=3, ties) + 5 `generateMonitoringPlan()` unit tests (not-deployed case, unreachable-n8n graceful degradation, never-run workflow, latest-execution rendering with slowest nodes, multi-workflow partial-failure resilience) + 2 CLI integration tests against a mock n8n HTTP server. 1088/1088 passing overall. Typecheck/lint clean.
+
 ### New: `kairos pack export --risk-report` (Delivery Bundle, Phase 3)
 Third of six new client-deliverable artifacts, and the one that needed a real prerequisite fix rather than being a pure render. `BuildResult` and `PackWorkflowResult` gain a new `finalIssues: ValidationIssue[]` field (structured rule/severity/message data) -- previously, the final generation attempt's validation issues were computed in `designer.ts` but discarded before reaching either type; only an unstructured `summary: string` survived, and that string only ever mentioned `warn`-severity issues, never `error`-severity ones. `finalIssues` is additive on `BuildResult` (always populated going forward) and optional on `PackWorkflowResult` (undefined on packs persisted before this field existed -- handled explicitly, not silently, in the new risk report).
 

@@ -773,7 +773,7 @@ server.tool(
     }
 
     const detail = await client.getExecution(executions[0]!.id)
-    const { parseExecutionTrace } = await import('./telemetry/execution-tracer.js')
+    const { parseExecutionTrace, getSlowestNodes } = await import('./telemetry/execution-tracer.js')
     const trace = parseExecutionTrace(detail)
 
     await library.initialize()
@@ -790,7 +790,7 @@ server.tool(
     const updated = await library.get(match.id)
     const traces = updated?.executionTraces ?? [trace]
     const drift = detectExecutionDrift(traces)
-    const slowestNode = Object.entries(trace.nodeDurations).sort((a, b) => b[1] - a[1])[0]
+    const slowestNode = getSlowestNodes(trace.nodeDurations, 1)[0] ?? null
 
     return mcpText(JSON.stringify({
       recorded: true,
@@ -802,7 +802,7 @@ server.tool(
       executedNodes: trace.executedNodes.length,
       erroredNodes: trace.erroredNodes.length,
       nodeDurations: trace.nodeDurations,
-      slowestNode: slowestNode ? { name: slowestNode[0], ms: slowestNode[1] } : null,
+      slowestNode,
       drift,
     }, null, 2))
   },

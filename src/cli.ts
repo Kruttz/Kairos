@@ -901,7 +901,7 @@ async function handleBuildPack(positional: string[], flags: Record<string, strin
 async function handlePackExport(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const packName = positional[0]
   if (!packName) {
-    console.error('Usage: kairos pack export <pack-name> [--handoff] [--credentials] [--risk-report] [--workflow-json <dir>]')
+    console.error('Usage: kairos pack export <pack-name> [--handoff] [--credentials] [--risk-report] [--monitoring-plan] [--workflow-json <dir>]')
     process.exit(1)
   }
 
@@ -935,6 +935,19 @@ async function handlePackExport(positional: string[], flags: Record<string, stri
     for (const w of result.written) console.error(`Wrote ${w.path}`)
     for (const s of result.skipped) console.error(`Skipped "${s.workflowName}": ${s.reason}`)
     console.error(`\n${result.written.length} workflow.json file(s) written to ${outDir}, ${result.skipped.length} skipped.`)
+    return
+  }
+
+  if (flags['monitoring-plan'] === true) {
+    const n8nBaseUrl = process.env['N8N_BASE_URL']
+    const n8nApiKey = process.env['N8N_API_KEY']
+    if (!n8nBaseUrl || !n8nApiKey) {
+      console.error('N8N_BASE_URL and N8N_API_KEY are required for --monitoring-plan (checks each workflow\'s live status and execution history).')
+      process.exit(1)
+    }
+    const { generateMonitoringPlan } = await import('./pack/pack-bundle.js')
+    const client = new N8nApiClient(n8nBaseUrl, n8nApiKey, CLI_LOGGER)
+    console.log(await generateMonitoringPlan(pack, client))
     return
   }
 
@@ -1038,7 +1051,7 @@ async function handleTrace(positional: string[]): Promise<void> {
 
   console.error(`Fetching latest execution for workflow ${n8nWorkflowId}...`)
 
-  const { fetchLatestTrace } = await import('./telemetry/execution-tracer.js')
+  const { fetchLatestTrace, getSlowestNodes } = await import('./telemetry/execution-tracer.js')
   const trace = await fetchLatestTrace(n8nWorkflowId, n8nBaseUrl, n8nApiKey)
 
   if (!trace) {
@@ -1069,8 +1082,7 @@ async function handleTrace(positional: string[]): Promise<void> {
   const traces = updated?.executionTraces ?? [trace]
   const drift = detectExecutionDrift(traces)
 
-  const bottleneckEntries = Object.entries(trace.nodeDurations).sort((a, b) => b[1] - a[1])
-  const slowestNode = bottleneckEntries[0]
+  const slowestNode = getSlowestNodes(trace.nodeDurations, 1)[0]
 
   if (drift.hasDrift) {
     console.error('')
@@ -1081,7 +1093,7 @@ async function handleTrace(positional: string[]): Promise<void> {
     if (drift.newNodes.length > 0) console.error(`  - new nodes not seen in prior runs: ${drift.newNodes.join(', ')}`)
   }
   if (slowestNode) {
-    console.error(`Slowest node this run: "${slowestNode[0]}" (${slowestNode[1]}ms)`)
+    console.error(`Slowest node this run: "${slowestNode.name}" (${slowestNode.ms}ms)`)
   }
 
   console.log(JSON.stringify({

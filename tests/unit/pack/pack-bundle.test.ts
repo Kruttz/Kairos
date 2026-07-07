@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { mkdtemp, rm, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { fetchWorkflowJson, writeWorkflowJsonFiles, slugifyWorkflowName, generateCredentialsDoc, generateRiskReport } from '../../../src/pack/pack-bundle.js'
+import { fetchWorkflowJson, writeWorkflowJsonFiles, slugifyWorkflowName, generateCredentialsDoc, generateRiskReport, generateMonitoringPlan } from '../../../src/pack/pack-bundle.js'
 import type { N8nApiClient } from '../../../src/providers/n8n/index.js'
 import type { N8nWorkflowResponse } from '../../../src/providers/n8n/types.js'
 import type { WorkflowPackResult } from '../../../src/pack/pack-builder.js'
@@ -280,5 +280,76 @@ describe('generateRiskReport', () => {
     expect(md).toContain('[WARNING]')
     expect(md).not.toContain('[WARN]')
     expect(md).toContain('workflow-level warn')
+  })
+})
+
+describe('generateMonitoringPlan', () => {
+  interface MockMonitoringClient {
+    getWorkflow: (id: string) => Promise<N8nWorkflowResponse>
+    getExecutions: (workflowId?: string, filter?: unknown) => Promise<Array<{ id: string; workflowId: string; status: string; startedAt: string; mode: string }>>
+    getExecution: (id: string) => Promise<{ id: string; workflowId: string; status: string; startedAt: string; stoppedAt?: string; mode: string; data?: unknown }>
+  }
+
+  function mockMonitoringClient(overrides: Partial<MockMonitoringClient> = {}): N8nApiClient {
+    return {
+      getWorkflow: overrides.getWorkflow ?? (async (id: string) => makeResponse({ id, active: true })),
+      getExecutions: overrides.getExecutions ?? (async () => []),
+      getExecution: overrides.getExecution ?? (async () => { throw new Error('not implemented') }),
+    } as unknown as N8nApiClient
+  }
+
+  it('reports not deployed for a workflow with no workflowId', async () => {
+    const pack = makePack({ workflows: [{ name: 'Not Deployed', purpose: 'x', workflowId: null, deployed: false, generationAttempts: 0, credentialsNeeded: [] }] })
+    const md = await generateMonitoringPlan(pack, mockMonitoringClient())
+    expect(md).toContain('Not deployed')
+  })
+
+  it('reports active/inactive status and degrades gracefully when n8n is unreachable', async () => {
+    const pack = makePack({ workflows: [{ name: 'Unreachable', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1, credentialsNeeded: [] }] })
+    const client = mockMonitoringClient({ getWorkflow: async () => { throw new Error('network error') } })
+    const md = await generateMonitoringPlan(pack, client)
+    expect(md).toContain('Could not reach n8n')
+  })
+
+  it('reports active status and "no execution history" when the workflow has never run', async () => {
+    const pack = makePack({ workflows: [{ name: 'Never Run', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1, credentialsNeeded: [] }] })
+    const client = mockMonitoringClient({ getWorkflow: async (id) => makeResponse({ id, active: true }), getExecutions: async () => [] })
+    const md = await generateMonitoringPlan(pack, client)
+    expect(md).toContain('**Status:** Active')
+    expect(md).toContain('No execution history yet')
+  })
+
+  it('reports the latest execution\'s status, node count, and slowest nodes, with an honest "insufficient history" note', async () => {
+    const pack = makePack({ workflows: [{ name: 'Has History', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1, credentialsNeeded: [] }] })
+    const client = mockMonitoringClient({
+      getWorkflow: async (id) => makeResponse({ id, active: true }),
+      getExecutions: async () => [{ id: 'exec-1', workflowId: 'wf-1', status: 'success', startedAt: '2026-01-01T00:00:00.000Z', mode: 'trigger' }],
+      getExecution: async () => ({
+        id: 'exec-1', workflowId: 'wf-1', status: 'success', startedAt: '2026-01-01T00:00:00.000Z', stoppedAt: '2026-01-01T00:00:01.000Z', mode: 'trigger',
+        data: { resultData: { runData: { 'Slow Node': [{ executionTime: 500 }], 'Fast Node': [{ executionTime: 50 }] } } },
+      }),
+    })
+    const md = await generateMonitoringPlan(pack, client)
+    expect(md).toContain('**Latest execution:** success')
+    expect(md).toContain('Slow Node (500ms)')
+    expect(md).toContain('Insufficient history for drift comparison')
+  })
+
+  it('does not abort the rest of the report when one workflow fails, and includes the weekly checklist', async () => {
+    const pack = makePack({
+      workflows: [
+        { name: 'Broken', purpose: 'x', workflowId: 'wf-bad', deployed: true, generationAttempts: 1, credentialsNeeded: [] },
+        { name: 'Fine', purpose: 'x', workflowId: 'wf-ok', deployed: true, generationAttempts: 1, credentialsNeeded: [] },
+      ],
+    })
+    const client = mockMonitoringClient({
+      getWorkflow: async (id) => { if (id === 'wf-bad') throw new Error('gone'); return makeResponse({ id, active: true }) },
+      getExecutions: async () => [],
+    })
+    const md = await generateMonitoringPlan(pack, client)
+    expect(md).toContain('## Broken')
+    expect(md).toContain('## Fine')
+    expect(md).toContain('Could not reach n8n')
+    expect(md).toContain('## Weekly Checklist')
   })
 })
