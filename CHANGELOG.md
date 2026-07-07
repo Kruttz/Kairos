@@ -4,6 +4,15 @@ All notable changes to `@kairos-sdk/core` are documented here. Format loosely fo
 
 ## [Unreleased]
 
+### New: `kairos pack export --risk-report` (Delivery Bundle, Phase 3)
+Third of six new client-deliverable artifacts, and the one that needed a real prerequisite fix rather than being a pure render. `BuildResult` and `PackWorkflowResult` gain a new `finalIssues: ValidationIssue[]` field (structured rule/severity/message data) -- previously, the final generation attempt's validation issues were computed in `designer.ts` but discarded before reaching either type; only an unstructured `summary: string` survived, and that string only ever mentioned `warn`-severity issues, never `error`-severity ones. `finalIssues` is additive on `BuildResult` (always populated going forward) and optional on `PackWorkflowResult` (undefined on packs persisted before this field existed -- handled explicitly, not silently, in the new risk report).
+
+`generateRiskReport()` combines this per-workflow structured data (enriched with `RULE_MITIGATIONS`/`RULE_PIPELINE_STAGES` fix guidance) with the already-public pack-structural risk from `validatePack()` (duplicate names, schedule conflicts, unresolved blocking assumptions), normalizing the two different severity spellings (`ValidationIssue`'s `'warn'` vs. `PackValidationIssue`'s `'warning'`) into one consistent rendering. Produces a categorical **READY / NEEDS ATTENTION / NOT READY** verdict from the real itemized issues -- deliberately not a fabricated numeric score (e.g. "73/100"), since an unfounded-precision number not backed by real calibration data would erode trust rather than build it.
+
+`kairos pack export <name> --risk-report` is a pure synchronous render, same contract as `--handoff`/`--credentials` -- no network call, no n8n credentials required.
+
+Tests: 6 new unit tests for `generateRiskReport()` (all-clean READY case, error-severity NOT READY with mitigation text rendered, warning-only NEEDS ATTENTION, pack-structural issue surfacing, graceful degradation for pre-existing packs without `finalIssues`, severity-spelling normalization) + 5 plumbing tests (`BuildResult.finalIssues` populated across build-dry-run/build-deployed/build-no-issues/replace, `PackWorkflowResult.finalIssues` threaded through `PackBuilder.build()`) + 1 CLI test. 1076/1076 passing overall. Typecheck/lint clean.
+
 ### New: `kairos pack export --credentials` (Delivery Bundle, Phase 2)
 Second of six new client-deliverable artifacts. Groups every workflow's `credentialsNeeded` (service/credentialType/description) by service across the whole pack, printing a client-readable checklist — which credential, why it's needed, which workflow(s) need it, and a setup-order reminder.
 

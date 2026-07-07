@@ -38,7 +38,7 @@ function makeMockAnthropic(responseText: string) {
   }
 }
 
-function makeMockKairos(overrides: Partial<{ workflowId: string; generationAttempts: number; workflow: unknown }> = {}): Kairos {
+function makeMockKairos(overrides: Partial<{ workflowId: string; generationAttempts: number; workflow: unknown; finalIssues: unknown[] }> = {}): Kairos {
   return {
     build: vi.fn().mockResolvedValue({
       workflowId: overrides.workflowId ?? 'wf-123',
@@ -48,6 +48,7 @@ function makeMockKairos(overrides: Partial<{ workflowId: string; generationAttem
       activationRequired: false,
       generationAttempts: overrides.generationAttempts ?? 1,
       dryRun: false,
+      finalIssues: overrides.finalIssues ?? [],
     }),
     drain: vi.fn().mockResolvedValue(undefined),
   } as unknown as Kairos
@@ -129,6 +130,18 @@ describe('PackBuilder', () => {
       expect(result.workflows[0]!.deployed).toBe(true)
       expect(result.workflows[0]!.workflowId).toBe('wf-123')
       expect(result.businessContext).toBe('Test DME')
+    })
+
+    it('carries each workflow\'s finalIssues through onto PackWorkflowResult', async () => {
+      const issues = [{ rule: 90, severity: 'warn' as const, message: 'Long unbranched node chain' }]
+      const mockKairos = makeMockKairos({ finalIssues: issues })
+      builder = new PackBuilder({ anthropicApiKey: 'sk-ant-test', kairos: mockKairos })
+      ;(builder as unknown as Record<string, unknown>)['client'] = makeMockAnthropic(JSON.stringify(MOCK_PLAN_RESPONSE))
+
+      const plan = { ...MOCK_PLAN_RESPONSE, businessContext: 'Test DME' }
+      const result = await builder.build(plan)
+
+      expect(result.workflows[0]!.finalIssues).toEqual(issues)
     })
 
     it('derives status as ready_for_test when needs_confirmation assumptions exist', async () => {

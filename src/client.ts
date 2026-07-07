@@ -222,6 +222,7 @@ export class Kairos {
         tokensOutput: designResult.attemptMetadata.reduce((s, m) => s + m.tokensOutput, 0),
         dryRun: true,
         summary,
+        finalIssues: designResult.attemptMetadata.at(-1)?.issues ?? [],
       }
     }
 
@@ -307,6 +308,7 @@ export class Kairos {
       tokensOutput: totalTokensOutput,
       dryRun: false,
       summary: finalSummary,
+      finalIssues: designResult.attemptMetadata.at(-1)?.issues ?? [],
       ...(smokeTestResult !== undefined ? { smokeTest: smokeTestResult } : {}),
       ...(webhookVerification !== null ? { webhookVerification } : {}),
     }
@@ -398,6 +400,7 @@ export class Kairos {
       tokensOutput: totalTokensOutput,
       dryRun: false,
       summary,
+      finalIssues: designResult.attemptMetadata.at(-1)?.issues ?? [],
     }
   }
 

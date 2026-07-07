@@ -26,6 +26,14 @@ export interface BuildResult {
   dryRun: boolean
   /** Plain-English "what this workflow does" summary — see src/utils/workflow-summary.ts */
   summary: string
+  /**
+   * The final generation attempt's structured validation issues (rule/severity/message) --
+   * the same data summary is partially built from, but retained here as structured data for
+   * anything (e.g. a risk report) that needs more than the already-rendered prose. Always
+   * present going forward; only absent on results deserialized from a pack persisted before
+   * this field existed.
+   */
+  finalIssues: import('../validation/types.js').ValidationIssue[]
   smokeTest?: SmokeTestResult
   /** Set only for webhook-triggered workflows built with activate: true — see src/utils/webhook-verify.ts */
   webhookVerification?: import('../utils/webhook-verify.js').WebhookReachabilityResult

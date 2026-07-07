@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { Kairos } from '../client.js'
 import type { CredentialRequirement } from '../types/result.js'
+import type { ValidationIssue } from '../validation/types.js'
 import { extractScheduleIntervals } from '../utils/schedule-intervals.js'
 
 export type AssumptionType = 'safe' | 'needs_confirmation' | 'blocking'
@@ -41,6 +42,12 @@ export interface PackWorkflowResult {
    * trigger, and on packs persisted before this field existed.
    */
   scheduleIntervals?: unknown[][]
+  /**
+   * The final generation attempt's structured validation issues (see BuildResult.finalIssues).
+   * Absent on packs persisted before this field existed and on workflows that errored before
+   * a build result was produced — treat undefined as "no structured data available", not "no issues".
+   */
+  finalIssues?: ValidationIssue[]
 }
 
 /**
@@ -258,6 +265,7 @@ export class PackBuilder {
           deployed: !result.dryRun,
           generationAttempts: result.generationAttempts,
           credentialsNeeded: result.credentialsNeeded,
+          finalIssues: result.finalIssues,
           ...(scheduleIntervals.length > 0 ? { scheduleIntervals } : {}),
         })
       } catch (err) {

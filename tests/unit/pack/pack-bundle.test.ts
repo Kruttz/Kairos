@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { mkdtemp, rm, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { fetchWorkflowJson, writeWorkflowJsonFiles, slugifyWorkflowName, generateCredentialsDoc } from '../../../src/pack/pack-bundle.js'
+import { fetchWorkflowJson, writeWorkflowJsonFiles, slugifyWorkflowName, generateCredentialsDoc, generateRiskReport } from '../../../src/pack/pack-bundle.js'
 import type { N8nApiClient } from '../../../src/providers/n8n/index.js'
 import type { N8nWorkflowResponse } from '../../../src/providers/n8n/types.js'
 import type { WorkflowPackResult } from '../../../src/pack/pack-builder.js'
@@ -208,5 +208,77 @@ describe('generateCredentialsDoc', () => {
     const md = generateCredentialsDoc(pack)
     expect(md).toContain('Empire Homecare')
     expect(md).toContain('## Setup Order')
+  })
+})
+
+describe('generateRiskReport', () => {
+  it('reports READY when there are no issues anywhere', () => {
+    const pack = makePack({
+      workflows: [{ name: 'Clean Workflow', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1, credentialsNeeded: [], finalIssues: [] }],
+    })
+    const md = generateRiskReport(pack)
+    expect(md).toContain('**Overall status:** READY')
+    expect(md).toContain('No issues found.')
+  })
+
+  it('reports NOT READY when a workflow has an error-severity issue, with mitigation text', () => {
+    const pack = makePack({
+      workflows: [{
+        name: 'Broken Workflow', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1, credentialsNeeded: [],
+        finalIssues: [{ rule: 17, severity: 'error', message: 'Bad credential shape' }],
+      }],
+    })
+    const md = generateRiskReport(pack)
+    expect(md).toContain('**Overall status:** NOT READY')
+    expect(md).toContain('Rule 17')
+    expect(md).toContain('Bad credential shape')
+    expect(md).toContain('Fix:')
+    expect(md).toContain('credential entry must be keyed by credential type')
+  })
+
+  it('reports NEEDS ATTENTION (not NOT READY) when only warnings exist', () => {
+    const pack = makePack({
+      workflows: [{
+        name: 'Warned Workflow', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1, credentialsNeeded: [],
+        finalIssues: [{ rule: 90, severity: 'warn', message: 'Long unbranched node chain' }],
+      }],
+    })
+    const md = generateRiskReport(pack)
+    expect(md).toContain('**Overall status:** NEEDS ATTENTION')
+  })
+
+  it('surfaces pack-structural issues from validatePack() (e.g. duplicate names)', () => {
+    const pack = makePack({
+      workflows: [
+        { name: 'Duplicate', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1, credentialsNeeded: [], finalIssues: [] },
+        { name: 'Duplicate', purpose: 'x', workflowId: 'wf-2', deployed: true, generationAttempts: 1, credentialsNeeded: [], finalIssues: [] },
+      ],
+    })
+    const md = generateRiskReport(pack)
+    expect(md).toContain('## Pack-Level Issues')
+    expect(md).toContain('Duplicate workflow names')
+    expect(md).toContain('**Overall status:** NOT READY')
+  })
+
+  it('degrades gracefully for a workflow with no finalIssues (pre-existing pack)', () => {
+    const pack = makePack({
+      workflows: [{ name: 'Old Pack Workflow', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1, credentialsNeeded: [] }],
+    })
+    const md = generateRiskReport(pack)
+    expect(md).toContain('No structured validation data available')
+    expect(md).not.toContain('NOT READY')
+  })
+
+  it('normalizes ValidationIssue severity "warn" to the same [WARNING] tag PackValidationIssue uses', () => {
+    const pack = makePack({
+      workflows: [{
+        name: 'A', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1, credentialsNeeded: [],
+        finalIssues: [{ rule: 90, severity: 'warn', message: 'workflow-level warn' }],
+      }],
+    })
+    const md = generateRiskReport(pack)
+    expect(md).toContain('[WARNING]')
+    expect(md).not.toContain('[WARN]')
+    expect(md).toContain('workflow-level warn')
   })
 })

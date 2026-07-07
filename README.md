@@ -520,6 +520,7 @@ const result = await kairos.build(description, {
   }>
   dryRun: boolean
   summary: string  // plain-English "what this workflow does" — trigger, steps, credentials, warnings
+  finalIssues: ValidationIssue[]  // the final attempt's structured validation issues (rule/severity/message) -- summary's structured source data, for anything that needs more than the rendered prose (e.g. a risk report)
   smokeTest?: SmokeTestResult                 // set when { smokeTest: true } was passed
   webhookVerification?: WebhookReachabilityResult  // set for webhook-triggered workflows built with { activate: true }
 }
@@ -819,6 +820,11 @@ kairos pack export my-pack --workflow-json ./deliverables
 # Print a client-readable credentials checklist grouped by service (no n8n required --
 # pure render over data already collected during generation)
 kairos pack export my-pack --credentials
+
+# Print a risk/production-readiness report -- pack-structural issues (duplicate names,
+# schedule conflicts) plus per-workflow validation issues with fix guidance, and an
+# overall READY / NEEDS ATTENTION / NOT READY verdict (no n8n required)
+kairos pack export my-pack --risk-report
 
 # Record a deployed workflow's latest n8n execution into the library (improves retrieval)
 kairos trace record <n8n-workflow-id>

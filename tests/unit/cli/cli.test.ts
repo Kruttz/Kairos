@@ -539,6 +539,33 @@ describe('CLI — parseArgs / routing', () => {
     })
   })
 
+  describe('pack export --risk-report', () => {
+    it('prints a risk report combining pack-structural and per-workflow issues, no n8n required', async () => {
+      const fakeHome = await mkdtemp(join(tmpdir(), 'kairos-cli-pack-risk-'))
+      try {
+        const { mkdir, writeFile } = await import('node:fs/promises')
+        const packsDir = join(fakeHome, '.kairos', 'packs')
+        await mkdir(packsDir, { recursive: true })
+        await writeFile(join(packsDir, 'test-pack.json'), JSON.stringify({
+          businessContext: 'Empire Homecare', packName: 'test-pack', status: 'needs_attention',
+          workflows: [
+            { name: 'Broken Workflow', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1, credentialsNeeded: [], finalIssues: [{ rule: 17, severity: 'error', message: 'Bad credential shape' }] },
+          ],
+          allCredentials: [], sheetsColumns: [], assumptions: [], testChecklist: [], builtAt: '2026-01-01T00:00:00.000Z',
+        }))
+
+        const r = run(['pack', 'export', 'test-pack', '--risk-report'], { HOME: fakeHome })
+        expect(r.status).toBe(0)
+        expect(r.stdout).toContain('# Empire Homecare — Risk Report')
+        expect(r.stdout).toContain('**Overall status:** NOT READY')
+        expect(r.stdout).toContain('Rule 17')
+        expect(r.stdout).toContain('Bad credential shape')
+      } finally {
+        await rm(fakeHome, { recursive: true, force: true })
+      }
+    })
+  })
+
   describe('pack export --workflow-json', () => {
     it('fetches each workflow live from n8n and writes stripped workflow.json files, skipping ones that fail', async () => {
       const mockN8n = createServer((req, res) => {
