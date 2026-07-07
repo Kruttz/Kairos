@@ -217,8 +217,11 @@ Fix ALL of the above issues in your new response. Do not repeat any of these mis
   }
 
   private getActivePatterns(maxCount = 10, description?: string): Pattern[] {
+    // pending_review is held out of generation entirely under KAIROS_PATTERN_REVIEW=true --
+    // it's evidence-equivalent to confirmed but awaiting human sign-off before it can steer
+    // output. draft patterns stay included (unreviewed observation was never gated, only promotion).
     const all = this.loadPatterns()
-      .filter(p => p.state !== 'resolved' && p.confidence > 0)
+      .filter(p => p.state !== 'resolved' && p.state !== 'pending_review' && p.confidence > 0)
 
     const regressed = all.filter(p => p.regressed).sort((a, b) => b.compositeScore - a.compositeScore)
     const confirmed = all.filter(p => !p.regressed && p.state === 'confirmed').sort((a, b) => b.compositeScore - a.compositeScore)

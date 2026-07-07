@@ -558,5 +558,34 @@ describe('PromptBuilder', () => {
       expect(warned).toContain(12)
       expect(warned).not.toContain(5)
     })
+
+    it('excludes pending_review patterns from generation, same as resolved (Phase D review gate)', () => {
+      const analysis = {
+        schemaVersion: 2,
+        generatedAt: new Date().toISOString(),
+        summary: {},
+        topFailureRules: [
+          makePattern(17, { state: 'confirmed', confidence: 0.8 }),
+          makePattern(90, { state: 'pending_review', confidence: 0.9, compositeScore: 0.5 }),
+          makePattern(12, { state: 'draft', confidence: 0.3 }),
+        ],
+        failingCredentialTypes: [],
+        drift: { healthy: true, coveredRules: 23, totalRules: 23, alerts: [] },
+      }
+      writeFileSync(patternsPath, JSON.stringify(analysis))
+
+      const pb = new PromptBuilder(patternsPath)
+      const warned = pb.getWarnedRules()
+      const prompt = pb.build({ description: 'test' }, [])
+      const warningBlock = prompt.system.find(b => b.text.includes('Known Failure Patterns'))
+
+      // pending_review must not influence generation at all -- neither the warned-rules
+      // list nor the rendered prompt text should mention it, even though its compositeScore
+      // is the highest of the three (it would otherwise sort first).
+      expect(warned).not.toContain(90)
+      expect(warned).toContain(17)
+      expect(warned).toContain(12)
+      expect(warningBlock!.text).not.toContain('Rule 90')
+    })
   })
 })

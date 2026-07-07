@@ -4,6 +4,23 @@ All notable changes to `@kairos-sdk/core` are documented here. Format loosely fo
 
 ## [Unreleased]
 
+### New: always-on pattern audit trail + opt-in human-gated pattern promotion (`KAIROS_PATTERN_REVIEW`)
+Fourth and final concept from the SOLIVEN comparison, closing out the Tier 1+2 transfer plan — SOLIVEN's best governance idea Kairos lacked: state changes to learned behavior can require human sign-off, and every change is auditable. For a client-facing service, "why does your AI believe this?" needs an answer.
+
+**Audit trail (always on, no flag needed)**: `pattern-analyzer.ts` now diffs each analysis run's pattern states against the previous run and appends one line per actual state change to `~/.kairos/pattern-audit.jsonl` (`{ ts, rule, from, to, actor, evidence }`). Append-only, never read back by generation -- pure record. Unchanged patterns across repeated runs produce zero duplicate lines (verified).
+
+**Review gate (opt-in, `KAIROS_PATTERN_REVIEW=true`)**: new `pending_review` `PatternState`. Under the flag, a pattern crossing the confirm threshold lands in `pending_review` instead of `confirmed` -- unless it was already approved in a prior run, in which case it stays `confirmed` (approval is sticky, not required every analysis run). `draft` creation is never gated -- only the confirm-level *promotion* that lets a pattern start steering generation. `prompt-builder.ts`'s `getActivePatterns()` (the sole point where `patterns.json` is read for injection) now excludes `pending_review` alongside `resolved`.
+
+New CLI: `kairos patterns --pending` (list only patterns awaiting review), `kairos patterns approve <rule>` (promotes to confirmed, actor `'human'` in the audit trail), `kairos patterns reject <rule> [reason]` (marks resolved with an optional reason, excluded from generation same as any resolved pattern). Both exit 1 with a clear message if no `pending_review` pattern exists for that rule.
+
+Default (flag off) behavior is byte-identical to before -- only the new audit file appears; `patterns.json`'s evolution over time is unaffected. `PatternState`'s new fourth member is additive: old `patterns.json` files with only `draft`/`confirmed`/`resolved` remain perfectly valid, no migration needed.
+
+Tests: 13 new (4 review-gate state-computation tests, 6 audit-trail diff/dedup/approve/reject tests in `pattern-analyzer.test.ts`, 1 injection-exclusion test in `prompt-builder.test.ts`, 4 CLI round-trip tests spawning real subprocesses against real telemetry fixtures in `cli.test.ts`). 1047/1047 passing overall. Typecheck/lint clean.
+
+Deliberately out of scope: a web UI or approval queue service (CLI is the v1 surface, per the original SOLIVEN comparison's own guidance); audit file rotation (append-only JSONL, ~100 bytes/line, noted as future work if it ever matters at scale).
+
+This completes the SOLIVEN → Kairos Tier 1+2 transfer plan (4 phases: escalation-as-first-class-outcome, per-client memory, hybrid retrieval, human-gated pattern governance). SOLIVEN's remaining Tier 3 ideas and the four previously-deferred roadmap items remain intentionally out of scope for now.
+
 ### New: optional hybrid (embedding + BM25) retrieval for per-client memory
 Third concept from the SOLIVEN comparison — its hybrid retrieval recipe (local embeddings + BM25, fused by Reciprocal Rank Fusion, zero per-query API cost), the specific piece of SOLIVEN's design confirmed to be its most genuinely mature asset. Evaluated `fastembed` vs `@xenova/transformers` vs `@huggingface/transformers` before picking one: `@xenova/transformers` is the deprecated predecessor (last published mid-2024, superseded); `@huggingface/transformers` is actively maintained but drags in `sharp` and general multi-modal support unneeded for pure text embedding (9.5MB); `fastembed` is purpose-built for exactly this, ~100KB unpacked plus `onnxruntime-node`, explicitly "no hidden dependencies," and defaults to the *same model SOLIVEN used* (`BAAI/bge-small-en-v1.5`, 384-dim) — the clear pick.
 

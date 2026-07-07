@@ -9,7 +9,17 @@ export interface CredentialFailure {
   count: number
 }
 
-export type PatternState = 'draft' | 'confirmed' | 'resolved'
+export type PatternState = 'draft' | 'confirmed' | 'pending_review' | 'resolved'
+
+export interface PatternAuditEntry {
+  ts: string
+  rule: number
+  from: PatternState | null
+  to: PatternState
+  actor: 'auto' | 'human'
+  evidence?: Record<string, unknown>
+  reason?: string
+}
 export type PatternTrend = 'new' | 'worsening' | 'stable' | 'improving'
 export type { PipelineStage } from '../validation/rule-metadata.js'
 
@@ -286,12 +296,25 @@ export class PatternAnalyzer {
     const CONFIRMED_THRESHOLD = 3
     const BUILDS_SINCE_LAST_FAILURE_THRESHOLD = 5
     const RESOLVED_TTL_DAYS = 90
+    const reviewMode = process.env['KAIROS_PATTERN_REVIEW'] === 'true'
 
     const activePatterns: Pattern[] = [...ruleFailures.entries()]
       .map(([rule, entry]) => {
         const t = ruleTrends.get(rule) ?? { older: 0, newer: 0 }
         const rawConfidence = Math.min(entry.sessions.size / totalSessions, 1)
-        const state = (entry.count >= CONFIRMED_THRESHOLD ? 'confirmed' : 'draft') as PatternState
+        const wouldConfirm = entry.count >= CONFIRMED_THRESHOLD
+        // Under the review gate, a rule crossing the confirm threshold lands in
+        // pending_review instead of confirmed -- unless a human already approved it in a
+        // prior run (state stays 'confirmed', sticky, not re-held every analysis run).
+        let state: PatternState
+        if (!wouldConfirm) {
+          state = 'draft'
+        } else if (!reviewMode) {
+          state = 'confirmed'
+        } else {
+          const prevState = previousPatterns.find((pp) => pp.rule === rule)?.state
+          state = prevState === 'confirmed' ? 'confirmed' : 'pending_review'
+        }
         const avgRecency = entry.recencyWeights.length > 0
           ? entry.recencyWeights.reduce((s, w) => s + w, 0) / entry.recencyWeights.length
           : 1
@@ -342,10 +365,11 @@ export class PatternAnalyzer {
       }
     }
 
-    // Newly resolved: previously confirmed, no longer failing, enough builds since last failure
+    // Newly resolved: previously confirmed (or pending_review -- same evidence tier), no
+    // longer failing, enough builds since last failure
     const newlyResolved: Pattern[] = previousPatterns
       .filter(p => {
-        if (p.state !== 'confirmed' || activeRules.has(p.rule)) return false
+        if ((p.state !== 'confirmed' && p.state !== 'pending_review') || activeRules.has(p.rule)) return false
         const lastFailDate = ruleLastFailureDate.get(p.rule) ?? ''
         const buildsSince = starts.filter(s => s.fileDate > lastFailDate).length
         return buildsSince >= BUILDS_SINCE_LAST_FAILURE_THRESHOLD
@@ -372,10 +396,10 @@ export class PatternAnalyzer {
         && (!p.resolvedAt || p.resolvedAt >= ttlCutoffStr))
       .map(p => ({ ...p }))
 
-    // Carry forward confirmed patterns not yet meeting resolved threshold
+    // Carry forward confirmed/pending_review patterns not yet meeting resolved threshold
     const newlyResolvedRules = new Set(newlyResolved.map(p => p.rule))
     const pendingResolution: Pattern[] = previousPatterns
-      .filter(p => p.state === 'confirmed' && !activeRules.has(p.rule)
+      .filter(p => (p.state === 'confirmed' || p.state === 'pending_review') && !activeRules.has(p.rule)
         && !newlyResolvedRules.has(p.rule))
       .map(p => ({ ...p }))
 
@@ -481,12 +505,16 @@ export class PatternAnalyzer {
   }
 
   async analyzeAndSave(days = 30): Promise<PatternAnalysis> {
+    // Captured before analyze() runs (analyze() populates this cache as its first step) --
+    // this is the patterns.json state as it existed BEFORE this run, the "from" side of the diff.
+    const previousPatterns = await this.loadPreviousPatterns()
     const analysis = await this.analyze(days)
     await mkdir(this.outputDir, { recursive: true })
     const outputPath = join(this.outputDir, 'patterns.json')
     const tmpPath = `${outputPath}.tmp`
     await writeFile(tmpPath, JSON.stringify(analysis, null, 2), 'utf-8')
     await rename(tmpPath, outputPath)
+    await this.appendAuditTransitions(previousPatterns, analysis.topFailureRules)
     this._cachedPreviousPatterns = null  // invalidate so next loadPreviousPatterns reads fresh file
 
     const historySummary = {
@@ -570,6 +598,98 @@ export class PatternAnalyzer {
     } catch { return [] }
   }
 
+  /**
+   * Diffs pattern state against the previous run and appends one audit line per rule whose
+   * state actually changed (draft/pending_review/confirmed/resolved) -- always on, regardless
+   * of KAIROS_PATTERN_REVIEW. Append-only, never read back by generation; pure record for
+   * "why does the AI believe this" auditing.
+   */
+  private async appendAuditTransitions(previousPatterns: Pattern[], newPatterns: Pattern[]): Promise<void> {
+    const prevByRule = new Map(previousPatterns.map(p => [p.rule, p]))
+    const now = new Date().toISOString()
+    const lines: string[] = []
+
+    for (const p of newPatterns) {
+      const from = prevByRule.get(p.rule)?.state ?? null
+      if (from === p.state) continue
+      const entry: PatternAuditEntry = {
+        ts: now,
+        rule: p.rule,
+        from,
+        to: p.state,
+        actor: 'auto',
+        evidence: { failureCount: p.failureCount, compositeScore: p.compositeScore, regressed: p.regressed ?? false },
+      }
+      lines.push(JSON.stringify(entry))
+    }
+
+    if (lines.length === 0) return
+    await appendFile(join(this.outputDir, 'pattern-audit.jsonl'), lines.join('\n') + '\n', 'utf-8')
+  }
+
+  async getAuditTrail(limit = 50): Promise<PatternAuditEntry[]> {
+    try {
+      const raw = await fsReadFile(join(this.outputDir, 'pattern-audit.jsonl'), 'utf-8')
+      return raw.trim().split('\n').filter(Boolean).map(l => JSON.parse(l) as PatternAuditEntry).slice(-limit)
+    } catch { return [] }
+  }
+
+  /**
+   * Human approval for a pending_review pattern -- promotes it to confirmed (so it starts
+   * influencing generation) and records the decision with actor 'human'. Returns null if no
+   * pending_review pattern exists for that rule (nothing to approve).
+   */
+  async approvePattern(rule: number): Promise<Pattern | null> {
+    return this.transitionReviewedPattern(rule, 'confirmed')
+  }
+
+  /**
+   * Human rejection for a pending_review pattern -- marks it resolved (excluded from
+   * generation, same as any resolved pattern) with an optional reason, actor 'human' in the
+   * audit trail. Returns null if no pending_review pattern exists for that rule.
+   */
+  async rejectPattern(rule: number, reason?: string): Promise<Pattern | null> {
+    return this.transitionReviewedPattern(rule, 'resolved', reason)
+  }
+
+  private async transitionReviewedPattern(
+    rule: number,
+    to: 'confirmed' | 'resolved',
+    reason?: string,
+  ): Promise<Pattern | null> {
+    const outputPath = join(this.outputDir, 'patterns.json')
+    const raw = await fsReadFile(outputPath, 'utf-8').catch(() => null)
+    if (!raw) return null
+
+    const stored = JSON.parse(raw) as PatternAnalysis
+    const pattern = stored.topFailureRules.find(p => p.rule === rule && p.state === 'pending_review')
+    if (!pattern) return null
+
+    const from = pattern.state
+    pattern.state = to
+    if (to === 'resolved') {
+      pattern.resolvedAt = new Date().toISOString()
+      pattern.confidence = 0
+      pattern.compositeScore = 0
+    }
+
+    const tmpPath = `${outputPath}.tmp`
+    await writeFile(tmpPath, JSON.stringify(stored, null, 2), 'utf-8')
+    await rename(tmpPath, outputPath)
+
+    const entry: PatternAuditEntry = {
+      ts: new Date().toISOString(),
+      rule,
+      from,
+      to,
+      actor: 'human',
+      ...(reason ? { reason } : {}),
+    }
+    await appendFile(join(this.outputDir, 'pattern-audit.jsonl'), JSON.stringify(entry) + '\n', 'utf-8')
+
+    return pattern
+  }
+
   static fromEnv(): PatternAnalyzer {
     const dir = process.env['KAIROS_TELEMETRY']
     return dir && dir !== 'true' && dir !== 'false'
@@ -626,7 +746,8 @@ export class PatternAnalyzer {
     avgRecency: number,
     stickiness: number,
   ): { compositeScore: number; factors: ScoringFactors } {
-    const stateWeights: Record<PatternState, number> = { draft: 0.3, confirmed: 0.8, resolved: 0.1 }
+    // pending_review shares confirmed's weight -- same evidence tier, only prompt injection differs.
+    const stateWeights: Record<PatternState, number> = { draft: 0.3, confirmed: 0.8, pending_review: 0.8, resolved: 0.1 }
     const stateWeight = stateWeights[state]
     const impact = (1 - Math.exp(-sampleSize / 5)) * stateWeight
     const stickinessBoost = Math.min(0.15, stickiness * 0.05)

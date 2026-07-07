@@ -23,6 +23,8 @@ Usage:
   kairos replace <n8n-id> <description>
   kairos memory add|list|search|forget|rebuild-index <client-id> [...]
   kairos patterns [options]
+  kairos patterns approve <rule-number>
+  kairos patterns reject <rule-number> [reason]
   kairos sessions [options]
   kairos list
   kairos get <id>
@@ -54,6 +56,11 @@ Pack options:
 Patterns options:
   --days <days>   Analysis window (default: 30)
   --json          Output raw JSON instead of summary
+  --pending       Show only patterns awaiting human review (KAIROS_PATTERN_REVIEW=true)
+
+Patterns review-gate (opt-in via KAIROS_PATTERN_REVIEW=true):
+  patterns approve <rule>          Confirm a pending_review pattern -- it starts influencing generation
+  patterns reject <rule> [reason]  Mark a pending_review pattern resolved -- it's excluded, same as any resolved pattern
 
 Sessions options:
   --limit <n>     Number of recent sessions to show (default: 20)
@@ -613,14 +620,17 @@ async function handlePatterns(flags: Record<string, string | boolean>): Promise<
   }
   console.log(`  Avg duration:    ${(analysis.summary.avgDurationMs / 1000).toFixed(1)}s`)
 
-  const active = analysis.topFailureRules.filter(p => p.state !== 'resolved')
-  const resolved = analysis.topFailureRules.filter(p => p.state === 'resolved')
+  const pendingOnly = flags['pending'] === true
+  const active = analysis.topFailureRules.filter(p =>
+    pendingOnly ? p.state === 'pending_review' : p.state !== 'resolved'
+  )
+  const resolved = pendingOnly ? [] : analysis.topFailureRules.filter(p => p.state === 'resolved')
 
   if (active.length > 0) {
-    console.log(`\nActive Failure Patterns:`)
+    console.log(pendingOnly ? `\nPatterns Awaiting Review:` : `\nActive Failure Patterns:`)
     for (const p of active) {
       const regressionTag = p.regressed ? '[REGRESSION] ' : ''
-      const stateTag = p.state === 'confirmed' ? '[CONFIRMED]' : '[DRAFT]'
+      const stateTag = p.state === 'confirmed' ? '[CONFIRMED]' : p.state === 'pending_review' ? '[PENDING REVIEW]' : '[DRAFT]'
       const trendIcon = p.trend === 'improving' ? ' ^' : p.trend === 'worsening' ? ' v' : p.trend === 'new' ? ' *' : ''
       const stage = p.pipelineStage.replace(/_/g, ' ')
       const scoreStr = p.compositeScore.toFixed(3)
@@ -671,6 +681,39 @@ async function handlePatterns(flags: Record<string, string | boolean>): Promise<
   }
 
   console.log(`\nPatterns saved to ~/.kairos/patterns.json`)
+}
+
+function parseRuleArg(positional: string[], usage: string): number {
+  const ruleArg = positional[0]
+  const rule = ruleArg ? parseInt(ruleArg, 10) : NaN
+  if (!ruleArg || Number.isNaN(rule)) {
+    console.error(usage)
+    process.exit(1)
+  }
+  return rule
+}
+
+async function handlePatternApprove(positional: string[]): Promise<void> {
+  const rule = parseRuleArg(positional, 'Usage: kairos patterns approve <rule-number>')
+  const analyzer = PatternAnalyzer.fromEnv()
+  const approved = await analyzer.approvePattern(rule)
+  if (!approved) {
+    console.error(`No pattern awaiting review for Rule ${rule} (run 'kairos patterns --pending' to see what's pending).`)
+    process.exit(1)
+  }
+  console.log(`Rule ${rule} approved — now confirmed and will influence generation.`)
+}
+
+async function handlePatternReject(positional: string[]): Promise<void> {
+  const rule = parseRuleArg(positional, 'Usage: kairos patterns reject <rule-number> [reason]')
+  const reason = positional.slice(1).join(' ') || undefined
+  const analyzer = PatternAnalyzer.fromEnv()
+  const rejected = await analyzer.rejectPattern(rule, reason)
+  if (!rejected) {
+    console.error(`No pattern awaiting review for Rule ${rule} (run 'kairos patterns --pending' to see what's pending).`)
+    process.exit(1)
+  }
+  console.log(`Rule ${rule} rejected${reason ? ` (${reason})` : ''} — marked resolved, will not influence generation.`)
 }
 
 async function handleSessions(flags: Record<string, string | boolean>): Promise<void> {
@@ -1220,9 +1263,17 @@ async function main(): Promise<void> {
     case 'replace':
       await handleReplace(positional, flags)
       break
-    case 'patterns':
-      await handlePatterns(flags)
+    case 'patterns': {
+      const subcommand = positional[0]
+      if (subcommand === 'approve') {
+        await handlePatternApprove(positional.slice(1))
+      } else if (subcommand === 'reject') {
+        await handlePatternReject(positional.slice(1))
+      } else {
+        await handlePatterns(flags)
+      }
       break
+    }
     case 'sessions':
       await handleSessions(flags)
       break

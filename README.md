@@ -237,6 +237,7 @@ Every `KAIROS_*` variable Kairos reads, in one place (the CLI's own `--help` out
 | `KAIROS_CLIENT_ID` | SDK, CLI | Enables the [per-client memory layer](#per-client-memory) — must match `^[a-z0-9][a-z0-9-]{0,63}$`. Omit to leave memory fully inert (default) |
 | `KAIROS_MEMORY_CAP` | SDK, CLI, MCP | Max `history`/`incident` memory nodes per client before oldest are evicted (default: `500`). `preference`/`reference` are never auto-evicted |
 | `KAIROS_MEMORY_EMBEDDINGS` | SDK, CLI, MCP | Set to `off` to force BM25-only memory retrieval even when the optional `fastembed` peer dependency is installed |
+| `KAIROS_PATTERN_REVIEW` | CLI, MCP | Set to `true` to require human approval (`kairos patterns approve\|reject`) before a pattern crossing the confirm threshold can influence generation — see [Audit Trail & Human-Gated Pattern Promotion](#audit-trail--human-gated-pattern-promotion) |
 
 ---
 
@@ -951,7 +952,7 @@ When telemetry is enabled, Kairos runs a **pattern analyzer** that learns from e
 
 - **Composite scoring** — patterns are scored using `rawConfidence × impact × recency × (1 + stickinessBoost)`, so frequent, recent, sticky failures rank highest
 - **Stickiness detection** — rules that persist across consecutive failed retry attempts (the LLM can't self-correct) get a scoring boost
-- **State lifecycle** — patterns progress through `draft → confirmed → resolved`, with per-rule resolved thresholds (5 clean builds) and 90-day TTL on resolved patterns
+- **State lifecycle** — patterns progress through `draft → confirmed → resolved` (or `draft → pending_review → confirmed/resolved` under the review gate below), with per-rule resolved thresholds (5 clean builds) and 90-day TTL on resolved patterns
 - **Regression detection** — if a resolved rule starts failing again, it's flagged as regressed and prioritized in the prompt
 - **Warning effectiveness** — tracks whether warning the LLM about a rule actually prevented the failure, with per-rule pass/fail rates
 - **Schema migration** — pattern data auto-migrates across versions (currently v2) so no accumulated knowledge is lost on upgrades
@@ -963,6 +964,18 @@ When telemetry is enabled, Kairos runs a **pattern analyzer** that learns from e
 Run `kairos patterns` to view the current analysis, or `kairos patterns --json` for raw output.
 
 For CLI usage, set `KAIROS_TELEMETRY=true` in your environment.
+
+### Audit Trail & Human-Gated Pattern Promotion
+
+Every pattern state transition — a new pattern observed, a draft promoted, a resolution, a regression reopened, a human decision — is appended as one line to `~/.kairos/pattern-audit.jsonl` (`{ ts, rule, from, to, actor, evidence }`), always on, regardless of the review gate below. Append-only, never read back by generation — it exists purely so "why does the AI believe this?" has a traceable answer.
+
+By default, patterns that cross the confirm threshold are auto-confirmed and immediately start influencing generation, same as today. Set `KAIROS_PATTERN_REVIEW=true` to require a human sign-off first: threshold-crossing patterns land in a new `pending_review` state instead of `confirmed`, and are held out of prompt injection entirely (unlike `draft` patterns, which stay included as low-confidence observations — the gate applies to *promotion*, not *learning*). Once a pattern is approved, it stays confirmed on later analysis runs even under the gate — approval isn't re-required every run.
+
+```bash
+kairos patterns --pending              # list only patterns awaiting review
+kairos patterns approve <rule-number>  # confirm -- starts influencing generation, actor 'human' in the audit trail
+kairos patterns reject <rule-number> [reason]  # marks resolved -- excluded, same as any resolved pattern
+```
 
 ---
 

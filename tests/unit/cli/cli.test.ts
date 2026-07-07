@@ -195,6 +195,102 @@ describe('CLI — parseArgs / routing', () => {
     })
   })
 
+  describe('patterns approve/reject (review gate)', () => {
+    async function makeTelemetryWithFailures(rule: number, count: number): Promise<{ dir: string; telemetryDir: string }> {
+      const dir = await mkdtemp(join(tmpdir(), 'kairos-cli-patterns-'))
+      const telemetryDir = join(dir, 'telemetry')
+      const { mkdir } = await import('node:fs/promises')
+      await mkdir(telemetryDir, { recursive: true })
+      const today = new Date().toISOString().slice(0, 10)
+      const events: string[] = []
+      for (let i = 0; i < count; i++) {
+        events.push(JSON.stringify({ timestamp: new Date().toISOString(), sessionId: `s${i}`, eventType: 'build_start', data: { description: 'test', dryRun: false, model: 'test' } }))
+        events.push(JSON.stringify({
+          timestamp: new Date().toISOString(), sessionId: `s${i}`, eventType: 'generation_attempt',
+          data: { validationPassed: false, issues: [{ rule, message: `rule ${rule} failed` }], durationMs: 1000, tokensInput: 100, tokensOutput: 50 },
+        }))
+      }
+      await writeFile(join(telemetryDir, `${today}.jsonl`), events.join('\n'))
+      return { dir, telemetryDir }
+    }
+
+    it('approve round-trip: pending_review -> confirmed, audit actor human', async () => {
+      const { dir, telemetryDir } = await makeTelemetryWithFailures(90, 4)
+      try {
+        const env = { ANTHROPIC_API_KEY: 'sk-test', KAIROS_TELEMETRY: telemetryDir, KAIROS_PATTERN_REVIEW: 'true' }
+        const analyze = run(['patterns', '--json'], env)
+        expect(analyze.status).toBe(0)
+        expect(JSON.parse(analyze.stdout).topFailureRules.find((p: { rule: number }) => p.rule === 90)?.state).toBe('pending_review')
+
+        const approve = run(['patterns', 'approve', '90'], env)
+        expect(approve.status).toBe(0)
+        expect(approve.stdout).toContain('approved')
+
+        const patternsRaw = await readFile(join(dir, 'patterns.json'), 'utf-8')
+        const patterns = JSON.parse(patternsRaw)
+        expect(patterns.topFailureRules.find((p: { rule: number }) => p.rule === 90)?.state).toBe('confirmed')
+
+        const auditRaw = await readFile(join(dir, 'pattern-audit.jsonl'), 'utf-8')
+        const auditLines = auditRaw.trim().split('\n').map(l => JSON.parse(l))
+        const humanEntry = auditLines.find(e => e.rule === 90 && e.actor === 'human')
+        expect(humanEntry).toBeDefined()
+        expect(humanEntry.to).toBe('confirmed')
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    })
+
+    it('reject round-trip: pending_review -> resolved with reason, audit actor human', async () => {
+      const { dir, telemetryDir } = await makeTelemetryWithFailures(91, 4)
+      try {
+        const env = { ANTHROPIC_API_KEY: 'sk-test', KAIROS_TELEMETRY: telemetryDir, KAIROS_PATTERN_REVIEW: 'true' }
+        run(['patterns', '--json'], env)
+
+        const reject = run(['patterns', 'reject', '91', 'known', 'false', 'positive'], env)
+        expect(reject.status).toBe(0)
+        expect(reject.stdout).toContain('rejected')
+
+        const patternsRaw = await readFile(join(dir, 'patterns.json'), 'utf-8')
+        const patterns = JSON.parse(patternsRaw)
+        expect(patterns.topFailureRules.find((p: { rule: number }) => p.rule === 91)?.state).toBe('resolved')
+
+        const auditRaw = await readFile(join(dir, 'pattern-audit.jsonl'), 'utf-8')
+        const auditLines = auditRaw.trim().split('\n').map(l => JSON.parse(l))
+        const humanEntry = auditLines.find(e => e.rule === 91 && e.actor === 'human')
+        expect(humanEntry.reason).toBe('known false positive')
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    })
+
+    it('approve exits with code 1 and a clear message when no pattern is pending review for that rule', async () => {
+      const { dir, telemetryDir } = await makeTelemetryWithFailures(92, 1) // stays draft, never pending_review
+      try {
+        const env = { ANTHROPIC_API_KEY: 'sk-test', KAIROS_TELEMETRY: telemetryDir }
+        run(['patterns', '--json'], env)
+        const approve = run(['patterns', 'approve', '92'], env)
+        expect(approve.status).toBe(1)
+        expect(approve.stderr).toContain('No pattern awaiting review')
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    })
+
+    it('--pending shows only patterns awaiting review', async () => {
+      const { dir, telemetryDir } = await makeTelemetryWithFailures(93, 4)
+      try {
+        const env = { ANTHROPIC_API_KEY: 'sk-test', KAIROS_TELEMETRY: telemetryDir, KAIROS_PATTERN_REVIEW: 'true' }
+        run(['patterns', '--json'], env)
+        const pending = run(['patterns', '--pending'], env)
+        expect(pending.status).toBe(0)
+        expect(pending.stdout).toContain('Rule 93')
+        expect(pending.stdout).toContain('Patterns Awaiting Review')
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    })
+  })
+
   describe('sessions --json flag', () => {
     it('outputs JSON when --json flag is passed with no telemetry dir', () => {
       const r = run(['sessions', '--json'], {

@@ -1575,4 +1575,182 @@ describe('PatternAnalyzer', () => {
       expect(warn).toBeUndefined()
     })
   })
+
+  // ── Phase D: human-gated pattern promotion + audit trail ──────────
+
+  describe('pattern review gate (KAIROS_PATTERN_REVIEW)', () => {
+    afterEach(() => {
+      delete process.env['KAIROS_PATTERN_REVIEW']
+    })
+
+    async function writeFailures(rule: number, count: number): Promise<void> {
+      const events = []
+      for (let i = 0; i < count; i++) {
+        events.push(
+          makeEvent('build_start', `s${rule}-${i}`, { description: 'test', dryRun: false, model: 'test' }),
+          makeEvent('generation_attempt', `s${rule}-${i}`, {
+            validationPassed: false,
+            issues: [{ rule, message: `rule ${rule} failed` }],
+            durationMs: 1000, tokensInput: 100, tokensOutput: 50,
+          }),
+        )
+      }
+      await writeEvents(dir, `${todayStr()}.jsonl`, events)
+    }
+
+    it('threshold-crossing rule becomes confirmed by default (review gate off)', async () => {
+      await writeFailures(17, 4)
+      const analyzer = new PatternAnalyzer(dir)
+      const result = await analyzer.analyze()
+      expect(result.topFailureRules.find(r => r.rule === 17)?.state).toBe('confirmed')
+    })
+
+    it('threshold-crossing rule becomes pending_review instead of confirmed when the gate is on', async () => {
+      process.env['KAIROS_PATTERN_REVIEW'] = 'true'
+      await writeFailures(17, 4)
+      const analyzer = new PatternAnalyzer(dir)
+      const result = await analyzer.analyze()
+      expect(result.topFailureRules.find(r => r.rule === 17)?.state).toBe('pending_review')
+    })
+
+    it('a rule already approved in a previous run stays confirmed under the gate, not reset to pending_review', async () => {
+      process.env['KAIROS_PATTERN_REVIEW'] = 'true'
+      await writeFailures(17, 4)
+      const analyzer = new PatternAnalyzer(dir)
+      await analyzer.analyzeAndSave()
+      await analyzer.approvePattern(17)
+
+      const analyzer2 = new PatternAnalyzer(dir)
+      const result = await analyzer2.analyze()
+      expect(result.topFailureRules.find(r => r.rule === 17)?.state).toBe('confirmed')
+    })
+
+    it('does not gate draft-level patterns -- only the confirm-level promotion', async () => {
+      process.env['KAIROS_PATTERN_REVIEW'] = 'true'
+      await writeFailures(12, 1) // below CONFIRMED_THRESHOLD (3)
+      const analyzer = new PatternAnalyzer(dir)
+      const result = await analyzer.analyze()
+      expect(result.topFailureRules.find(r => r.rule === 12)?.state).toBe('draft')
+    })
+  })
+
+  describe('pattern audit trail', () => {
+    afterEach(() => {
+      delete process.env['KAIROS_PATTERN_REVIEW']
+    })
+
+    async function writeFailures(rule: number, count: number, sessionPrefix = ''): Promise<void> {
+      const events = []
+      for (let i = 0; i < count; i++) {
+        events.push(
+          makeEvent('build_start', `${sessionPrefix}s${rule}-${i}`, { description: 'test', dryRun: false, model: 'test' }),
+          makeEvent('generation_attempt', `${sessionPrefix}s${rule}-${i}`, {
+            validationPassed: false,
+            issues: [{ rule, message: `rule ${rule} failed` }],
+            durationMs: 1000, tokensInput: 100, tokensOutput: 50,
+          }),
+        )
+      }
+      await writeEvents(dir, `${todayStr()}.jsonl`, events)
+    }
+
+    it('records a from:null transition for a newly observed pattern', async () => {
+      await writeFailures(17, 1)
+      const analyzer = new PatternAnalyzer(dir)
+      await analyzer.analyzeAndSave()
+
+      const trail = await analyzer.getAuditTrail()
+      const entry = trail.find(e => e.rule === 17)
+      expect(entry).toBeDefined()
+      expect(entry!.from).toBeNull()
+      expect(entry!.to).toBe('draft')
+      expect(entry!.actor).toBe('auto')
+    })
+
+    it('records a draft-to-confirmed transition across two analyzeAndSave runs', async () => {
+      await writeFailures(17, 1)
+      const analyzer = new PatternAnalyzer(dir)
+      await analyzer.analyzeAndSave()
+
+      await writeFailures(17, 3, 'more-') // total count now exceeds CONFIRMED_THRESHOLD (3)
+      await analyzer.analyzeAndSave()
+
+      const trail = await analyzer.getAuditTrail()
+      const confirmedEntry = trail.find(e => e.rule === 17 && e.to === 'confirmed')
+      expect(confirmedEntry).toBeDefined()
+      expect(confirmedEntry!.from).toBe('draft')
+      expect(confirmedEntry!.actor).toBe('auto')
+    })
+
+    it('does not emit a duplicate entry when state is unchanged across repeated runs', async () => {
+      await writeFailures(17, 1)
+      const analyzer = new PatternAnalyzer(dir)
+      await analyzer.analyzeAndSave()
+      await analyzer.analyzeAndSave()
+      await analyzer.analyzeAndSave()
+
+      const trail = await analyzer.getAuditTrail()
+      const entriesForRule17 = trail.filter(e => e.rule === 17)
+      expect(entriesForRule17).toHaveLength(1)
+    })
+
+    it('approvePattern promotes a pending_review pattern to confirmed with actor human', async () => {
+      process.env['KAIROS_PATTERN_REVIEW'] = 'true'
+      await writeFailures(17, 4)
+      const analyzer = new PatternAnalyzer(dir)
+      await analyzer.analyzeAndSave()
+
+      const approved = await analyzer.approvePattern(17)
+      expect(approved?.state).toBe('confirmed')
+
+      const trail = await analyzer.getAuditTrail()
+      const humanEntry = trail.find(e => e.rule === 17 && e.actor === 'human')
+      expect(humanEntry).toBeDefined()
+      expect(humanEntry!.from).toBe('pending_review')
+      expect(humanEntry!.to).toBe('confirmed')
+    })
+
+    it('approvePattern returns null when no pending_review pattern exists for that rule', async () => {
+      await writeFailures(17, 4) // gate off -- lands as confirmed, never pending_review
+      const analyzer = new PatternAnalyzer(dir)
+      await analyzer.analyzeAndSave()
+
+      expect(await analyzer.approvePattern(17)).toBeNull()
+      expect(await analyzer.approvePattern(999)).toBeNull()
+    })
+
+    it('rejectPattern marks a pending_review pattern resolved with an optional reason', async () => {
+      process.env['KAIROS_PATTERN_REVIEW'] = 'true'
+      await writeFailures(90, 4)
+      const analyzer = new PatternAnalyzer(dir)
+      await analyzer.analyzeAndSave()
+
+      const rejected = await analyzer.rejectPattern(90, 'false positive, expected behavior')
+      expect(rejected?.state).toBe('resolved')
+
+      const trail = await analyzer.getAuditTrail()
+      const humanEntry = trail.find(e => e.rule === 90 && e.actor === 'human')
+      expect(humanEntry).toBeDefined()
+      expect(humanEntry!.to).toBe('resolved')
+      expect(humanEntry!.reason).toBe('false positive, expected behavior')
+    })
+
+    it('rejectPattern returns null when no pending_review pattern exists for that rule', async () => {
+      const analyzer = new PatternAnalyzer(dir)
+      expect(await analyzer.rejectPattern(17)).toBeNull()
+    })
+
+    it('a rejected pattern no longer influences generation (excluded same as any resolved pattern)', async () => {
+      process.env['KAIROS_PATTERN_REVIEW'] = 'true'
+      await writeFailures(90, 4)
+      const analyzer = new PatternAnalyzer(dir)
+      const analysis = await analyzer.analyzeAndSave()
+      expect(analysis.topFailureRules.find(p => p.rule === 90)?.state).toBe('pending_review')
+
+      await analyzer.rejectPattern(90)
+      const raw = await import('node:fs/promises').then(fs => fs.readFile(join(parentDir, 'patterns.json'), 'utf-8'))
+      const stored = JSON.parse(raw) as { topFailureRules: Array<{ rule: number; state: string }> }
+      expect(stored.topFailureRules.find(p => p.rule === 90)?.state).toBe('resolved')
+    })
+  })
 })
