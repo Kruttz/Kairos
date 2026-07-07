@@ -667,7 +667,7 @@ function printPackResult(result: import('./pack/pack-builder.js').WorkflowPackRe
 async function handleBuildPack(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const businessContext = positional.join(' ')
   if (!businessContext) {
-    console.error('Usage: kairos build-pack <business context description> [--dry-run] [--activate] [--yes]')
+    console.error('Usage: kairos build-pack <business context description> [--dry-run] [--activate] [--yes] [--despite-blocking]')
     process.exit(1)
   }
 
@@ -713,12 +713,22 @@ async function handleBuildPack(positional: string[], flags: Record<string, strin
   const result = await builder.build(plan, {
     dryRun: isDryRun,
     activate: flags['activate'] === true,
+    buildDespiteBlocking: flags['despite-blocking'] === true,
     onProgress: (wf, i, total) => {
       console.error(`  [${i + 1}/${total}] ${wf.name}...`)
     },
   })
 
-  printPackResult(result)
+  if (result.escalation) {
+    console.error(`\n⚠ Build stopped — blocking assumptions must be resolved first`)
+    console.error('─'.repeat(50))
+    console.error(result.escalation.reason)
+    console.error('')
+    console.error('Questions to resolve:')
+    for (const q of result.escalation.questions) console.error(`  - ${q}`)
+  } else {
+    printPackResult(result)
+  }
 
   const { writeFile, mkdir } = await import('node:fs/promises')
   const { join } = await import('node:path')
@@ -728,6 +738,8 @@ async function handleBuildPack(positional: string[], flags: Record<string, strin
   const packPath = join(packsDir, `${result.packName}.json`)
   await writeFile(packPath, JSON.stringify(result, null, 2), 'utf-8')
   console.error(`\nPack saved to: ${packPath}`)
+
+  if (result.escalation) process.exit(2)
 }
 
 async function handlePackExport(positional: string[], flags: Record<string, string | boolean>): Promise<void> {

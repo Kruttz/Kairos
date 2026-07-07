@@ -149,18 +149,63 @@ describe('PackBuilder', () => {
       expect(result.status).toBe('blocked')
     })
 
-    it('blocks activation when blocking assumptions exist even if --activate passed', async () => {
+    it('blocks activation when blocking assumptions exist even if --activate passed, when building despite blocking', async () => {
       const mockKairos = makeMockKairos()
       builder = new PackBuilder({ anthropicApiKey: 'sk-ant-test', kairos: mockKairos })
       ;(builder as unknown as Record<string, unknown>)['client'] = makeMockAnthropic(JSON.stringify(MOCK_PLAN_RESPONSE))
 
       const plan = { ...MOCK_PLAN_RESPONSE, businessContext: 'Test', assumptions: [BLOCKING_ASSUMPTION] }
-      await builder.build(plan, { activate: true })
+      await builder.build(plan, { activate: true, buildDespiteBlocking: true })
 
       expect(mockKairos.build).toHaveBeenCalledWith(
         expect.any(String),
         expect.objectContaining({ activate: false })
       )
+    })
+
+    it('escalates instead of building when blocking assumptions exist and buildDespiteBlocking is not set', async () => {
+      const mockKairos = makeMockKairos()
+      builder = new PackBuilder({ anthropicApiKey: 'sk-ant-test', kairos: mockKairos })
+      ;(builder as unknown as Record<string, unknown>)['client'] = makeMockAnthropic(JSON.stringify(MOCK_PLAN_RESPONSE))
+
+      const plan = { ...MOCK_PLAN_RESPONSE, businessContext: 'Test', assumptions: [BLOCKING_ASSUMPTION] }
+      const result = await builder.build(plan, { activate: true })
+
+      expect(mockKairos.build).not.toHaveBeenCalled()
+      expect(result.workflows).toHaveLength(0)
+      expect(result.status).toBe('blocked')
+      expect(result.escalation).toBeDefined()
+      expect(result.escalation!.source).toBe('blocking_assumptions')
+      expect(result.escalation!.questions).toEqual(['Google Sheet ID not provided'])
+    })
+
+    it('escalation result still carries plan metadata needed to inspect/re-plan', async () => {
+      const plan = { ...MOCK_PLAN_RESPONSE, businessContext: 'Empire Homecare DME', assumptions: [BLOCKING_ASSUMPTION] }
+      const result = await builder.build(plan)
+
+      expect(result.businessContext).toBe('Empire Homecare DME')
+      expect(result.packName).toBe('empire-homecare-dme')
+      expect(result.assumptions).toEqual([BLOCKING_ASSUMPTION])
+      expect(result.sheetsColumns).toEqual(plan.sheetsColumns)
+      expect(result.testChecklist).toEqual(plan.testChecklist)
+      expect(result.builtAt).toBeTruthy()
+    })
+
+    it('does not escalate when buildDespiteBlocking is true — builds and reports normally, still status blocked', async () => {
+      const plan = { ...MOCK_PLAN_RESPONSE, businessContext: 'Test', assumptions: [BLOCKING_ASSUMPTION] }
+      const result = await builder.build(plan, { buildDespiteBlocking: true })
+
+      expect(result.workflows).toHaveLength(2)
+      expect(result.escalation).toBeUndefined()
+      expect(result.status).toBe('blocked')
+    })
+
+    it('does not escalate when there are no blocking assumptions (regression guard)', async () => {
+      const plan = { ...MOCK_PLAN_RESPONSE, businessContext: 'Test', assumptions: [SAFE_ASSUMPTION] }
+      const result = await builder.build(plan)
+
+      expect(result.escalation).toBeUndefined()
+      expect(result.workflows).toHaveLength(2)
     })
 
     it('passes activate:true when no blocking assumptions and --activate set', async () => {

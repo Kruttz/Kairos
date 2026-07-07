@@ -43,6 +43,17 @@ export interface PackWorkflowResult {
   scheduleIntervals?: unknown[][]
 }
 
+/**
+ * Returned instead of building anything when a pack has blocking assumptions and the caller
+ * hasn't opted to build despite them (`buildDespiteBlocking: true`) — stops before any
+ * generation spend, rather than building every workflow and only refusing activation at the end.
+ */
+export interface EscalationInfo {
+  reason: string
+  questions: string[]
+  source: 'blocking_assumptions'
+}
+
 export interface WorkflowPackResult {
   businessContext: string
   packName: string
@@ -53,6 +64,7 @@ export interface WorkflowPackResult {
   assumptions: TypedAssumption[]
   testChecklist: Array<{ workflow: string; steps: string[] }>
   builtAt: string
+  escalation?: EscalationInfo
 }
 
 export function derivePackStatus(
@@ -107,6 +119,13 @@ Return ONLY valid JSON with no markdown or extra text:
     { "workflow": "Workflow name", "steps": ["How to manually test this workflow"] }
   ]
 }`
+
+function derivePackName(businessContext: string): string {
+  return businessContext
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+}
 
 function normalizeAssumptions(raw: unknown[]): TypedAssumption[] {
   const validTypes = new Set<string>(['safe', 'needs_confirmation', 'blocking'])
@@ -177,10 +196,38 @@ export class PackBuilder {
     options: {
       dryRun?: boolean
       activate?: boolean
+      /** Build anyway despite blocking assumptions — activation is still suppressed regardless. */
+      buildDespiteBlocking?: boolean
       onProgress?: (workflow: WorkflowPlan, index: number, total: number) => void
     } = {}
   ): Promise<WorkflowPackResult> {
     const hasBlockingAssumptions = plan.assumptions.some(a => a.type === 'blocking')
+
+    // Stop before any generation spend when blocking assumptions exist, rather than building
+    // every workflow and only refusing activation at the end. Blocking assumption texts are
+    // presented as-is in `questions` (not mechanically reworded into question form) — they
+    // already describe exactly what needs resolving, and an automatic statement->question
+    // transform risks producing more confusing text than the original.
+    if (hasBlockingAssumptions && !options.buildDespiteBlocking) {
+      const questions = plan.assumptions.filter(a => a.type === 'blocking').map(a => a.text)
+      return {
+        businessContext: plan.businessContext,
+        packName: derivePackName(plan.businessContext),
+        status: 'blocked',
+        workflows: [],
+        allCredentials: [],
+        sheetsColumns: plan.sheetsColumns,
+        assumptions: plan.assumptions,
+        testChecklist: plan.testChecklist,
+        builtAt: new Date().toISOString(),
+        escalation: {
+          reason: 'This pack has blocking assumptions that must be resolved before building. Resolve them and re-plan, or pass buildDespiteBlocking: true to build anyway (activation will still be suppressed).',
+          questions,
+          source: 'blocking_assumptions',
+        },
+      }
+    }
+
     // Never activate when blocking assumptions exist — safety gate
     const effectiveActivate = hasBlockingAssumptions ? false : (options.activate ?? false)
 
@@ -226,14 +273,9 @@ export class PackBuilder {
       }
     }
 
-    const packName = plan.businessContext
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '')
-
     const partial = {
       businessContext: plan.businessContext,
-      packName,
+      packName: derivePackName(plan.businessContext),
       status: 'draft' as PackStatus,
       workflows: results,
       allCredentials: Array.from(credentialMap.values()),

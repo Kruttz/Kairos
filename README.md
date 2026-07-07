@@ -589,6 +589,20 @@ console.log(pack.sheetsColumns)   // Google Sheets required per sheet
 console.log(pack.testChecklist)   // per-workflow test steps
 ```
 
+**Escalation instead of building blind:** if the plan has any `blocking` assumptions, `build()` stops *before* generating anything and returns an `escalation` instead of spending API calls building workflows it already knows can't be activated:
+
+```ts
+const pack = await builder.build(plan)
+if (pack.escalation) {
+  console.log(pack.escalation.questions)  // the blocking assumption texts, unmodified
+  // pack.workflows is [] — nothing was built or spent on this call
+} else {
+  // built normally
+}
+```
+
+Pass `buildDespiteBlocking: true` to restore the previous behavior (build everything, just refuse activation). The existing never-activate-when-blocking safety gate still applies regardless. `kairos build-pack` exits with code `2` (not `1`) when it escalates, so scripts can branch on it.
+
 ### `validatePack(pack)` + `generateHandoff(pack)`
 
 Check a built pack for issues, and generate a client-ready handoff document:
@@ -727,6 +741,11 @@ kairos build-pack "E-commerce store operations" --dry-run
 
 # Skip confirmation prompt and build immediately
 kairos build-pack "Real estate agency operations" --yes
+
+# If the plan has blocking assumptions, build-pack stops before generating anything and
+# prints the open questions (exit code 2) instead of spending API calls on workflows that
+# can't be activated yet. Pass --despite-blocking to build anyway (still won't auto-activate).
+kairos build-pack "Vaguely described business" --yes --despite-blocking
 
 # Wire deployed pack workflows to real Google Sheet IDs (patches documentId ResourceLocators)
 kairos pack wire my-pack --sheet-ids '{"Contacts": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"}'
