@@ -37,13 +37,7 @@ function recencyMultiplier(updatedAt: string): number {
   return Math.max(RECENCY_FLOOR, Math.pow(0.5, days / RECENCY_HALF_LIFE_DAYS))
 }
 
-/**
- * Pure-TS BM25 over each node's description + body + tags, weighted by recency and a small
- * boost for `preference`-type nodes (durable facts about how a client wants things done).
- * No embeddings, no external services — designed so a hybrid (embedding+BM25) ranker can
- * later replace just the scoring step without changing this function's signature.
- */
-export function rankMemories(query: string, nodes: MemoryNode[], k = 5): MemoryNode[] {
+function scoreNodesBm25(query: string, nodes: MemoryNode[]): Array<{ node: MemoryNode; score: number }> {
   if (nodes.length === 0) return []
 
   const queryTerms = [...new Set(tokenize(query))]
@@ -61,7 +55,7 @@ export function rankMemories(query: string, nodes: MemoryNode[], k = 5): MemoryN
     docFreq.set(term, count)
   }
 
-  const scored = nodes.map((node, i) => {
+  return nodes.map((node, i) => {
     const doc = docs[i]!
     const docLength = docLengths[i]!
     let bm25 = 0
@@ -77,10 +71,74 @@ export function rankMemories(query: string, nodes: MemoryNode[], k = 5): MemoryN
     const score = bm25 * recencyMultiplier(node.updatedAt) * typeBoost
     return { node, score }
   })
+}
 
-  return scored
+/**
+ * Pure-TS BM25 over each node's description + body + tags, weighted by recency and a small
+ * boost for `preference`-type nodes (durable facts about how a client wants things done).
+ * No embeddings, no external services — this is the fallback ranker whenever the optional
+ * embedding provider isn't installed/enabled, and the sole ranker in that case.
+ */
+export function rankMemories(query: string, nodes: MemoryNode[], k = 5): MemoryNode[] {
+  return scoreNodesBm25(query, nodes)
     .filter((s) => s.score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, k)
     .map((s) => s.node)
+}
+
+/** Full BM25 ranking (node IDs only, not truncated) — the raw input to RRF fusion. */
+export function bm25RankedIds(query: string, nodes: MemoryNode[]): string[] {
+  return scoreNodesBm25(query, nodes)
+    .filter((s) => s.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .map((s) => s.node.id)
+}
+
+/**
+ * Reciprocal Rank Fusion — SOLIVEN's exact recipe (Score(d) = Σ 1/(k+rank+1)), used to
+ * combine a BM25 ranking with a vector-similarity ranking into one. Rank-based (not
+ * score-based) so it works regardless of the two rankings' very different score scales.
+ */
+export function rrfFuse(rankingA: string[], rankingB: string[], k = 60): Map<string, number> {
+  const scores = new Map<string, number>()
+  for (const ranking of [rankingA, rankingB]) {
+    ranking.forEach((id, rank) => {
+      scores.set(id, (scores.get(id) ?? 0) + 1 / (k + rank + 1))
+    })
+  }
+  return scores
+}
+
+/**
+ * Hybrid retrieval: fuses the BM25 ranking (which already carries recency + preference-type
+ * weighting) with a vector-similarity ranking via RRF. `vectorScores` is nodeId -> cosine
+ * similarity, computed by the caller (store.ts) from its persisted embedding sidecar — pass
+ * `null` when no embedding provider is available, which degrades this to plain `rankMemories`.
+ */
+export function rankMemoriesHybrid(
+  query: string,
+  nodes: MemoryNode[],
+  vectorScores: Map<string, number> | null,
+  k = 5,
+): MemoryNode[] {
+  if (!vectorScores || vectorScores.size === 0) {
+    return rankMemories(query, nodes, k)
+  }
+
+  const bm25Top20 = bm25RankedIds(query, nodes).slice(0, 20)
+  const vectorTop20 = [...vectorScores.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([id]) => id)
+    .slice(0, 20)
+
+  if (bm25Top20.length === 0 && vectorTop20.length === 0) return []
+
+  const fused = rrfFuse(bm25Top20, vectorTop20)
+  const nodesById = new Map(nodes.map((n) => [n.id, n]))
+  return [...fused.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([id]) => nodesById.get(id))
+    .filter((n): n is MemoryNode => n !== undefined)
+    .slice(0, k)
 }

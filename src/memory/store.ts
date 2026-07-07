@@ -7,7 +7,14 @@ import { GuardError } from '../errors/guard-error.js'
 import { generateUUID } from '../utils/uuid.js'
 import { nullLogger, type ILogger } from '../utils/logger.js'
 import type { MemoryNode, MemoryType, MemorySource, RememberInput, MemoryIndexEntry } from './types.js'
-import { rankMemories } from './retrieval.js'
+import { rankMemories, rankMemoriesHybrid } from './retrieval.js'
+import { getEmbeddingProvider, cosineSimilarity, type EmbeddingProvider } from './embeddings.js'
+
+interface EmbeddingSidecarEntry {
+  nodeId: string
+  contentHash: string
+  vector: number[]
+}
 
 // Fail-closed boundary: every on-disk path derives from a validated clientId, so a rejected
 // id can never traverse outside its own directory or collide with another client's.
@@ -39,6 +46,10 @@ export function findSecretPattern(text: string): string | null {
 
 function hashDescription(description: string): string {
   return createHash('sha256').update(description.trim().toLowerCase()).digest('hex')
+}
+
+function hashContent(content: string): string {
+  return createHash('sha256').update(content).digest('hex')
 }
 
 function slugify(text: string): string {
@@ -96,6 +107,7 @@ export class ClientMemoryStore {
   private readonly valid: boolean
   private readonly baseDir: string
   private readonly indexPath: string
+  private readonly embeddingsPath: string
 
   constructor(
     clientId: string | undefined,
@@ -108,6 +120,7 @@ export class ClientMemoryStore {
       this.valid = false
       this.baseDir = ''
       this.indexPath = ''
+      this.embeddingsPath = ''
       this.logger.debug('ClientMemoryStore: no clientId set, memory layer is inert')
       return
     }
@@ -125,6 +138,7 @@ export class ClientMemoryStore {
     const root = options.baseDir ?? join(homedir(), '.kairos', 'clients')
     this.baseDir = join(root, clientId, 'memory')
     this.indexPath = join(this.baseDir, 'index.json')
+    this.embeddingsPath = join(this.baseDir, 'embeddings.json')
   }
 
   get isActive(): boolean {
@@ -167,6 +181,7 @@ export class ClientMemoryStore {
       existing.updatedAt = now
       existing.description = input.description
       await this.saveIndex(index)
+      await this.updateEmbeddingIfNeeded(node)
       return node
     }
 
@@ -187,6 +202,7 @@ export class ClientMemoryStore {
     index.push({ id, path, type: input.type, description: input.description, createdAt: now, updatedAt: now })
     await this.evictIfNeeded(index)
     await this.saveIndex(index)
+    await this.updateEmbeddingIfNeeded(node)
     return node
   }
 
@@ -194,11 +210,72 @@ export class ClientMemoryStore {
     if (!this.valid) return []
     try {
       const nodes = await this.loadAllNodes()
-      return rankMemories(query, nodes, k)
+      const provider = await getEmbeddingProvider(this.logger)
+      if (!provider) return rankMemories(query, nodes, k)
+
+      const vectorScores = await this.computeVectorScores(provider, query, nodes)
+      return rankMemoriesHybrid(query, nodes, vectorScores, k)
     } catch (err) {
       this.logger.warn('Memory retrieval failed, proceeding without client context', { err: String(err) })
       return []
     }
+  }
+
+  /** Recomputes and persists this node's embedding if its content changed since the last
+   * embedding, or it never had one. No-op if no embedding provider is available. Failures
+   * are logged, never thrown — a missing embedding just means BM25-only ranking for this
+   * node until the next successful write. */
+  private async updateEmbeddingIfNeeded(node: MemoryNode): Promise<void> {
+    try {
+      const provider = await getEmbeddingProvider(this.logger)
+      if (!provider) return
+
+      const contentHash = hashContent(`${node.description}\n${node.body}`)
+      const sidecar = await this.loadEmbeddingsSidecar()
+      const existingEntry = sidecar.find((e) => e.nodeId === node.id)
+      if (existingEntry && existingEntry.contentHash === contentHash) return
+
+      const [vector] = await provider.embedDocuments([node.body || node.description])
+      if (!vector) return
+
+      const updated = sidecar.filter((e) => e.nodeId !== node.id)
+      updated.push({ nodeId: node.id, contentHash, vector })
+      await this.saveEmbeddingsSidecar(updated)
+    } catch (err) {
+      this.logger.warn('Failed to compute embedding for memory node — will retry on next write', { nodeId: node.id, err: String(err) })
+    }
+  }
+
+  private async computeVectorScores(
+    provider: EmbeddingProvider,
+    query: string,
+    nodes: MemoryNode[],
+  ): Promise<Map<string, number>> {
+    const sidecar = await this.loadEmbeddingsSidecar()
+    if (sidecar.length === 0) return new Map()
+
+    const sidecarById = new Map(sidecar.map((e) => [e.nodeId, e]))
+    const queryVector = await provider.embedQuery(query)
+    const scores = new Map<string, number>()
+    for (const node of nodes) {
+      const entry = sidecarById.get(node.id)
+      if (entry) scores.set(node.id, cosineSimilarity(queryVector, entry.vector))
+    }
+    return scores
+  }
+
+  private async loadEmbeddingsSidecar(): Promise<EmbeddingSidecarEntry[]> {
+    try {
+      const raw = await readFile(this.embeddingsPath, 'utf-8')
+      return JSON.parse(raw) as EmbeddingSidecarEntry[]
+    } catch {
+      return []
+    }
+  }
+
+  private async saveEmbeddingsSidecar(entries: EmbeddingSidecarEntry[]): Promise<void> {
+    await mkdir(this.baseDir, { recursive: true })
+    await writeFile(this.embeddingsPath, JSON.stringify(entries), 'utf-8')
   }
 
   async loadAllNodes(): Promise<MemoryNode[]> {
@@ -219,7 +296,14 @@ export class ClientMemoryStore {
     if (!entry) return false
     await unlink(entry.path).catch(() => {})
     await this.saveIndex(index.filter((e) => e.id !== id))
+    await this.removeEmbedding(id)
     return true
+  }
+
+  private async removeEmbedding(nodeId: string): Promise<void> {
+    const sidecar = await this.loadEmbeddingsSidecar()
+    if (!sidecar.some((e) => e.nodeId === nodeId)) return
+    await this.saveEmbeddingsSidecar(sidecar.filter((e) => e.nodeId !== nodeId)).catch(() => {})
   }
 
   /** Regenerates index.json from the .md files on disk — the no-drift guarantee. */
@@ -266,6 +350,7 @@ export class ClientMemoryStore {
   private async evictIfNeeded(index: MemoryIndexEntry[]): Promise<void> {
     if (index.length <= this.cap) return
     let overBy = index.length - this.cap
+    const evictedIds: string[] = []
     for (const type of EVICTION_ORDER) {
       if (overBy <= 0) break
       const candidates = index.filter((e) => e.type === type).sort((a, b) => a.createdAt.localeCompare(b.createdAt))
@@ -274,8 +359,15 @@ export class ClientMemoryStore {
         await unlink(c.path).catch(() => {})
         const idx = index.indexOf(c)
         if (idx >= 0) index.splice(idx, 1)
+        evictedIds.push(c.id)
         overBy--
       }
+    }
+    if (evictedIds.length > 0) {
+      const sidecar = await this.loadEmbeddingsSidecar()
+      const evictedSet = new Set(evictedIds)
+      const remaining = sidecar.filter((e) => !evictedSet.has(e.nodeId))
+      if (remaining.length !== sidecar.length) await this.saveEmbeddingsSidecar(remaining).catch(() => {})
     }
   }
 }

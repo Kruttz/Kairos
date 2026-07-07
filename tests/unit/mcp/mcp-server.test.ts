@@ -725,6 +725,9 @@ describe('Kairos MCP Server — kairos_remember / kairos_recall (enabled)', () =
         N8N_API_KEY: undefined,
         HOME: fakeHome,
         KAIROS_MCP_ALLOW_MEMORY: 'true',
+        // Off: this block tests MCP tool gating/wiring, not the optional embedding path,
+        // and fastembed is a devDependency here so it would otherwise try to load a real model.
+        KAIROS_MEMORY_EMBEDDINGS: 'off',
       },
     })
     let buffer = ''

@@ -14,7 +14,9 @@ let fakeHome: string
 function run(args: string[]) {
   return spawnSync(TSX, [CLI, ...args], {
     encoding: 'utf-8',
-    env: { ...process.env, HOME: fakeHome },
+    // Embeddings off: this file tests CLI mechanics, not the optional embedding path, and
+    // fastembed is a devDependency here so it would otherwise try to load a real model.
+    env: { ...process.env, HOME: fakeHome, KAIROS_MEMORY_EMBEDDINGS: 'off' },
     timeout: 10_000,
   })
 }

@@ -15,6 +15,11 @@ import type { DesignResult } from '../../src/generation/types.js'
 // replaces the private memoryStore field with a store pointed at a real temp baseDir via
 // ClientMemoryStore's own baseDir option, which every other memory test file already uses
 // safely. Cleaned up afterEach either way.
+//
+// Also forces embeddings off -- this file tests build()/replace() wiring, not the optional
+// embedding path, and fastembed is a devDependency here so it's always "installed" within
+// this repo's own test runs; without this it would try to load a real model and time out.
+process.env['KAIROS_MEMORY_EMBEDDINGS'] = 'off'
 
 function cannedDesignResult(): DesignResult {
   return {

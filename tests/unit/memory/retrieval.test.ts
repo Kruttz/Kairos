@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { rankMemories } from '../../../src/memory/retrieval.js'
+import { rankMemories, rrfFuse, rankMemoriesHybrid, bm25RankedIds } from '../../../src/memory/retrieval.js'
 import type { MemoryNode } from '../../../src/memory/types.js'
 
 function node(overrides: Partial<MemoryNode>): MemoryNode {
@@ -98,5 +98,88 @@ describe('rankMemories', () => {
     ]
     const results = rankMemories('gmail credentials', nodes)
     expect(results.map((n) => n.id)).toEqual(['match'])
+  })
+})
+
+describe('bm25RankedIds', () => {
+  it('returns the full ranking (not truncated), best first', () => {
+    const nodes = [
+      node({ id: 'weak', description: 'slack', body: 'slack' }),
+      node({ id: 'strong', description: 'slack notification alert slack', body: 'slack notification alert slack' }),
+    ]
+    const ranked = bm25RankedIds('slack notification alert', nodes)
+    expect(ranked[0]).toBe('strong')
+    expect(ranked).toContain('weak')
+  })
+
+  it('returns an empty array when nothing matches', () => {
+    const nodes = [node({ id: 'a', description: 'x', body: 'x' })]
+    expect(bm25RankedIds('completely unrelated query terms', nodes)).toEqual([])
+  })
+})
+
+describe('rrfFuse', () => {
+  it('gives the highest fused score to an id ranked first in both rankings', () => {
+    const fused = rrfFuse(['a', 'b', 'c'], ['a', 'c', 'b'])
+    const sorted = [...fused.entries()].sort((x, y) => y[1] - x[1]).map(([id]) => id)
+    expect(sorted[0]).toBe('a')
+  })
+
+  it('applies SOLIVEN\'s exact formula: score = sum of 1/(k+rank+1) across rankings', () => {
+    const fused = rrfFuse(['x'], ['x'], 60)
+    // rank 0 in each of two rankings: 1/(60+0+1) + 1/(60+0+1) = 2/61
+    expect(fused.get('x')).toBeCloseTo(2 / 61, 10)
+  })
+
+  it('includes an id present in only one ranking', () => {
+    const fused = rrfFuse(['only-in-a'], ['different'])
+    expect(fused.has('only-in-a')).toBe(true)
+    expect(fused.has('different')).toBe(true)
+  })
+
+  it('handles empty rankings', () => {
+    expect(rrfFuse([], []).size).toBe(0)
+    expect(rrfFuse(['a'], []).get('a')).toBeGreaterThan(0)
+  })
+})
+
+describe('rankMemoriesHybrid', () => {
+  it('falls back to plain BM25 ranking when vectorScores is null (no embedding provider)', () => {
+    const nodes = [
+      node({ id: 'match', description: 'concise slack alerts', body: 'concise slack alerts' }),
+      node({ id: 'nomatch', description: 'unrelated', body: 'unrelated' }),
+    ]
+    const results = rankMemoriesHybrid('concise slack alerts', nodes, null)
+    expect(results.map((n) => n.id)).toEqual(['match'])
+  })
+
+  it('surfaces a node found only by vector similarity (BM25 alone would miss it)', () => {
+    const nodes = [
+      node({ id: 'semantic-only', description: 'Client likes short and to the point messaging', body: 'Client likes short and to the point messaging' }),
+      node({ id: 'unrelated', description: 'Billing cycle is monthly', body: 'Billing cycle is monthly' }),
+    ]
+    // Simulates an embedding model recognizing "concise" and "short and to the point" as
+    // semantically similar even though they share zero exact tokens with the query.
+    const vectorScores = new Map([['semantic-only', 0.91], ['unrelated', 0.12]])
+    const results = rankMemoriesHybrid('concise communication preference', nodes, vectorScores)
+    expect(results[0]!.id).toBe('semantic-only')
+  })
+
+  it('fuses BM25 and vector signal, not just one or the other', () => {
+    const nodes = [
+      node({ id: 'bm25-only', description: 'slack notification tone', body: 'slack notification tone' }),
+      node({ id: 'vector-only', description: 'communication style', body: 'communication style' }),
+      node({ id: 'both', description: 'slack notification style', body: 'slack notification style' }),
+    ]
+    const vectorScores = new Map([['vector-only', 0.9], ['both', 0.7], ['bm25-only', 0.1]])
+    const results = rankMemoriesHybrid('slack notification communication style', nodes, vectorScores, 3)
+    // "both" scores well on BOTH signals, so it should rank at or near the top -- neither
+    // pure-BM25 nor pure-vector ranking alone would necessarily put it first.
+    expect(results.map((n) => n.id)).toContain('both')
+  })
+
+  it('returns empty when there is no BM25 match and no vector scores', () => {
+    const nodes = [node({ id: 'a', description: 'x', body: 'x' })]
+    expect(rankMemoriesHybrid('unrelated', nodes, new Map())).toEqual([])
   })
 })

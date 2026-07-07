@@ -4,3 +4,5 @@ dist/
 .env
 .env.local
 .DS_Store
+# fastembed's downloaded ONNX model weights (local_cache/) -- large binary, not source
+local_cache/

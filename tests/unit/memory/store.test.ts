@@ -4,6 +4,12 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { ClientMemoryStore, findSecretPattern } from '../../../src/memory/store.js'
 
+// This file exercises pure storage/dedup/eviction/scrubber mechanics, not the optional
+// embedding path (see embeddings.test.ts / retrieval.test.ts's hybrid cases for that) --
+// force it off so these tests stay fast and deterministic even when fastembed happens to be
+// installed (it's a devDependency here, so it always is within this repo's own test runs).
+process.env['KAIROS_MEMORY_EMBEDDINGS'] = 'off'
+
 let tmpDirs: string[] = []
 
 async function makeTmpBase(): Promise<string> {

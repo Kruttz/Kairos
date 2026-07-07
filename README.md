@@ -235,6 +235,8 @@ Every `KAIROS_*` variable Kairos reads, in one place (the CLI's own `--help` out
 | `KAIROS_MCP_SECRET` | MCP | Optional shared secret required on write-capable tool calls |
 | `KAIROS_MCP_PORT` | MCP | HTTP transport port when running `kairos-mcp --http` (default: `3000`) |
 | `KAIROS_CLIENT_ID` | SDK, CLI | Enables the [per-client memory layer](#per-client-memory) — must match `^[a-z0-9][a-z0-9-]{0,63}$`. Omit to leave memory fully inert (default) |
+| `KAIROS_MEMORY_CAP` | SDK, CLI, MCP | Max `history`/`incident` memory nodes per client before oldest are evicted (default: `500`). `preference`/`reference` are never auto-evicted |
+| `KAIROS_MEMORY_EMBEDDINGS` | SDK, CLI, MCP | Set to `off` to force BM25-only memory retrieval even when the optional `fastembed` peer dependency is installed |
 
 ---
 
@@ -635,7 +637,7 @@ const relevant = await kairos.recall('slack notification tone', 5)
 
 - **Storage**: `~/.kairos/clients/<clientId>/memory/<type>/*.md` — one markdown file per memory, human-readable and git-diffable, plus a derived `index.json` that's always rebuildable (`kairos memory rebuild-index <client-id>`) rather than hand-maintained.
 - **Types**: `preference` (how this client wants things done), `history` (what was built/changed), `incident` (escalations/failures), `reference` (external facts like sheet IDs or channel names). `preference`/`reference` are never auto-evicted; `history`/`incident` are capped (`KAIROS_MEMORY_CAP`, default 500) and evicted oldest-first.
-- **Retrieval**: pure-TypeScript BM25 over each node's description + body + tags, weighted by recency (90-day half-life, floored) and a small boost for `preference` nodes. No embeddings, no external services, no API cost.
+- **Retrieval**: pure-TypeScript BM25 over each node's description + body + tags, weighted by recency (90-day half-life, floored) and a small boost for `preference` nodes — no embeddings, no external services, no API cost, and works everywhere with no setup. **Optionally hybrid**: install `fastembed` (peer dependency, not forced) for local ONNX embeddings (`BAAI/bge-small-en-v1.5`, 384-dim, same model SOLIVEN used) fused with the BM25 ranking via Reciprocal Rank Fusion — catches semantic/paraphrase matches BM25 alone misses (confirmed live: a stored preference and a query sharing zero related words were still correctly matched once embeddings were enabled). Embeddings are computed once per memory node and cached in a per-client `embeddings.json` sidecar, recomputed only when a node's content actually changes. Set `KAIROS_MEMORY_EMBEDDINGS=off` to force BM25-only even with `fastembed` installed. A missing/failed embedding load degrades silently to BM25-only — never an error.
 - **Safety**: every clientId is validated (`^[a-z0-9][a-z0-9-]{0,63}$`) before any filesystem access — a rejected id can never traverse outside its own directory or reach another client's memory. Every write is scrubbed for credential-shaped text (API keys, bearer tokens, long hex/base64 runs) and rejected if found — memory nodes should only ever reference credential *types*, never values. A memory read/write failure never blocks a build; it's logged and the build proceeds without it.
 
 CLI:
