@@ -901,7 +901,7 @@ async function handleBuildPack(positional: string[], flags: Record<string, strin
 async function handlePackExport(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const packName = positional[0]
   if (!packName) {
-    console.error('Usage: kairos pack export <pack-name> [--handoff] [--workflow-json <dir>]')
+    console.error('Usage: kairos pack export <pack-name> [--handoff] [--credentials] [--workflow-json <dir>]')
     process.exit(1)
   }
 
@@ -941,6 +941,9 @@ async function handlePackExport(positional: string[], flags: Record<string, stri
   if (flags['handoff'] === true) {
     const { generateHandoff } = await import('./pack/pack-exporter.js')
     console.log(generateHandoff(pack))
+  } else if (flags['credentials'] === true) {
+    const { generateCredentialsDoc } = await import('./pack/pack-bundle.js')
+    console.log(generateCredentialsDoc(pack))
   } else {
     console.log(JSON.stringify(pack, null, 2))
   }

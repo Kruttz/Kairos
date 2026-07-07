@@ -2,9 +2,25 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { mkdtemp, rm, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { fetchWorkflowJson, writeWorkflowJsonFiles, slugifyWorkflowName } from '../../../src/pack/pack-bundle.js'
+import { fetchWorkflowJson, writeWorkflowJsonFiles, slugifyWorkflowName, generateCredentialsDoc } from '../../../src/pack/pack-bundle.js'
 import type { N8nApiClient } from '../../../src/providers/n8n/index.js'
 import type { N8nWorkflowResponse } from '../../../src/providers/n8n/types.js'
+import type { WorkflowPackResult } from '../../../src/pack/pack-builder.js'
+
+function makePack(overrides: Partial<WorkflowPackResult> = {}): WorkflowPackResult {
+  return {
+    businessContext: 'Empire Homecare',
+    packName: 'empire-homecare',
+    status: 'ready_for_test',
+    workflows: [],
+    allCredentials: [],
+    sheetsColumns: [],
+    assumptions: [],
+    testChecklist: [],
+    builtAt: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  }
+}
 
 function makeResponse(overrides: Partial<N8nWorkflowResponse> = {}): N8nWorkflowResponse {
   return {
@@ -135,5 +151,62 @@ describe('writeWorkflowJsonFiles', () => {
     await writeWorkflowJsonFiles([{ name: 'Test', workflowId: 'wf-1' }], client, nestedDir)
     const content = await readFile(join(nestedDir, 'test.workflow.json'), 'utf-8')
     expect(JSON.parse(content).name).toBeDefined()
+  })
+})
+
+describe('generateCredentialsDoc', () => {
+  it('reports no credentials required when no workflow needs any', () => {
+    const pack = makePack({ workflows: [{ name: 'Internal Routing', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1, credentialsNeeded: [] }] })
+    const md = generateCredentialsDoc(pack)
+    expect(md).toContain('No credentials required')
+  })
+
+  it('groups a credential needed by multiple workflows, preserving distinct descriptions', () => {
+    const pack = makePack({
+      workflows: [
+        { name: 'Missed-Call Text-Back', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1, credentialsNeeded: [{ service: 'Twilio', credentialType: 'twilioApi', description: 'Send SMS confirmation' }] },
+        { name: 'Reorder Reminder', purpose: 'x', workflowId: 'wf-2', deployed: true, generationAttempts: 1, credentialsNeeded: [{ service: 'Twilio', credentialType: 'twilioApi', description: 'Send reorder SMS' }] },
+      ],
+    })
+    const md = generateCredentialsDoc(pack)
+    expect(md).toContain('## Twilio')
+    expect(md).toContain('`twilioApi`')
+    expect(md).toContain('Send SMS confirmation')
+    expect(md).toContain('Send reorder SMS')
+    expect(md).toContain('Missed-Call Text-Back, Reorder Reminder')
+  })
+
+  it('deduplicates identical descriptions for the same credential', () => {
+    const pack = makePack({
+      workflows: [
+        { name: 'A', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1, credentialsNeeded: [{ service: 'Slack', credentialType: 'slackApi', description: 'Post to #alerts' }] },
+        { name: 'B', purpose: 'x', workflowId: 'wf-2', deployed: true, generationAttempts: 1, credentialsNeeded: [{ service: 'Slack', credentialType: 'slackApi', description: 'Post to #alerts' }] },
+      ],
+    })
+    const md = generateCredentialsDoc(pack)
+    const occurrences = md.split('Post to #alerts').length - 1
+    expect(occurrences).toBe(1)
+  })
+
+  it('handles a workflow with zero credentials alongside one that has some', () => {
+    const pack = makePack({
+      workflows: [
+        { name: 'No Creds', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1, credentialsNeeded: [] },
+        { name: 'Has Creds', purpose: 'x', workflowId: 'wf-2', deployed: true, generationAttempts: 1, credentialsNeeded: [{ service: 'Gmail', credentialType: 'gmailOAuth2', description: 'Send confirmation emails' }] },
+      ],
+    })
+    const md = generateCredentialsDoc(pack)
+    expect(md).toContain('## Gmail')
+    expect(md).not.toContain('No credentials required')
+  })
+
+  it('includes the business context and a setup-order section', () => {
+    const pack = makePack({
+      businessContext: 'Empire Homecare',
+      workflows: [{ name: 'A', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1, credentialsNeeded: [{ service: 'Gmail', credentialType: 'gmailOAuth2', description: 'x' }] }],
+    })
+    const md = generateCredentialsDoc(pack)
+    expect(md).toContain('Empire Homecare')
+    expect(md).toContain('## Setup Order')
   })
 })

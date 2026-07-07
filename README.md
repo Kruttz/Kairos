@@ -816,6 +816,10 @@ kairos pack export my-pack --handoff
 # that were never deployed or that n8n can no longer be reached for)
 kairos pack export my-pack --workflow-json ./deliverables
 
+# Print a client-readable credentials checklist grouped by service (no n8n required --
+# pure render over data already collected during generation)
+kairos pack export my-pack --credentials
+
 # Record a deployed workflow's latest n8n execution into the library (improves retrieval)
 kairos trace record <n8n-workflow-id>
 

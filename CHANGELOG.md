@@ -4,6 +4,15 @@ All notable changes to `@kairos-sdk/core` are documented here. Format loosely fo
 
 ## [Unreleased]
 
+### New: `kairos pack export --credentials` (Delivery Bundle, Phase 2)
+Second of six new client-deliverable artifacts. Groups every workflow's `credentialsNeeded` (service/credentialType/description) by service across the whole pack, printing a client-readable checklist — which credential, why it's needed, which workflow(s) need it, and a setup-order reminder.
+
+Deliberately sources from each workflow's own `PackWorkflowResult.credentialsNeeded`, not the pack-level `WorkflowPackResult.allCredentials` aggregate — the latter dedupes down to just `{service, credentialType}` and silently drops the `description` field, which is the part that actually tells a client *why* they need a given credential. Multiple workflows needing the same credential for different reasons now show both descriptions, not just one.
+
+Pure synchronous render, same contract as the existing `--handoff` flag — no network call, no n8n credentials required, works offline against the saved pack JSON.
+
+Tests: 5 new unit tests for `generateCredentialsDoc()` (zero-credentials case, multi-workflow dedup with description preservation, identical-description collapse, mixed zero/nonzero-credential workflows, business-context/setup-order presence) + 1 CLI test. 1064/1064 passing overall. Typecheck/lint clean.
+
 ### New: `kairos pack export --workflow-json <dir>` (Delivery Bundle, Phase 1)
 First of six new client-deliverable artifacts, prompted by an external review proposing every generated pack ship as a full client handoff bundle, not just a workflow JSON. Sorted the proposal by real marginal cost before building anything -- this is the one genuine prerequisite the others share: `PackWorkflowResult` (the per-workflow record inside a saved pack) only ever stored `workflowId`, a string reference into n8n, never the actual node/connection graph -- the full `N8nWorkflow` was fetched during generation but discarded before being persisted to the pack file.
 
