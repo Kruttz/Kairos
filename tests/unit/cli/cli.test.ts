@@ -539,6 +539,29 @@ describe('CLI — parseArgs / routing', () => {
     })
   })
 
+  describe('pack export --impact-notes', () => {
+    it('prints a blank fill-in worksheet, no n8n required', async () => {
+      const fakeHome = await mkdtemp(join(tmpdir(), 'kairos-cli-pack-impact-notes-'))
+      try {
+        const { mkdir, writeFile } = await import('node:fs/promises')
+        const packsDir = join(fakeHome, '.kairos', 'packs')
+        await mkdir(packsDir, { recursive: true })
+        await writeFile(join(packsDir, 'test-pack.json'), JSON.stringify({
+          businessContext: 'Empire Homecare', packName: 'test-pack', status: 'ready_for_test',
+          workflows: [], allCredentials: [], sheetsColumns: [], assumptions: [], testChecklist: [], builtAt: '2026-01-01T00:00:00.000Z',
+        }))
+
+        const r = run(['pack', 'export', 'test-pack', '--impact-notes'], { HOME: fakeHome })
+        expect(r.status).toBe(0)
+        expect(r.stdout).toContain('# Empire Homecare — Impact Notes')
+        expect(r.stdout).toContain('## Current manual process')
+        expect(r.stdout).toContain('## Follow-up date')
+      } finally {
+        await rm(fakeHome, { recursive: true, force: true })
+      }
+    })
+  })
+
   describe('preflight', () => {
     it('exits 0 with a GO verdict for a clean pack, no n8n required', async () => {
       const fakeHome = await mkdtemp(join(tmpdir(), 'kairos-cli-preflight-'))

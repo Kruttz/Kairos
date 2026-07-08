@@ -4,6 +4,15 @@ All notable changes to `@kairos-sdk/core` are documented here. Format loosely fo
 
 ## [Unreleased]
 
+### New: `kairos pack export <pack> --impact-notes` (Phase 4 — client diagnostic worksheet)
+A static, fill-in-the-blank Markdown worksheet for a human to complete during a client diagnostic call — not generated from any pack data. Seven fixed fields: current manual process, time spent weekly, error/failure points, revenue leakage, before/after metric, human owner, follow-up date.
+
+This is the last item on the `preflight`/impact-notes roadmap arc and the only one with zero risk of guessing at requirements: every field is written by hand from a real conversation, never auto-computed or pre-filled — doing so (even with a plausible-looking guess) would reintroduce exactly the fabricated-precision problem an earlier "roi-ledger.md" concept was rejected for. Deliberately kept separate from `--bundle`'s artifact set, since it's a sales/diagnostic tool, not a pack deliverable.
+
+Known limitation, noted rather than silently accepted: wiring this as a `pack export` flag means a pack has to exist first, but impact notes are genuinely useful *before* one does (e.g. during the initial diagnostic call that decides whether to build a pack at all). A standalone `kairos impact-notes [business-context]` command would fix this — deferred, not built now, since the current wiring is adequate for the immediate need and building the standalone path speculatively would be exactly the kind of premature scope this whole roadmap arc has been avoiding.
+
+Tests: 4 unit tests (all 7 fields render, business-context header present/absent, no pre-filled values anywhere in the output) + 1 CLI test. 1152/1152 passing overall. Typecheck/lint clean.
+
 ### New: `kairos preflight <pack> --bundle-dir <dir>` (Phase 3 — bundle cross-reference)
 Cross-checks a preflight run against a previously generated `--bundle` output directory: whether test-artifacts (`test-payloads.json`/`contract.openapi.json`) exist for each webhook-shaped workflow, and — if a `bundle-manifest.json` is present there — surfaces its raw `generatedAt` timestamp and any artifacts it had to skip during generation.
 

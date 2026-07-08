@@ -872,6 +872,12 @@ kairos pack export my-pack --openapi ./deliverables
 # One failing piece never aborts the rest. Requires N8N_BASE_URL/N8N_API_KEY.
 kairos pack export my-pack --bundle ./deliverables
 
+# Print a blank fill-in-the-blank worksheet for a client diagnostic call: current manual
+# process, time spent weekly, error/failure points, revenue leakage, before/after metric,
+# human owner, follow-up date. Not generated from pack data -- every field is written by hand
+# during the actual conversation, since guessing at any of them would be fabricated precision.
+kairos pack export my-pack --impact-notes
+
 # Record a deployed workflow's latest n8n execution into the library (improves retrieval)
 kairos trace record <n8n-workflow-id>
 

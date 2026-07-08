@@ -164,3 +164,40 @@ export function generateHandoff(pack: WorkflowPackResult): string {
 
   return lines.join('\n')
 }
+
+const IMPACT_NOTES_FIELDS: Array<{ heading: string; guidance: string }> = [
+  { heading: 'Current manual process', guidance: 'Describe the steps the client (or their staff) does by hand today, in their own words.' },
+  { heading: 'Time spent weekly', guidance: 'Hours/week spent on this process today, per the client\'s own estimate.' },
+  { heading: 'Error/failure points', guidance: 'Where does this process break down today -- missed steps, delays, data entry mistakes?' },
+  { heading: 'Revenue leakage', guidance: 'Any dollar estimate the client volunteers for missed/lost business tied to this process. Leave blank if they don\'t have one -- do not estimate on their behalf.' },
+  { heading: 'Before/after metric', guidance: 'One concrete number to track post-launch (e.g. "missed calls per week," "average response time"). Pick something both sides can actually measure.' },
+  { heading: 'Human owner', guidance: 'Who at the client\'s business is responsible for this process, and who to follow up with.' },
+  { heading: 'Follow-up date', guidance: 'When to check back in on the before/after metric.' },
+]
+
+/**
+ * A fill-in-the-blank worksheet for a human to complete during a client diagnostic call --
+ * not generated from any pack data, and deliberately not auto-computed from anything. The
+ * whole value of this template is that a human fills it in from a real conversation; guessing
+ * at any field (even a plausible-looking one) would reintroduce exactly the fabricated-precision
+ * risk an earlier "roi-ledger.md" concept was rejected for.
+ */
+export function generateImpactNotesTemplate(businessContext?: string): string {
+  const lines: string[] = []
+  const line = () => lines.push('')
+
+  lines.push(businessContext ? `# ${businessContext} — Impact Notes` : `# Impact Notes`)
+  line()
+  lines.push(`Fill this in during the client diagnostic call. Blank is fine where the client doesn't have an answer -- don't guess on their behalf.`)
+  line()
+
+  for (const field of IMPACT_NOTES_FIELDS) {
+    lines.push(`## ${field.heading}`)
+    line()
+    lines.push(`_${field.guidance}_`)
+    line()
+    line() // blank space to write the answer in
+  }
+
+  return lines.join('\n')
+}

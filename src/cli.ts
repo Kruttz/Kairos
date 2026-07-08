@@ -51,6 +51,7 @@ Build-pack options:
 Pack options:
   pack export <name>          Print the saved pack as JSON
   pack export <name> --handoff  Generate a client-ready Markdown handoff document
+  pack export <name> --impact-notes  Print a blank worksheet to fill in during a client call
   pack wire <name>            Patch deployed workflows with real Google Sheet IDs
   validate-pack <name>        Cross-workflow safety check before activation
   preflight <name>            Go/no-go launch checklist -- offline by default (saved pack only)
@@ -905,7 +906,7 @@ async function handleBuildPack(positional: string[], flags: Record<string, strin
 async function handlePackExport(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const packName = positional[0]
   if (!packName) {
-    console.error('Usage: kairos pack export <pack-name> [--handoff] [--credentials] [--risk-report] [--monitoring-plan] [--workflow-json <dir>] [--test-payloads <dir>] [--openapi <dir>] [--bundle <dir>]')
+    console.error('Usage: kairos pack export <pack-name> [--handoff] [--credentials] [--risk-report] [--impact-notes] [--monitoring-plan] [--workflow-json <dir>] [--test-payloads <dir>] [--openapi <dir>] [--bundle <dir>]')
     process.exit(1)
   }
 
@@ -1015,6 +1016,9 @@ async function handlePackExport(positional: string[], flags: Record<string, stri
   } else if (flags['risk-report'] === true) {
     const { generateRiskReport } = await import('./pack/pack-bundle.js')
     console.log(generateRiskReport(pack))
+  } else if (flags['impact-notes'] === true) {
+    const { generateImpactNotesTemplate } = await import('./pack/pack-exporter.js')
+    console.log(generateImpactNotesTemplate(pack.businessContext))
   } else {
     console.log(JSON.stringify(pack, null, 2))
   }

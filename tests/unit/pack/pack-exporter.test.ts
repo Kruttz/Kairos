@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { generateHandoff } from '../../../src/pack/pack-exporter.js'
+import { generateHandoff, generateImpactNotesTemplate } from '../../../src/pack/pack-exporter.js'
 import type { WorkflowPackResult } from '../../../src/pack/pack-builder.js'
 
 function makePack(overrides: Partial<WorkflowPackResult> = {}): WorkflowPackResult {
@@ -151,5 +151,40 @@ describe('generateHandoff()', () => {
     const pack = makePack({ sheetsColumns: [] })
     const md = generateHandoff(pack)
     expect(md).not.toContain('## Required Google Sheets')
+  })
+})
+
+describe('generateImpactNotesTemplate', () => {
+  it('renders all 7 fixed fields as headed sections', () => {
+    const md = generateImpactNotesTemplate()
+    for (const heading of [
+      'Current manual process',
+      'Time spent weekly',
+      'Error/failure points',
+      'Revenue leakage',
+      'Before/after metric',
+      'Human owner',
+      'Follow-up date',
+    ]) {
+      expect(md).toContain(`## ${heading}`)
+    }
+  })
+
+  it('includes the business context in the header when provided', () => {
+    const md = generateImpactNotesTemplate('Empire Homecare')
+    expect(md).toContain('# Empire Homecare — Impact Notes')
+  })
+
+  it('omits business context cleanly when not provided', () => {
+    const md = generateImpactNotesTemplate()
+    expect(md).toContain('# Impact Notes')
+    expect(md).not.toContain('undefined')
+  })
+
+  it('never pre-fills or guesses any field value -- every section is blank guidance text only', () => {
+    const md = generateImpactNotesTemplate('Empire Homecare')
+    // No dollar amounts, no computed numbers, no pack-derived data anywhere in the output
+    expect(md).not.toMatch(/\$[\d,]+/)
+    expect(md).not.toContain('hours/week: ')
   })
 })
