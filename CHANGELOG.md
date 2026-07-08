@@ -11,6 +11,17 @@ Widened `EXPECTED_CRED` to `Record<string, string[]>` and changed the check to s
 
 Tests: 13 new cases (one per confirmed valid alternate) + 1 confirming Rule 58 still correctly warns on a genuinely invalid credential key. 1177/1177 passing overall. Typecheck/lint clean.
 
+### Fixed: node-syncer dropped all but the first credential type for new node types
+`NodeSyncer.sync()`'s `node.credentials?.[0]?.name` only ever captured the first declared credential option when merging a live n8n instance's node-type info into the registry — the same underlying gap the Rule 58 fix above addresses on the validator side, confirmed during the same ground-truth audit.
+
+Practical exposure was narrower than initially assumed: `sync()`'s merge path only sets `credentialType` for genuinely new node types (not already in `DEFAULT_REGISTRY`) — existing entries only get their `safeTypeVersions` unioned, never their credential info touched. All 9 non-trigger node types found affected by the Rule 58 fix are already statically seeded, so this bug's real-world exposure is for less-common node types syncing for the first time, not Gmail/Slack/GitHub/etc.
+
+Added `NodeDefinition.credentialTypes?: string[]` alongside the existing `credentialType?: string` (kept unchanged, still the first credential seen — its only consumer, `node-syncer.ts`'s own catalog log line, needed no changes) so `sync()` can now capture the full set without breaking anything reading the single-value field. `credentialTypes` is only populated when a node reports more than one credential option.
+
+Deliberately does **not** attempt to capture `displayOptions` (which auth-mode value selects which credential) — `N8nNodeTypeInfo.credentials` only types `{name, required?}` today, and whether n8n's real node-types API response actually carries that data is unverified (checked only against Kairos's own type, not a live response — see `docs/plans/step3-audit-report-2026-07-08.md` §2). Broadening the capture without that verification would be guessing at a live API shape, not fixing a confirmed gap.
+
+Tests: first-ever test coverage for `NodeSyncer` (previously none existed) — 5 new tests covering single-credential capture, multi-credential capture, zero-credential nodes, the already-known-node merge path leaving `credentialType`/`credentialTypes` untouched, and the catalog text rendering. 1181/1181 passing overall. Typecheck/lint clean.
+
 ## [0.10.0] - 2026-07-07
 
 ### New: `kairos pack export <pack> --impact-notes` (Phase 4 — client diagnostic worksheet)

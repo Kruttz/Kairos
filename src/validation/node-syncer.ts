@@ -25,7 +25,13 @@ export class NodeSyncer {
     for (const node of liveNodes) {
       const versions = Array.isArray(node.version) ? node.version : [node.version]
       const isTrigger = TRIGGER_PATTERNS.some(p => p.test(node.name))
-      const credentialType = node.credentials?.[0]?.name
+      // Capture every declared credential name, not just the first -- a node can accept
+      // more than one valid credential type (Step 3 ground-truth audit, 2026-07-08).
+      // credentialType stays the first entry for existing consumers; credentialTypes carries
+      // the full set only when there's more than one to distinguish.
+      const allCredentialNames = (node.credentials ?? []).map(c => c.name).filter(Boolean)
+      const credentialType = allCredentialNames[0]
+      const credentialTypes = allCredentialNames.length > 1 ? allCredentialNames : undefined
 
       const existing = merged.get(node.name)
       if (existing) {
@@ -41,6 +47,7 @@ export class NodeSyncer {
           safeTypeVersions: versions.sort((a, b) => a - b),
           requiredParams: [],
           ...(credentialType ? { credentialType } : {}),
+          ...(credentialTypes ? { credentialTypes } : {}),
           ...(isTrigger ? { isTrigger: true } : {}),
         })
       }
@@ -59,7 +66,9 @@ export class NodeSyncer {
 
     const formatEntry = (d: NodeDefinition): string => {
       const versions = d.safeTypeVersions.join(', ')
-      const cred = d.credentialType ? ` — cred: ${d.credentialType}` : ''
+      const cred = d.credentialTypes
+        ? ` — cred: one of ${d.credentialTypes.join(', ')}`
+        : d.credentialType ? ` — cred: ${d.credentialType}` : ''
       return `${d.type}  typeVersion: ${versions}${cred}`
     }
 

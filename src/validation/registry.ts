@@ -2,7 +2,19 @@ export interface NodeDefinition {
   type: string
   safeTypeVersions: number[]
   requiredParams: string[]
+  /** Primary/first known credential type -- kept for existing consumers. When a node accepts
+   * more than one valid credential type (see credentialTypes), this is just the first one
+   * seen, not necessarily the "correct" one for any particular auth mode. */
   credentialType?: string
+  /** Every credential type name the live n8n instance reported for this node, in the order
+   * n8n returned them. Only the names -- N8nNodeTypeInfo.credentials only types
+   * {name, required?} today, with no displayOptions field, so there's no way to know from
+   * this alone which auth-mode parameter value selects which entry. Whether n8n's real
+   * node-types API response actually carries displayOptions (making a richer capture
+   * possible) is unverified -- checked only against Kairos's own type, not a live response
+   * (see docs/plans/step3-audit-report-2026-07-08.md §2). Absent when a node reports zero or
+   * one credential (credentialType alone is enough in that case). */
+  credentialTypes?: string[]
   isTrigger?: boolean
 }
 
