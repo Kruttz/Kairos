@@ -545,7 +545,7 @@ describe('writeBundle', () => {
     expect(manifest.provenance?.nodeCatalogVersion).toEqual(getNodeCatalogVersion())
   })
 
-  it('records workflowHash on the workflow.json entry, computed from the live-fetched content', async () => {
+  it('records liveExportHash on the workflow.json entry, computed from the live-fetched content', async () => {
     const dir = await makeTmpDir()
     const pack = makePack({
       workflows: [{ name: 'Referral Intake', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1, credentialsNeeded: [], finalIssues: [] }],
@@ -555,13 +555,50 @@ describe('writeBundle', () => {
     const manifest = await writeBundle(pack, client, dir)
 
     const workflowJsonEntry = manifest.files.find((f) => f.path.endsWith('referral-intake.workflow.json'))!
-    expect(workflowJsonEntry.workflowHash).toMatch(/^w1:[0-9a-f]{64}$/)
+    expect(workflowJsonEntry.liveExportHash).toMatch(/^w1:[0-9a-f]{64}$/)
 
     const fetched = JSON.parse(await readFile(workflowJsonEntry.path, 'utf-8'))
-    expect(workflowJsonEntry.workflowHash).toBe(computeWorkflowHash(fetched))
+    expect(workflowJsonEntry.liveExportHash).toBe(computeWorkflowHash(fetched))
 
-    // Derived artifacts (not the workflow definition itself) don't carry a workflowHash.
+    // Derived artifacts (not the workflow definition itself) don't carry a liveExportHash.
     const testPayloadEntry = manifest.files.find((f) => f.path.endsWith('referral-intake.test-payloads.json'))!
-    expect(testPayloadEntry.workflowHash).toBeUndefined()
+    expect(testPayloadEntry.liveExportHash).toBeUndefined()
+  })
+
+  it('has no originalBuildHash when the pack predates provenance tracking', async () => {
+    const dir = await makeTmpDir()
+    const pack = makePack({
+      // No provenance field -- models a pack built before provenance tracking existed.
+      workflows: [{ name: 'Referral Intake', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1, credentialsNeeded: [], finalIssues: [] }],
+    })
+    const { client } = mockBundleClient()
+
+    const manifest = await writeBundle(pack, client, dir)
+    const workflowJsonEntry = manifest.files.find((f) => f.path.endsWith('referral-intake.workflow.json'))!
+    expect(workflowJsonEntry.originalBuildHash).toBeUndefined()
+  })
+
+  it('carries originalBuildHash from PackWorkflowResult.provenance alongside the fresh liveExportHash', async () => {
+    const dir = await makeTmpDir()
+    const pack = makePack({
+      workflows: [{
+        name: 'Referral Intake', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1, credentialsNeeded: [], finalIssues: [],
+        provenance: {
+          kairosVersion: '0.10.0', model: 'claude-test', maxTokens: 16000, temperature: 0.3, runId: 'run-1',
+          ruleSetVersion: 'rules-1', promptTemplateVersion: 'prompt-1', promptProfile: 'standard',
+          nodeCatalogVersion: {}, workflowHash: 'w1:originalhashfrombuildtime',
+        },
+      }],
+    })
+    const { client } = mockBundleClient()
+
+    const manifest = await writeBundle(pack, client, dir)
+    const workflowJsonEntry = manifest.files.find((f) => f.path.endsWith('referral-intake.workflow.json'))!
+
+    expect(workflowJsonEntry.originalBuildHash).toBe('w1:originalhashfrombuildtime')
+    // The live-fetched content in this test differs from what was originally "built" (the
+    // provenance fixture above is synthetic), so the two hashes correctly differ -- this is
+    // exactly the build-vs-live drift signal these two fields exist to make visible.
+    expect(workflowJsonEntry.liveExportHash).not.toBe(workflowJsonEntry.originalBuildHash)
   })
 })

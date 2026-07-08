@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import type { N8nWorkflow } from '../types/workflow.js'
 import type { N8nApiClient } from '../providers/n8n/index.js'
 import type { WorkflowPackResult } from './pack-builder.js'
+import type { BuildProvenance } from '../types/result.js'
 import { validatePack, type PackValidationIssue } from './pack-validator.js'
 import { RULE_MITIGATIONS, RULE_PIPELINE_STAGES } from '../validation/rule-metadata.js'
 import { parseExecutionTrace, getSlowestNodes } from '../telemetry/execution-tracer.js'
@@ -43,7 +44,21 @@ async function writeJsonAtomic(path: string, data: unknown): Promise<void> {
 }
 
 export interface WriteWorkflowJsonResult {
-  written: Array<{ workflowName: string; path: string; fetchedAt: string; workflowHash: string }>
+  written: Array<{
+    workflowName: string
+    path: string
+    fetchedAt: string
+    /** Hash of the workflow as just fetched live from n8n -- may differ from
+     * originalBuildHash if the workflow was hand-edited in n8n, or drifted for any other
+     * reason, since it was originally built. */
+    liveExportHash: string
+    /** This workflow's BuildProvenance.workflowHash from when Kairos originally built it
+     * (carried through PackWorkflowResult.provenance) -- absent when the pack predates
+     * provenance tracking, or the workflow errored before a build result existed. Comparing
+     * this against liveExportHash is how a consumer detects build-vs-live drift; this
+     * function only records both values, it doesn't classify or flag drift itself. */
+    originalBuildHash?: string
+  }>
   skipped: Array<{ workflowName: string; reason: string }>
 }
 
@@ -56,7 +71,7 @@ export interface WriteWorkflowJsonResult {
  * that staleness checkable rather than silently assumed away.
  */
 export async function writeWorkflowJsonFiles(
-  workflows: Array<{ name: string; workflowId: string | null }>,
+  workflows: Array<{ name: string; workflowId: string | null; provenance?: BuildProvenance }>,
   client: N8nApiClient,
   outDir: string,
 ): Promise<WriteWorkflowJsonResult> {
@@ -76,7 +91,13 @@ export async function writeWorkflowJsonFiles(
     const fetchedAt = new Date().toISOString()
     const path = join(outDir, `${slugifyWorkflowName(wf.name)}.workflow.json`)
     await writeJsonAtomic(path, workflow)
-    result.written.push({ workflowName: wf.name, path, fetchedAt, workflowHash: computeWorkflowHash(workflow) })
+    result.written.push({
+      workflowName: wf.name,
+      path,
+      fetchedAt,
+      liveExportHash: computeWorkflowHash(workflow),
+      ...(wf.provenance?.workflowHash ? { originalBuildHash: wf.provenance.workflowHash } : {}),
+    })
   }
 
   return result
@@ -461,7 +482,20 @@ export interface BundleProvenance {
 export interface BundleManifest {
   generatedAt: string
   packName: string
-  files: Array<{ artifact: string; workflowName?: string; path: string; fetchedAt?: string; workflowHash?: string }>
+  files: Array<{
+    artifact: string
+    workflowName?: string
+    path: string
+    fetchedAt?: string
+    /** Only present on workflow.json entries -- hash of the workflow as just fetched live
+     * from n8n at export time. */
+    liveExportHash?: string
+    /** Only present on workflow.json entries, and only when the pack recorded build-time
+     * provenance for that workflow -- hash of the workflow as Kairos originally built it.
+     * Comparing this against liveExportHash is how build-vs-live drift is detected;
+     * writeBundle() only records both values, it doesn't classify drift itself. */
+    originalBuildHash?: string
+  }>
   skipped: Array<{ artifact: string; workflowName?: string; reason: string }>
   /** Absent only on manifests deserialized from a bundle written before this field existed --
    * treat that case as "provenance unknown," never as an error. */
@@ -518,10 +552,15 @@ export async function writeBundle(pack: WorkflowPackResult, client: N8nApiClient
   ]
   for (const [artifact, result] of perWorkflowResults) {
     for (const w of result.written) {
-      // Only writeWorkflowJsonFiles()'s results carry workflowHash (test-payloads.json/
+      // Only writeWorkflowJsonFiles()'s results carry these (test-payloads.json/
       // contract.openapi.json are derived artifacts, not the workflow definition itself).
-      const workflowHash = 'workflowHash' in w ? w.workflowHash : undefined
-      manifest.files.push({ artifact, workflowName: w.workflowName, path: w.path, fetchedAt: w.fetchedAt, ...(workflowHash ? { workflowHash } : {}) })
+      const liveExportHash = 'liveExportHash' in w ? w.liveExportHash : undefined
+      const originalBuildHash = 'originalBuildHash' in w ? w.originalBuildHash : undefined
+      manifest.files.push({
+        artifact, workflowName: w.workflowName, path: w.path, fetchedAt: w.fetchedAt,
+        ...(liveExportHash ? { liveExportHash } : {}),
+        ...(originalBuildHash ? { originalBuildHash } : {}),
+      })
     }
     for (const s of result.skipped) manifest.skipped.push({ artifact, workflowName: s.workflowName, reason: s.reason })
   }
