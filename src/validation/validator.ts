@@ -1733,33 +1733,41 @@ export class N8nValidator {
   private checkRule58(w: N8nWorkflow, issues: ValidationIssue[]): void {
     if (!Array.isArray(w.nodes)) return
 
-    // Expected credential type key per node type (primary key only; some nodes accept multiple)
-    const EXPECTED_CRED: Record<string, string> = {
-      'n8n-nodes-base.gmail': 'gmailOAuth2',
-      'n8n-nodes-base.gmailTrigger': 'gmailOAuth2',
-      'n8n-nodes-base.googleSheets': 'googleSheetsOAuth2Api',
-      'n8n-nodes-base.googleDrive': 'googleDriveOAuth2Api',
-      'n8n-nodes-base.googleCalendar': 'googleCalendarOAuth2Api',
-      'n8n-nodes-base.slack': 'slackOAuth2Api',
-      'n8n-nodes-base.slackTrigger': 'slackApi',
-      'n8n-nodes-base.notion': 'notionApi',
-      'n8n-nodes-base.notionTrigger': 'notionApi',
-      'n8n-nodes-base.airtable': 'airtableTokenApi',
-      'n8n-nodes-base.airtableTrigger': 'airtableTokenApi',
-      'n8n-nodes-base.github': 'githubApi',
-      'n8n-nodes-base.githubTrigger': 'githubApi',
-      'n8n-nodes-base.postgres': 'postgres',
-      'n8n-nodes-base.mySql': 'mySql',
-      'n8n-nodes-base.telegram': 'telegramApi',
-      'n8n-nodes-base.telegramTrigger': 'telegramApi',
-      'n8n-nodes-base.emailSend': 'smtp',
-      'n8n-nodes-base.emailReadImap': 'imap',
-      'n8n-nodes-base.hubspot': 'hubspotOAuth2Api',
-      'n8n-nodes-base.jira': 'jiraSoftwareCloudApi',
-      '@n8n/n8n-nodes-langchain.lmChatAnthropic': 'anthropicApi',
-      '@n8n/n8n-nodes-langchain.lmChatOpenAi': 'openAiApi',
-      '@n8n/n8n-nodes-langchain.anthropic': 'anthropicApi',
-      '@n8n/n8n-nodes-langchain.openAi': 'openAiApi',
+    // Valid credential type keys per node type. Several of these nodes accept more than one
+    // credential type, gated by an authentication-style parameter in real n8n (e.g. Gmail's
+    // "serviceAccount" vs "oAuth2" modes use googleApi vs gmailOAuth2 respectively) --
+    // confirmed directly against n8n-nodes-base/@n8n/n8n-nodes-langchain's real credentials[]
+    // declarations during the Step 3 ground-truth audit (2026-07-08). This rule intentionally
+    // checks set membership only, not which specific mode is currently selected -- doing the
+    // latter would require resolving the node's displayOptions-conditional authentication
+    // parameter, which stays deferred (see feedback_kairos_narrow_rules_over_resolver) until
+    // that trigger is met on its own evidence, not folded into this fix.
+    const EXPECTED_CRED: Record<string, string[]> = {
+      'n8n-nodes-base.gmail': ['gmailOAuth2', 'googleApi'],
+      'n8n-nodes-base.gmailTrigger': ['gmailOAuth2', 'googleApi'],
+      'n8n-nodes-base.googleSheets': ['googleSheetsOAuth2Api', 'googleApi'],
+      'n8n-nodes-base.googleDrive': ['googleDriveOAuth2Api', 'googleApi'],
+      'n8n-nodes-base.googleCalendar': ['googleCalendarOAuth2Api'],
+      'n8n-nodes-base.slack': ['slackOAuth2Api', 'slackApi'],
+      'n8n-nodes-base.slackTrigger': ['slackApi'],
+      'n8n-nodes-base.notion': ['notionApi', 'notionOAuth2Api'],
+      'n8n-nodes-base.notionTrigger': ['notionApi', 'notionOAuth2Api'],
+      'n8n-nodes-base.airtable': ['airtableTokenApi', 'airtableOAuth2Api'],
+      'n8n-nodes-base.airtableTrigger': ['airtableApi', 'airtableTokenApi', 'airtableOAuth2Api'],
+      'n8n-nodes-base.github': ['githubApi', 'githubOAuth2Api', 'githubAppApi'],
+      'n8n-nodes-base.githubTrigger': ['githubApi', 'githubOAuth2Api', 'githubAppApi'],
+      'n8n-nodes-base.postgres': ['postgres'],
+      'n8n-nodes-base.mySql': ['mySql'],
+      'n8n-nodes-base.telegram': ['telegramApi'],
+      'n8n-nodes-base.telegramTrigger': ['telegramApi'],
+      'n8n-nodes-base.emailSend': ['smtp'],
+      'n8n-nodes-base.emailReadImap': ['imap'],
+      'n8n-nodes-base.hubspot': ['hubspotOAuth2Api', 'hubspotApi', 'hubspotAppToken'],
+      'n8n-nodes-base.jira': ['jiraSoftwareCloudApi', 'jiraSoftwareServerApi', 'jiraSoftwareServerPatApi'],
+      '@n8n/n8n-nodes-langchain.lmChatAnthropic': ['anthropicApi'],
+      '@n8n/n8n-nodes-langchain.lmChatOpenAi': ['openAiApi'],
+      '@n8n/n8n-nodes-langchain.anthropic': ['anthropicApi'],
+      '@n8n/n8n-nodes-langchain.openAi': ['openAiApi'],
     }
 
     for (const node of w.nodes) {
@@ -1768,10 +1776,11 @@ export class N8nValidator {
       if (!node.credentials) continue
       const credKeys = Object.keys(node.credentials)
       if (credKeys.length === 0) continue
-      if (!credKeys.includes(expected)) {
+      if (!credKeys.some((k) => expected.includes(k))) {
+        const expectedList = expected.length === 1 ? `"${expected[0]}"` : `one of: ${expected.join(', ')}`
         this.warn(
           issues, 58,
-          `Node "${node.name}" uses credential key "${credKeys[0]}" but ${node.type} expects "${expected}" — n8n will fail to find the credential at runtime`,
+          `Node "${node.name}" uses credential key "${credKeys[0]}" but ${node.type} expects ${expectedList} — n8n will fail to find the credential at runtime`,
           node.id,
         )
       }

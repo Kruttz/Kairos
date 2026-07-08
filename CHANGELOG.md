@@ -4,6 +4,13 @@ All notable changes to `@kairos-sdk/core` are documented here. Format loosely fo
 
 ## [Unreleased]
 
+### Fixed: Rule 58 false-positived on legitimate non-default credential types
+Rule 58 hardcoded exactly one "expected" credential type key per node type (`Record<string, string>`). Checked against real `n8n-nodes-base`/`@n8n/n8n-nodes-langchain` source during a ground-truth audit: 13 of the 25 node types it covers actually accept more than one valid credential type, gated by an authentication-style parameter in real n8n — e.g. Gmail's `serviceAccount` mode uses `googleApi` while `oAuth2` mode uses `gmailOAuth2`, both legitimate. Same for Google Sheets, Google Drive, Slack, Notion, Airtable (+ trigger variants), GitHub (+ trigger), HubSpot, and Jira (Cloud vs. Server vs. Server PAT). Rule 58 was warning "n8n will fail to find the credential at runtime" on every one of these legitimate alternates.
+
+Widened `EXPECTED_CRED` to `Record<string, string[]>` and changed the check to set membership rather than a single-key match. Deliberately does not attempt to resolve *which* mode is currently selected (that would require a displayOptions-conditional resolver, which stays a separately-gated decision — see `feedback_kairos_narrow_rules_over_resolver`) — this fix only stops flagging credentials that are valid under *some* mode as if they were wrong under all of them.
+
+Tests: 13 new cases (one per confirmed valid alternate) + 1 confirming Rule 58 still correctly warns on a genuinely invalid credential key. 1177/1177 passing overall. Typecheck/lint clean.
+
 ## [0.10.0] - 2026-07-07
 
 ### New: `kairos pack export <pack> --impact-notes` (Phase 4 — client diagnostic worksheet)

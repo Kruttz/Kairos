@@ -2611,6 +2611,58 @@ describe('N8nValidator', () => {
     expect(result.issues.some((i) => i.rule === 58)).toBe(false)
   })
 
+  // Several n8n nodes accept more than one valid credential type, gated by an
+  // authentication-style parameter in real n8n (e.g. Gmail's serviceAccount vs oAuth2
+  // modes use googleApi vs gmailOAuth2 respectively) -- confirmed directly against
+  // n8n-nodes-base/@n8n/n8n-nodes-langchain's real credentials[] declarations during the
+  // Step 3 ground-truth audit (2026-07-08). Rule 58 previously hardcoded exactly one
+  // "expected" key per node type and false-positived on every legitimate alternate.
+  it.each([
+    ['n8n-nodes-base.gmail', 'googleApi', 'serviceAccount auth mode'],
+    ['n8n-nodes-base.googleSheets', 'googleApi', 'serviceAccount auth mode'],
+    ['n8n-nodes-base.googleDrive', 'googleApi', 'serviceAccount auth mode'],
+    ['n8n-nodes-base.slack', 'slackApi', 'accessToken auth mode'],
+    ['n8n-nodes-base.notion', 'notionOAuth2Api', 'oAuth2 auth mode'],
+    ['n8n-nodes-base.airtable', 'airtableOAuth2Api', 'oAuth2 auth mode'],
+    ['n8n-nodes-base.airtableTrigger', 'airtableApi', 'legacy auth mode'],
+    ['n8n-nodes-base.github', 'githubOAuth2Api', 'oAuth2 auth mode'],
+    ['n8n-nodes-base.github', 'githubAppApi', 'GitHub App auth mode'],
+    ['n8n-nodes-base.hubspot', 'hubspotApi', 'apiKey auth mode'],
+    ['n8n-nodes-base.hubspot', 'hubspotAppToken', 'appToken auth mode'],
+    ['n8n-nodes-base.jira', 'jiraSoftwareServerApi', 'Jira Server (self-hosted)'],
+    ['n8n-nodes-base.jira', 'jiraSoftwareServerPatApi', 'Jira Server PAT auth'],
+  ])('rule 58: no warning for %s using valid alternate credential "%s" (%s)', (type, credKey) => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0058-aaaa-4aaa-aaaa-aaaaaaaaaaac',
+      name: 'Action',
+      type,
+      typeVersion: 1,
+      position: [450, 300],
+      parameters: {},
+      credentials: { [credKey]: { id: 'c', name: 'Test Cred' } },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Action', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 58)).toBe(false)
+  })
+
+  it('rule 58: still warns when a node uses a credential key that is not valid under any auth mode', () => {
+    const w = baseWorkflow()
+    w.nodes.push({
+      id: 'aaaa0058-aaaa-4aaa-aaaa-aaaaaaaaaaad',
+      name: 'Action',
+      type: 'n8n-nodes-base.jira',
+      typeVersion: 1,
+      position: [450, 300],
+      parameters: {},
+      credentials: { someUnrelatedCredential: { id: 'c', name: 'Wrong' } },
+    })
+    w.connections['Manual Trigger'] = { main: [[{ node: 'Action', type: 'main', index: 0 }]] }
+    const result = validator.validate(w)
+    expect(result.issues.some((i) => i.rule === 58)).toBe(true)
+  })
+
   // Rule 59: webhook with no authentication
   it('rule 59: warns when webhook has no authentication', () => {
     const w = baseWorkflow()
