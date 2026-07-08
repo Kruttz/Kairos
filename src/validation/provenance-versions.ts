@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto'
+import { readFileSync, existsSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { VALIDATOR_RULE_IDS } from './rule-metadata.js'
 import { SYSTEM_PROMPT_V1 } from '../generation/prompts/v1.js'
 import { NODE_CATALOG_SOURCE_VERSIONS } from './node-catalog-generated.js'
@@ -38,4 +41,46 @@ export function getPromptVersion(): string {
  */
 export function getNodeCatalogVersion(): Record<string, string> {
   return NODE_CATALOG_SOURCE_VERSIONS
+}
+
+let cachedKairosVersion: string | null = null
+
+/**
+ * Walks up from startDir looking for the nearest package.json. Deliberately not a fixed
+ * number of `..` segments -- this file's own depth under src/ (two levels) doesn't match its
+ * depth under the flat dist/ tsup produces (one level, alongside mcp-server.js, which is why
+ * mcp-server.ts's __dirname/'..' pattern isn't safe to copy verbatim here). Walking up covers
+ * both dev (running against src/*.ts directly) and the published build without hardcoding
+ * either depth. Stops at 10 levels as a sanity bound against an unexpected filesystem layout,
+ * not a real limit either environment should ever approach.
+ */
+function findPackageJson(startDir: string): string | null {
+  let dir = startDir
+  for (let i = 0; i < 10; i++) {
+    const candidate = join(dir, 'package.json')
+    if (existsSync(candidate)) return candidate
+    const parent = dirname(dir)
+    if (parent === dir) return null
+    dir = parent
+  }
+  return null
+}
+
+/**
+ * The published @kairos-sdk/core version this code is running as, read from the nearest
+ * package.json above this file. Cached after the first read since it can't change during a
+ * running process. Falls back to 'unknown' rather than throwing -- provenance fields degrade
+ * honestly, they don't abort a build over a missing version string.
+ */
+export function getKairosVersion(): string {
+  if (cachedKairosVersion !== null) return cachedKairosVersion
+  try {
+    const startDir = dirname(fileURLToPath(import.meta.url))
+    const pkgPath = findPackageJson(startDir)
+    const pkg = pkgPath ? (JSON.parse(readFileSync(pkgPath, 'utf-8')) as { version?: string }) : null
+    cachedKairosVersion = pkg?.version ?? 'unknown'
+  } catch {
+    cachedKairosVersion = 'unknown'
+  }
+  return cachedKairosVersion
 }

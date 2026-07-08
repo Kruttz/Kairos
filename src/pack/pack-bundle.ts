@@ -9,7 +9,7 @@ import { parseExecutionTrace, getSlowestNodes } from '../telemetry/execution-tra
 import { generateTestPayload, generateOpenApiContract } from './webhook-schema.js'
 import { generateHandoff } from './pack-exporter.js'
 import { computeWorkflowHash } from '../utils/workflow-hash.js'
-import { getRuleSetVersion, getPromptVersion, getNodeCatalogVersion } from '../validation/provenance-versions.js'
+import { getRuleSetVersion, getPromptVersion, getNodeCatalogVersion, getKairosVersion } from '../validation/provenance-versions.js'
 
 export function slugifyWorkflowName(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'workflow'
@@ -448,6 +448,7 @@ export async function writeOpenApiFiles(
  * derived (all content-derived, never a manually bumped constant).
  */
 export interface BundleProvenance {
+  kairosVersion: string
   ruleSetVersion: string
   promptVersion: string
   nodeCatalogVersion: Record<string, string>
@@ -478,6 +479,7 @@ export async function writeBundle(pack: WorkflowPackResult, client: N8nApiClient
     files: [],
     skipped: [],
     provenance: {
+      kairosVersion: getKairosVersion(),
       ruleSetVersion: getRuleSetVersion(),
       promptVersion: getPromptVersion(),
       nodeCatalogVersion: getNodeCatalogVersion(),

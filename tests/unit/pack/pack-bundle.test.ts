@@ -7,7 +7,7 @@ import type { N8nApiClient } from '../../../src/providers/n8n/index.js'
 import type { N8nWorkflowResponse } from '../../../src/providers/n8n/types.js'
 import type { WorkflowPackResult } from '../../../src/pack/pack-builder.js'
 import { computeWorkflowHash } from '../../../src/utils/workflow-hash.js'
-import { getRuleSetVersion, getPromptVersion, getNodeCatalogVersion } from '../../../src/validation/provenance-versions.js'
+import { getRuleSetVersion, getPromptVersion, getNodeCatalogVersion, getKairosVersion } from '../../../src/validation/provenance-versions.js'
 
 function makePack(overrides: Partial<WorkflowPackResult> = {}): WorkflowPackResult {
   return {
@@ -538,6 +538,7 @@ describe('writeBundle', () => {
     const manifest = await writeBundle(pack, client, dir)
 
     expect(manifest.provenance).toBeDefined()
+    expect(manifest.provenance?.kairosVersion).toBe(getKairosVersion())
     expect(manifest.provenance?.ruleSetVersion).toBe(getRuleSetVersion())
     expect(manifest.provenance?.promptVersion).toBe(getPromptVersion())
     expect(manifest.provenance?.nodeCatalogVersion).toEqual(getNodeCatalogVersion())
@@ -553,7 +554,7 @@ describe('writeBundle', () => {
     const manifest = await writeBundle(pack, client, dir)
 
     const workflowJsonEntry = manifest.files.find((f) => f.path.endsWith('referral-intake.workflow.json'))!
-    expect(workflowJsonEntry.workflowHash).toMatch(/^[0-9a-f]{64}$/)
+    expect(workflowJsonEntry.workflowHash).toMatch(/^w1:[0-9a-f]{64}$/)
 
     const fetched = JSON.parse(await readFile(workflowJsonEntry.path, 'utf-8'))
     expect(workflowJsonEntry.workflowHash).toBe(computeWorkflowHash(fetched))

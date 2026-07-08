@@ -6,7 +6,7 @@ import { computeRiskFindings, fetchWorkflowJson, slugifyWorkflowName, type Bundl
 import { findSheetNodes } from './pack-wirer.js'
 import { findWebhookTrigger } from '../utils/webhook-verify.js'
 import type { N8nApiClient } from '../providers/n8n/index.js'
-import { getRuleSetVersion, getPromptVersion, getNodeCatalogVersion } from '../validation/provenance-versions.js'
+import { getRuleSetVersion, getPromptVersion, getNodeCatalogVersion, getKairosVersion } from '../validation/provenance-versions.js'
 
 export type CheckStatus = 'pass' | 'fail' | 'warn' | 'skip' | 'info'
 
@@ -64,6 +64,7 @@ export async function runPreflight(pack: WorkflowPackResult, options: PreflightO
   const isEscalated = pack.escalation !== undefined
   const live = options.live === true && options.client !== undefined
   const provenance: BundleProvenance = {
+    kairosVersion: getKairosVersion(),
     ruleSetVersion: getRuleSetVersion(),
     promptVersion: getPromptVersion(),
     nodeCatalogVersion: getNodeCatalogVersion(),
@@ -264,14 +265,19 @@ export async function runPreflight(pack: WorkflowPackResult, options: PreflightO
       const skipSummary = manifest.skipped.length > 0
         ? ` ${manifest.skipped.length} artifact(s) were skipped during generation: ${manifest.skipped.map((s) => `${s.artifact}${s.workflowName ? ` (${s.workflowName})` : ''} -- ${s.reason}`).join('; ')}`
         : ''
-      // Absent on a bundle written before this field existed -- "unknown," not a mismatch.
+      // Absent on a bundle written before this field existed -- "unknown," not a mismatch. A
+      // bundle whose provenance predates kairosVersion specifically (has ruleSetVersion etc.
+      // but no kairosVersion) correctly falls through to "different" below via strict
+      // equality against undefined -- that bundle genuinely was built under incomplete
+      // provenance tracking, so "different" is the accurate answer, not a special case.
       const provenanceSummary = manifest.provenance === undefined
         ? ' Bundle predates provenance tracking -- cannot compare against current rules/catalog/prompt.'
-        : manifest.provenance.ruleSetVersion === provenance.ruleSetVersion
+        : manifest.provenance.kairosVersion === provenance.kairosVersion
+          && manifest.provenance.ruleSetVersion === provenance.ruleSetVersion
           && manifest.provenance.promptVersion === provenance.promptVersion
           && JSON.stringify(manifest.provenance.nodeCatalogVersion) === JSON.stringify(provenance.nodeCatalogVersion)
-          ? ' Bundle was generated under the same rule-set/prompt/catalog versions as current.'
-          : ' Bundle was generated under different rule-set/prompt/catalog versions than current -- re-exporting may pick up different behavior.'
+          ? ' Bundle was generated under the same Kairos version/rule-set/prompt/catalog as current.'
+          : ' Bundle was generated under a different Kairos version/rule-set/prompt/catalog than current -- re-exporting may pick up different behavior.'
       checks.push({ id: 'bundle-manifest', label: 'Bundle manifest', status: 'info', detail: `Last generated: ${manifest.generatedAt}.${skipSummary}${provenanceSummary}` })
     } catch (err) {
       checks.push({ id: 'bundle-manifest', label: 'Bundle manifest', status: 'warn', detail: `Could not read bundle-manifest.json at ${options.bundleDir}: ${err instanceof Error ? err.message : String(err)}` })

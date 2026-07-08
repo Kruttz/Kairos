@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { getRuleSetVersion, getPromptVersion, getNodeCatalogVersion } from '../../../src/validation/provenance-versions.js'
+import { getRuleSetVersion, getPromptVersion, getNodeCatalogVersion, getKairosVersion } from '../../../src/validation/provenance-versions.js'
 import { VALIDATOR_RULE_IDS } from '../../../src/validation/rule-metadata.js'
 
 describe('provenance-versions', () => {
@@ -32,5 +33,14 @@ describe('provenance-versions', () => {
     expect(versions).toHaveProperty('n8n-nodes-base')
     expect(versions).toHaveProperty('@n8n/n8n-nodes-langchain')
     expect(typeof versions['n8n-nodes-base']).toBe('string')
+  })
+
+  it('getKairosVersion returns this repo\'s actual published version, not a placeholder', () => {
+    const pkg = JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf-8')) as { version: string }
+    expect(getKairosVersion()).toBe(pkg.version)
+  })
+
+  it('getKairosVersion is cached (repeated calls return the same value)', () => {
+    expect(getKairosVersion()).toBe(getKairosVersion())
   })
 })

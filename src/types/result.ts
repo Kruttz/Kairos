@@ -14,6 +14,8 @@ export interface CredentialRequirement {
  * catalog was generated from.
  */
 export interface BuildProvenance {
+  /** The published @kairos-sdk/core version that produced this build. */
+  kairosVersion: string
   model: string
   maxTokens: number
   /** The final (successful) generation attempt's temperature. Null only when no attempt

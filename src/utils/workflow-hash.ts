@@ -24,6 +24,17 @@ function canonicalJson(value: unknown): string {
 }
 
 /**
+ * Bumped whenever the canonicalization algorithm itself changes (what gets included, how
+ * nodes are sorted, etc.) -- without this, a hash computed under a changed algorithm would
+ * look exactly like a hash computed under the old one, and two workflows would appear to
+ * have "changed" (or not) based on an algorithm difference rather than a real content
+ * difference. Prefixed into every returned hash so two hashes computed under different
+ * schema versions are immediately recognizable as not comparable, rather than silently
+ * compared byte-for-byte as if they meant the same thing.
+ */
+export const WORKFLOW_HASH_SCHEMA_VERSION = 'w1'
+
+/**
  * Deterministic content hash of a workflow's semantic state: nodes, connections, and
  * settings -- the three fields that define what the workflow actually does. The nodes array
  * is sorted by node id before hashing so array order never affects the result (the same set
@@ -51,5 +62,5 @@ export function computeWorkflowHash(workflow: Pick<N8nWorkflow, 'nodes' | 'conne
     canonicalJson(workflow.settings ?? {}),
   ].join('||')
 
-  return createHash('sha256').update(payload).digest('hex')
+  return `${WORKFLOW_HASH_SCHEMA_VERSION}:${createHash('sha256').update(payload).digest('hex')}`
 }

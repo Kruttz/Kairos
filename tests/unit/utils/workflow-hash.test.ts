@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeWorkflowHash } from '../../../src/utils/workflow-hash.js'
+import { computeWorkflowHash, WORKFLOW_HASH_SCHEMA_VERSION } from '../../../src/utils/workflow-hash.js'
 import type { N8nWorkflow } from '../../../src/types/workflow.js'
 
 function makeWorkflow(overrides: Partial<N8nWorkflow> = {}): N8nWorkflow {
@@ -73,8 +73,13 @@ describe('computeWorkflowHash', () => {
     expect(computeWorkflowHash(withSettings)).toBe(computeWorkflowHash(withoutSettings))
   })
 
-  it('produces a 64-character hex SHA-256 digest', () => {
+  it('produces a schema-version-prefixed SHA-256 digest', () => {
     const hash = computeWorkflowHash(makeWorkflow())
-    expect(hash).toMatch(/^[0-9a-f]{64}$/)
+    expect(hash).toMatch(/^w1:[0-9a-f]{64}$/)
+  })
+
+  it('prefixes the current WORKFLOW_HASH_SCHEMA_VERSION exactly, not a hardcoded literal', () => {
+    const hash = computeWorkflowHash(makeWorkflow())
+    expect(hash.startsWith(`${WORKFLOW_HASH_SCHEMA_VERSION}:`)).toBe(true)
   })
 })
