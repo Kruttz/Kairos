@@ -4,6 +4,17 @@ All notable changes to `@kairos-sdk/core` are documented here. Format loosely fo
 
 ## [Unreleased]
 
+### New: `kairos pack export --test-payloads <dir>` (Delivery Bundle, Phase 5)
+Fifth of six new client-deliverable artifacts, and the first that's genuinely new logic rather than a render over existing data -- confirmed nothing like this existed anywhere in the codebase.
+
+Deliberately narrow scope, on purpose: the codebase already investigated and rejected a fuller version of this exact idea. The repo-integration plan found that extracting a webhook's required fields from static n8n node metadata is unreliable specifically for the Webhook node (`httpMethod`/`path` aren't statically required; body shape depends on response-mode/content-type the validator "can't reliably see"), and the existing `webhook-body-access` prompt guidance was deliberately kept as LLM prompt text rather than an enforced rule for the same reason. New `src/pack/webhook-schema.ts` doesn't try to solve that ambiguity -- `extractWebhookFieldRefs()` mines field names from `$json.body`/`$json.query`/`$json.headers` expressions anywhere in the workflow (a fresh, nested-path-aware regex -- the existing private `extractJsonFieldRefs` in `validator.ts` only captures one level and is tuned for its own two rules, left untouched), and `generateTestPayload()` builds a sample from those names with a naive placeholder guesser (email/phone/name/date/id pattern matching on the field name only). Every output carries a mandatory disclaimer: this is a best-effort guess, not a verified contract, and should be checked against a real request before production use.
+
+**A real bug found by the test suite, not by inspection**: the initial field-reference regex used a plain `\w`-based character class for path segments, which silently truncated at the first hyphen -- `x-api-key` and `x-signature` (both completely normal HTTP header names) were captured as just `x`. Fixed by widening the segment character class to include hyphens. A good reminder that "write the test first" catches exactly this class of edge case before it ships.
+
+`kairos pack export <name> --test-payloads <dir>` writes one `<slug>.test-payloads.json` per webhook-shaped workflow (live n8n fetch, same graceful-degradation contract as `--workflow-json`); non-webhook workflows are skipped silently since the artifact doesn't apply to them.
+
+Tests: 9 unit tests for `extractWebhookFieldRefs()`/`generateTestPayload()` (nested paths, single-level regression guard, query/header roots, dedup+sort, zero-references case, non-webhook null, flat vs. nested sample building) + 3 unit tests for `writeTestPayloadFiles()` (webhook workflow, non-webhook skip, partial-failure resilience) + 1 CLI integration test against a mock n8n server. 1101/1101 passing overall. Typecheck/lint clean.
+
 ### New: `kairos pack export --monitoring-plan` (Delivery Bundle, Phase 4)
 Fourth of six new client-deliverable artifacts. Generalizes the existing single-workflow `kairos trace record` (CLI) / `kairos_record_trace` (MCP) infrastructure to "for every workflow in this pack, tell me its current health" -- reusing `parseExecutionTrace()` and a newly-shared `getSlowestNodes()` helper rather than any new trace-parsing logic.
 

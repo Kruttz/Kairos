@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { mkdtemp, rm, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { fetchWorkflowJson, writeWorkflowJsonFiles, slugifyWorkflowName, generateCredentialsDoc, generateRiskReport, generateMonitoringPlan } from '../../../src/pack/pack-bundle.js'
+import { fetchWorkflowJson, writeWorkflowJsonFiles, slugifyWorkflowName, generateCredentialsDoc, generateRiskReport, generateMonitoringPlan, writeTestPayloadFiles } from '../../../src/pack/pack-bundle.js'
 import type { N8nApiClient } from '../../../src/providers/n8n/index.js'
 import type { N8nWorkflowResponse } from '../../../src/providers/n8n/types.js'
 import type { WorkflowPackResult } from '../../../src/pack/pack-builder.js'
@@ -351,5 +351,59 @@ describe('generateMonitoringPlan', () => {
     expect(md).toContain('## Fine')
     expect(md).toContain('Could not reach n8n')
     expect(md).toContain('## Weekly Checklist')
+  })
+})
+
+describe('writeTestPayloadFiles', () => {
+  it('writes a test-payloads.json for a webhook-shaped workflow', async () => {
+    const dir = await makeTmpDir()
+    const client = mockClient(async (id) => makeResponse({
+      id, name: 'Referral Intake',
+      nodes: [
+        { id: 'n1', name: 'Webhook', type: 'n8n-nodes-base.webhook', typeVersion: 1, position: [0, 0], parameters: { path: 'referrals', httpMethod: 'POST' } },
+        { id: 'n2', name: 'Notify', type: 'n8n-nodes-base.slack', typeVersion: 1, position: [200, 0], parameters: { text: '={{$json.body.email}}' } },
+      ],
+    }))
+    const result = await writeTestPayloadFiles([{ name: 'Referral Intake', workflowId: 'wf-1' }], client, dir)
+    expect(result.written).toHaveLength(1)
+    const content = JSON.parse(await readFile(join(dir, 'referral-intake.test-payloads.json'), 'utf-8'))
+    expect(content.url).toBe('referrals')
+    expect(content.method).toBe('POST')
+    expect(content.sampleBody).toEqual({ email: 'test@example.com' })
+  })
+
+  it('skips a non-webhook workflow silently (no file, reported as not applicable)', async () => {
+    const dir = await makeTmpDir()
+    const client = mockClient(async (id) => makeResponse({
+      id, name: 'Internal Routing',
+      nodes: [{ id: 'n1', name: 'Manual', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 0], parameters: {} }],
+    }))
+    const result = await writeTestPayloadFiles([{ name: 'Internal Routing', workflowId: 'wf-1' }], client, dir)
+    expect(result.written).toHaveLength(0)
+    expect(result.skipped).toHaveLength(1)
+    expect(result.skipped[0]!.reason).toContain('not applicable')
+  })
+
+  it('skips a workflow with no workflowId or a failed fetch, without aborting the rest', async () => {
+    const dir = await makeTmpDir()
+    const client = mockClient(async (id) => {
+      if (id === 'wf-bad') throw new Error('gone')
+      return makeResponse({
+        id, name: 'Good',
+        nodes: [{ id: 'n1', name: 'Webhook', type: 'n8n-nodes-base.webhook', typeVersion: 1, position: [0, 0], parameters: { path: 'x', httpMethod: 'POST' } }],
+      })
+    })
+    const result = await writeTestPayloadFiles(
+      [
+        { name: 'Not Deployed', workflowId: null },
+        { name: 'Broken', workflowId: 'wf-bad' },
+        { name: 'Good', workflowId: 'wf-good' },
+      ],
+      client,
+      dir,
+    )
+    expect(result.written).toHaveLength(1)
+    expect(result.written[0]!.workflowName).toBe('Good')
+    expect(result.skipped).toHaveLength(2)
   })
 })

@@ -831,6 +831,12 @@ kairos pack export my-pack --risk-report
 # N8N_BASE_URL/N8N_API_KEY -- checks live n8n state)
 kairos pack export my-pack --monitoring-plan
 
+# Write a heuristic sample test payload (url/method/sample body/query/headers) for each
+# webhook-shaped workflow, inferred from $json.body/query/headers expressions in the
+# workflow itself -- a best-effort guess, not a verified contract (see the note field in
+# each output file). Skips workflows with no webhook trigger. Requires N8N_BASE_URL/N8N_API_KEY.
+kairos pack export my-pack --test-payloads ./deliverables
+
 # Record a deployed workflow's latest n8n execution into the library (improves retrieval)
 kairos trace record <n8n-workflow-id>
 

@@ -901,7 +901,7 @@ async function handleBuildPack(positional: string[], flags: Record<string, strin
 async function handlePackExport(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const packName = positional[0]
   if (!packName) {
-    console.error('Usage: kairos pack export <pack-name> [--handoff] [--credentials] [--risk-report] [--monitoring-plan] [--workflow-json <dir>]')
+    console.error('Usage: kairos pack export <pack-name> [--handoff] [--credentials] [--risk-report] [--monitoring-plan] [--workflow-json <dir>] [--test-payloads <dir>]')
     process.exit(1)
   }
 
@@ -935,6 +935,23 @@ async function handlePackExport(positional: string[], flags: Record<string, stri
     for (const w of result.written) console.error(`Wrote ${w.path}`)
     for (const s of result.skipped) console.error(`Skipped "${s.workflowName}": ${s.reason}`)
     console.error(`\n${result.written.length} workflow.json file(s) written to ${outDir}, ${result.skipped.length} skipped.`)
+    return
+  }
+
+  if (typeof flags['test-payloads'] === 'string') {
+    const outDir = flags['test-payloads']
+    const n8nBaseUrl = process.env['N8N_BASE_URL']
+    const n8nApiKey = process.env['N8N_API_KEY']
+    if (!n8nBaseUrl || !n8nApiKey) {
+      console.error('N8N_BASE_URL and N8N_API_KEY are required for --test-payloads (fetches each workflow live from n8n).')
+      process.exit(1)
+    }
+    const { writeTestPayloadFiles } = await import('./pack/pack-bundle.js')
+    const client = new N8nApiClient(n8nBaseUrl, n8nApiKey, CLI_LOGGER)
+    const result = await writeTestPayloadFiles(pack.workflows, client, outDir)
+    for (const w of result.written) console.error(`Wrote ${w.path}`)
+    for (const s of result.skipped) console.error(`Skipped "${s.workflowName}": ${s.reason}`)
+    console.error(`\n${result.written.length} test-payloads.json file(s) written to ${outDir}, ${result.skipped.length} skipped.`)
     return
   }
 
