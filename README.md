@@ -895,6 +895,27 @@ kairos deactivate <workflow-id>
 kairos delete <workflow-id> --confirm
 ```
 
+### Delivery Bundle
+
+`kairos pack export <name>` can produce a full set of client-facing deliverables from a built pack, not just the raw pack JSON. Each artifact is available individually via its own flag, or all at once via `--bundle <dir>`:
+
+| Artifact | Flag | Scope | Requires n8n? |
+|---|---|---|---|
+| `handoff.md` | `--handoff` | pack-level | no |
+| `credentials.md` | `--credentials` | pack-level | no |
+| `risk-report.md` | `--risk-report` | pack-level | no |
+| `monitoring-plan.md` | `--monitoring-plan` | pack-level | yes (live status + execution history) |
+| `<name>.workflow.json` | `--workflow-json <dir>` | per-workflow | yes (live fetch) |
+| `<name>.test-payloads.json` | `--test-payloads <dir>` | per-workflow, webhook-shaped only | yes (live fetch) |
+| `<name>.contract.openapi.json` | `--openapi <dir>` | per-workflow, webhook-shaped only | yes (live fetch) |
+
+`--bundle <dir>` writes all of the above that apply, plus `bundle-manifest.json` listing exactly what was written and what was skipped (and why — no webhook trigger, n8n unreachable, workflow never deployed). One failing piece never aborts the rest of the bundle.
+
+Two things worth understanding before relying on this:
+
+- **Pack-level vs. per-workflow, and why some need n8n and some don't.** `handoff.md`/`credentials.md`/`risk-report.md` are pure, offline renders over the already-saved pack JSON — no network call. `workflow.json`/`monitoring-plan.md`/`test-payloads.json`/`contract.openapi.json` all need a live n8n fetch (to get the workflow's current node graph, or its execution/active status), so they need `N8N_BASE_URL`/`N8N_API_KEY` and can fail per-workflow if n8n is unreachable or a workflow was deleted since the pack was built.
+- **`test-payloads.json` and `contract.openapi.json` are heuristic, and say so explicitly.** Both infer field names from `$json.body`/`$json.query`/`$json.headers` expressions found anywhere in the workflow — a best-effort guess about what a webhook expects, not a verified contract. n8n doesn't expose a way to reliably determine a webhook's real required fields or response shape statically (this was investigated directly, not assumed), so both artifacts carry a mandatory disclaimer and type every inferred field as `string` rather than overclaiming precision they can't back up. Verify against a real request before relying on either in production.
+
 ### What `build-pack` outputs
 
 After building, Kairos prints a structured document and saves a JSON file to `~/.kairos/packs/<name>.json`:
