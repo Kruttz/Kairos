@@ -100,13 +100,15 @@ interface ProcessResult {
   ok: number
   benignSkipped: number
   errors: Array<{ file: string; message: string }>
+  packageVersion: string
 }
 
 async function processPackage(spec: PackageSpec, catalog: Record<string, NodeCatalogEntry>): Promise<ProcessResult> {
   const pkgJsonPath = require.resolve(`${spec.packageName}/package.json`)
   const pkgDir = pkgJsonPath.slice(0, -'/package.json'.length)
-  const pkgJson = require(pkgJsonPath) as { n8n?: { nodes?: string[] } }
+  const pkgJson = require(pkgJsonPath) as { n8n?: { nodes?: string[] }; version?: string }
   const nodeFiles = pkgJson.n8n?.nodes ?? []
+  const packageVersion = pkgJson.version ?? 'unknown'
 
   let ok = 0
   let benignSkipped = 0
@@ -137,7 +139,7 @@ async function processPackage(spec: PackageSpec, catalog: Record<string, NodeCat
       errors.push({ file: relPath, message })
     }
   }
-  return { ok, benignSkipped, errors }
+  return { ok, benignSkipped, errors, packageVersion }
 }
 
 function reportErrors(packageName: string, errors: Array<{ file: string; message: string }>): void {
@@ -159,8 +161,10 @@ function reportErrors(packageName: string, errors: Array<{ file: string; message
 
 async function main(): Promise<void> {
   const catalog: Record<string, NodeCatalogEntry> = {}
+  const sourceVersions: Record<string, string> = {}
   for (const spec of PACKAGES) {
-    const { ok, benignSkipped, errors } = await processPackage(spec, catalog)
+    const { ok, benignSkipped, errors, packageVersion } = await processPackage(spec, catalog)
+    sourceVersions[spec.packageName] = packageVersion
     console.log(`${spec.packageName}: ${ok} node types cataloged, ${benignSkipped} skipped (no resource/operation options), ${errors.length} errored while loading`)
     reportErrors(spec.packageName, errors)
   }
@@ -181,6 +185,11 @@ async function main(): Promise<void> {
     '  resources: string[]',
     '  operations: string[]',
     '}',
+    '',
+    '// Exact versions of the source packages this catalog was generated from — the catalog',
+    '// version for provenance purposes IS these version strings, not a separately-tracked',
+    '// number that could drift out of sync with what was actually read.',
+    `export const NODE_CATALOG_SOURCE_VERSIONS: Record<string, string> = ${JSON.stringify(sourceVersions)}`,
     '',
     'export const NODE_OPERATION_CATALOG: Record<string, NodeCatalogEntry> = {',
   ]

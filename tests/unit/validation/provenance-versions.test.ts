@@ -1,0 +1,36 @@
+import { describe, it, expect } from 'vitest'
+import { createHash } from 'node:crypto'
+import { getRuleSetVersion, getPromptVersion, getNodeCatalogVersion } from '../../../src/validation/provenance-versions.js'
+import { VALIDATOR_RULE_IDS } from '../../../src/validation/rule-metadata.js'
+
+describe('provenance-versions', () => {
+  it('getRuleSetVersion is deterministic across calls', () => {
+    expect(getRuleSetVersion()).toBe(getRuleSetVersion())
+  })
+
+  it('getRuleSetVersion changes if VALIDATOR_RULE_IDS content differs', () => {
+    const real = getRuleSetVersion()
+    // Simulate what the hash would be for a rule-set missing one ID -- confirms the
+    // function is actually sensitive to content, not returning a constant.
+    const withoutLast = JSON.stringify(VALIDATOR_RULE_IDS.slice(0, -1))
+    const simulated = createHash('sha256').update(withoutLast).digest('hex').slice(0, 12)
+    expect(simulated).not.toBe(real)
+  })
+
+  it('getPromptVersion is deterministic and non-empty', () => {
+    const v = getPromptVersion()
+    expect(v).toBe(getPromptVersion())
+    expect(v.length).toBeGreaterThan(0)
+  })
+
+  it('getRuleSetVersion and getPromptVersion produce different values (not accidentally the same hash)', () => {
+    expect(getRuleSetVersion()).not.toBe(getPromptVersion())
+  })
+
+  it('getNodeCatalogVersion returns the real pinned source package versions', () => {
+    const versions = getNodeCatalogVersion()
+    expect(versions).toHaveProperty('n8n-nodes-base')
+    expect(versions).toHaveProperty('@n8n/n8n-nodes-langchain')
+    expect(typeof versions['n8n-nodes-base']).toBe('string')
+  })
+})

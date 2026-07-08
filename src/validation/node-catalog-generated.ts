@@ -13,6 +13,11 @@ export interface NodeCatalogEntry {
   operations: string[]
 }
 
+// Exact versions of the source packages this catalog was generated from — the catalog
+// version for provenance purposes IS these version strings, not a separately-tracked
+// number that could drift out of sync with what was actually read.
+export const NODE_CATALOG_SOURCE_VERSIONS: Record<string, string> = {"n8n-nodes-base":"2.29.4","@n8n/n8n-nodes-langchain":"2.28.5"}
+
 export const NODE_OPERATION_CATALOG: Record<string, NodeCatalogEntry> = {
   "@n8n/n8n-nodes-langchain.alibabaCloud": {"resources":["image","text","video"],"operations":["analyze","generate","imageToVideo","message","textToVideo"]},
   "@n8n/n8n-nodes-langchain.anthropic": {"resources":["document","file","image","prompt","text"],"operations":["analyze","deleteFile","generate","get","improve","list","message","templatize","upload"]},
@@ -188,7 +193,7 @@ export const NODE_OPERATION_CATALOG: Record<string, NodeCatalogEntry> = {
   "n8n-nodes-base.microsoftEntra": {"resources":["group","user"],"operations":["addGroup","create","delete","get","getAll","removeGroup","update"]},
   "n8n-nodes-base.microsoftExcel": {"resources":["table","workbook","worksheet"],"operations":["addTable","addWorksheet","append","clear","convertToRange","deleteTable","deleteWorkbook","deleteWorksheet","getAll","getColumns","getRows","lookup","readRows","update","upsert"]},
   "n8n-nodes-base.microsoftGraphSecurity": {"resources":["secureScore","secureScoreControlProfile"],"operations":["get","getAll","update"]},
-  "n8n-nodes-base.microsoftOneDrive": {"resources":["file","folder"],"operations":["copy","create","delete","download","get","getChildren","rename","search","share","upload"]},
+  "n8n-nodes-base.microsoftOneDrive": {"resources":["file","folder"],"operations":["copy","create","delete","download","get","getChildren","move","rename","search","share","upload"]},
   "n8n-nodes-base.microsoftOutlook": {"resources":["calendar","contact","draft","event","folder","folderMessage","message","messageAttachment"],"operations":["add","create","delete","download","get","getAll","move","reply","send","sendAndWait","update"]},
   "n8n-nodes-base.microsoftSharePoint": {"resources":["file","item","list"],"operations":["create","delete","download","get","getAll","update","upload","upsert"]},
   "n8n-nodes-base.microsoftSql": {"resources":[],"operations":["delete","executeQuery","insert","update"]},
@@ -261,7 +266,7 @@ export const NODE_OPERATION_CATALOG: Record<string, NodeCatalogEntry> = {
   "n8n-nodes-base.serviceNow": {"resources":["attachment","businessService","configurationItems","department","dictionary","incident","tableRecord","user","userGroup","userRole"],"operations":["create","delete","get","getAll","update","upload"]},
   "n8n-nodes-base.shopify": {"resources":["order","product"],"operations":["create","delete","get","getAll","update"]},
   "n8n-nodes-base.signl4": {"resources":["alert"],"operations":["resolve","send"]},
-  "n8n-nodes-base.slack": {"resources":["channel","file","message","reaction","star","user","userGroup"],"operations":["add","archive","close","create","delete","disable","enable","get","getAll","getPermalink","getPresence","getProfile","getUsers","history","info","invite","join","kick","leave","member","open","post","remove","rename","replies","search","sendAndWait","setPurpose","setTopic","unarchive","update","updateProfile","updateUsers","upload"]},
+  "n8n-nodes-base.slack": {"resources":["channel","file","message","reaction","star","user","userGroup"],"operations":["add","archive","close","create","delete","deleteScheduled","disable","enable","get","getAll","getManyScheduled","getPermalink","getPresence","getProfile","getUsers","history","info","invite","join","kick","leave","lookupByEmail","member","open","post","remove","rename","replies","schedule","search","sendAndWait","setPurpose","setTopic","unarchive","update","updateProfile","updateUsers","upload"]},
   "n8n-nodes-base.sms77": {"resources":["sms","voice"],"operations":["send"]},
   "n8n-nodes-base.snowflake": {"resources":[],"operations":["executeQuery","insert","update"]},
   "n8n-nodes-base.splunk": {"resources":["alert","report","search","user"],"operations":["create","deleteJob","deleteReport","deleteUser","get","getAll","getMetrics","getReport","getResult","update"]},
