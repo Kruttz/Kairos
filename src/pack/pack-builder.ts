@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { Kairos } from '../client.js'
-import type { CredentialRequirement } from '../types/result.js'
+import type { CredentialRequirement, BuildProvenance } from '../types/result.js'
 import type { ValidationIssue } from '../validation/types.js'
 import { extractScheduleIntervals } from '../utils/schedule-intervals.js'
 
@@ -48,6 +48,14 @@ export interface PackWorkflowResult {
    * a build result was produced — treat undefined as "no structured data available", not "no issues".
    */
   finalIssues?: ValidationIssue[]
+  /**
+   * This workflow's actual build-time provenance (see BuildResult.provenance) -- carried
+   * through from Kairos.build()'s result rather than re-derived, so it reflects what was
+   * genuinely true the moment THIS workflow was generated, not whatever the pack-level export
+   * step considers "current" later. Absent on packs persisted before this field existed and
+   * on workflows that errored before a build result was produced.
+   */
+  provenance?: BuildProvenance
 }
 
 /**
@@ -267,6 +275,7 @@ export class PackBuilder {
           credentialsNeeded: result.credentialsNeeded,
           finalIssues: result.finalIssues,
           ...(scheduleIntervals.length > 0 ? { scheduleIntervals } : {}),
+          ...(result.provenance ? { provenance: result.provenance } : {}),
         })
       } catch (err) {
         results.push({

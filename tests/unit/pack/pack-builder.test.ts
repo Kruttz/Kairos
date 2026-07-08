@@ -38,7 +38,7 @@ function makeMockAnthropic(responseText: string) {
   }
 }
 
-function makeMockKairos(overrides: Partial<{ workflowId: string; generationAttempts: number; workflow: unknown; finalIssues: unknown[] }> = {}): Kairos {
+function makeMockKairos(overrides: Partial<{ workflowId: string; generationAttempts: number; workflow: unknown; finalIssues: unknown[]; provenance: unknown }> = {}): Kairos {
   return {
     build: vi.fn().mockResolvedValue({
       workflowId: overrides.workflowId ?? 'wf-123',
@@ -49,6 +49,7 @@ function makeMockKairos(overrides: Partial<{ workflowId: string; generationAttem
       generationAttempts: overrides.generationAttempts ?? 1,
       dryRun: false,
       finalIssues: overrides.finalIssues ?? [],
+      ...('provenance' in overrides ? { provenance: overrides.provenance } : {}),
     }),
     drain: vi.fn().mockResolvedValue(undefined),
   } as unknown as Kairos
@@ -142,6 +143,30 @@ describe('PackBuilder', () => {
       const result = await builder.build(plan)
 
       expect(result.workflows[0]!.finalIssues).toEqual(issues)
+    })
+
+    it('carries each workflow\'s BuildResult.provenance through onto PackWorkflowResult (previously silently discarded)', async () => {
+      const provenance = {
+        kairosVersion: '0.10.0', model: 'claude-test', maxTokens: 16000, temperature: 0.3,
+        runId: 'run-abc', ruleSetVersion: 'rules-1', promptTemplateVersion: 'prompt-1',
+        promptProfile: 'standard', nodeCatalogVersion: { 'n8n-nodes-base': '1.0.0' }, workflowHash: 'w1:deadbeef',
+      }
+      const mockKairos = makeMockKairos({ provenance })
+      builder = new PackBuilder({ anthropicApiKey: 'sk-ant-test', kairos: mockKairos })
+      ;(builder as unknown as Record<string, unknown>)['client'] = makeMockAnthropic(JSON.stringify(MOCK_PLAN_RESPONSE))
+
+      const plan = { ...MOCK_PLAN_RESPONSE, businessContext: 'Test DME' }
+      const result = await builder.build(plan)
+
+      expect(result.workflows[0]!.provenance).toEqual(provenance)
+    })
+
+    it('leaves provenance undefined (not throw) when the underlying BuildResult has none', async () => {
+      // Models a pack built against an older Kairos version whose BuildResult predates
+      // provenance entirely -- makeMockKairos() with no provenance override matches that shape.
+      const plan = { ...MOCK_PLAN_RESPONSE, businessContext: 'Test DME' }
+      const result = await builder.build(plan)
+      expect(result.workflows[0]!.provenance).toBeUndefined()
     })
 
     it('derives status as ready_for_test when needs_confirmation assumptions exist', async () => {
