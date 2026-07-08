@@ -601,6 +601,71 @@ describe('CLI — parseArgs / routing', () => {
         await rm(fakeHome, { recursive: true, force: true })
       }
     })
+
+    it('--live flags a placeholder credential id via a real live fetch, exits 1', async () => {
+      const mockN8n = createServer((req, res) => {
+        if (req.method === 'GET' && req.url === '/api/v1/workflows/wf-1') {
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            id: 'wf-1', name: 'Missed-Call Text-Back', active: true,
+            nodes: [{ id: 'n1', name: 'Send SMS', type: 'n8n-nodes-base.twilio', typeVersion: 1, position: [0, 0], parameters: {}, credentials: { twilioApi: { id: 'placeholder-id', name: 'Twilio' } } }],
+            connections: {}, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+          }))
+          return
+        }
+        res.writeHead(404)
+        res.end()
+      })
+      await new Promise<void>((resolve) => mockN8n.listen(0, '127.0.0.1', resolve))
+      const addr = mockN8n.address()
+      if (addr === null || typeof addr === 'string') throw new Error('mock server failed to bind')
+      const mockN8nUrl = `http://127.0.0.1:${addr.port}`
+
+      const fakeHome = await mkdtemp(join(tmpdir(), 'kairos-cli-preflight-live-'))
+      try {
+        const { mkdir, writeFile } = await import('node:fs/promises')
+        const packsDir = join(fakeHome, '.kairos', 'packs')
+        await mkdir(packsDir, { recursive: true })
+        await writeFile(join(packsDir, 'test-pack.json'), JSON.stringify({
+          businessContext: 'Empire Homecare', packName: 'test-pack', status: 'ready_for_test',
+          workflows: [{ name: 'Missed-Call Text-Back', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1, credentialsNeeded: [], finalIssues: [] }],
+          allCredentials: [], sheetsColumns: [], assumptions: [], testChecklist: [], builtAt: '2026-01-01T00:00:00.000Z',
+        }))
+
+        const child = spawn(TSX, [CLI, 'preflight', 'test-pack', '--live'], {
+          encoding: 'utf-8',
+          env: { ...process.env, HOME: fakeHome, N8N_BASE_URL: mockN8nUrl, N8N_API_KEY: 'test-key' },
+        })
+        let stdout = ''
+        child.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
+        const exitCode = await new Promise<number | null>((resolve) => child.on('close', resolve))
+
+        expect(exitCode).toBe(1)
+        expect(stdout).toContain('**Verdict: NO-GO**')
+        expect(stdout).toContain('placeholder')
+      } finally {
+        await new Promise<void>((resolve) => mockN8n.close(() => resolve()))
+        await rm(fakeHome, { recursive: true, force: true })
+      }
+    }, 15_000)
+
+    it('--live exits 1 with a clear message when N8N_BASE_URL/N8N_API_KEY are missing', async () => {
+      const fakeHome = await mkdtemp(join(tmpdir(), 'kairos-cli-preflight-live-noenv-'))
+      try {
+        const { mkdir, writeFile } = await import('node:fs/promises')
+        const packsDir = join(fakeHome, '.kairos', 'packs')
+        await mkdir(packsDir, { recursive: true })
+        await writeFile(join(packsDir, 'test-pack.json'), JSON.stringify({
+          businessContext: 'Test Co', packName: 'test-pack', status: 'ready_for_test',
+          workflows: [], allCredentials: [], sheetsColumns: [], assumptions: [], testChecklist: [], builtAt: '2026-01-01T00:00:00.000Z',
+        }))
+        const r = run(['preflight', 'test-pack', '--live'], { HOME: fakeHome, N8N_BASE_URL: '', N8N_API_KEY: '' })
+        expect(r.status).toBe(1)
+        expect(r.stderr).toContain('N8N_BASE_URL and N8N_API_KEY are required')
+      } finally {
+        await rm(fakeHome, { recursive: true, force: true })
+      }
+    })
   })
 
   describe('pack export --risk-report', () => {

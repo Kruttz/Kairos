@@ -1240,7 +1240,23 @@ async function handlePreflight(positional: string[], flags: Record<string, strin
   }
 
   const { runPreflight, formatPreflightChecklist } = await import('./pack/preflight.js')
-  const result = await runPreflight(pack, {})
+
+  let client: N8nApiClient | undefined
+  if (flags['live'] === true) {
+    const n8nBaseUrl = process.env['N8N_BASE_URL']
+    const n8nApiKey = process.env['N8N_API_KEY']
+    if (!n8nBaseUrl || !n8nApiKey) {
+      console.error('N8N_BASE_URL and N8N_API_KEY are required for --live (fetches each workflow live from n8n).')
+      process.exit(1)
+    }
+    client = new N8nApiClient(n8nBaseUrl, n8nApiKey, CLI_LOGGER)
+  }
+
+  const result = await runPreflight(pack, {
+    live: flags['live'] === true,
+    ...(client ? { client } : {}),
+    ...(typeof flags['bundle-dir'] === 'string' ? { bundleDir: flags['bundle-dir'] } : {}),
+  })
 
   if (flags['json'] === true) {
     console.log(JSON.stringify(result, null, 2))

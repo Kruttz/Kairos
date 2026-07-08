@@ -809,10 +809,16 @@ kairos validate-pack my-pack
 
 # Go/no-go launch checklist -- offline by default (saved pack JSON only, no n8n
 # required); exits 0 for GO/GO WITH WARNINGS, 1 for NO-GO/BLOCKED, so it's
-# scriptable as a real gate. Pass --live to also check live n8n state.
+# scriptable as a real gate.
 kairos preflight my-pack
-kairos preflight my-pack --live
 kairos preflight my-pack --json
+
+# --live additionally fetches each workflow's current n8n state and checks:
+# credential references still literally "placeholder-id" or empty (unwired),
+# Google Sheets document IDs that are empty (confidently flagged) vs. present-
+# but-unverified (no placeholder convention exists for Sheet IDs, so a non-empty
+# value is only ever "not obviously wrong," never confirmed -- always caveated).
+kairos preflight my-pack --live
 
 # Print the saved pack as JSON, or generate a client-ready Markdown handoff
 # (status, blocking issues, credentials needed, setup/testing/activation checklists)

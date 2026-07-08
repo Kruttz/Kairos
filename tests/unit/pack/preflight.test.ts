@@ -1,6 +1,25 @@
 import { describe, it, expect } from 'vitest'
 import { runPreflight, formatPreflightChecklist } from '../../../src/pack/preflight.js'
 import type { WorkflowPackResult } from '../../../src/pack/pack-builder.js'
+import type { N8nApiClient } from '../../../src/providers/n8n/index.js'
+import type { N8nWorkflowResponse } from '../../../src/providers/n8n/types.js'
+
+function makeResponse(overrides: Partial<N8nWorkflowResponse> = {}): N8nWorkflowResponse {
+  return {
+    id: 'wf-1',
+    name: 'Workflow',
+    active: true,
+    nodes: [{ id: 'n1', name: 'Start', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 0], parameters: {} }],
+    connections: {},
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  }
+}
+
+function mockClient(getWorkflow: (id: string) => Promise<N8nWorkflowResponse>): N8nApiClient {
+  return { getWorkflow } as unknown as N8nApiClient
+}
 
 function makePack(overrides: Partial<WorkflowPackResult> = {}): WorkflowPackResult {
   return {
@@ -51,11 +70,11 @@ describe('runPreflight — escalated pack', () => {
 })
 
 describe('runPreflight — clean pack', () => {
-  it('verdict is GO when every check passes', async () => {
+  it('verdict is GO when every check passes (live-only checks legitimately skip without --live)', async () => {
     const pack = makePack({ workflows: [cleanWorkflow()] })
     const result = await runPreflight(pack)
     expect(result.verdict).toBe('GO')
-    expect(result.checks.every((c) => c.status === 'pass' || c.status === 'info')).toBe(true)
+    expect(result.checks.every((c) => c.status === 'pass' || c.status === 'info' || c.status === 'skip')).toBe(true)
   })
 })
 
@@ -156,5 +175,120 @@ describe('formatPreflightChecklist', () => {
     const text = formatPreflightChecklist(result)
     expect(text).toContain('✗ Pack build completed')
     expect(text).toContain('⊘ No unresolved blocking assumptions')
+  })
+})
+
+describe('runPreflight — without --live', () => {
+  it('marks live-only checks as skip with "needs --live", not silently absent', async () => {
+    const pack = makePack({ workflows: [cleanWorkflow()] })
+    const result = await runPreflight(pack) // no options -- live defaults to false
+    expect(checkFor(result, 'placeholder-credentials')?.status).toBe('skip')
+    expect(checkFor(result, 'placeholder-credentials')?.detail).toContain('needs --live')
+    expect(checkFor(result, 'sheets-ids')?.status).toBe('skip')
+    expect(checkFor(result, 'sheets-ids')?.detail).toContain('needs --live')
+  })
+})
+
+describe('runPreflight — with --live: placeholder credentials', () => {
+  it('flags the literal "placeholder-id" convention as NO-GO', async () => {
+    const pack = makePack({ workflows: [cleanWorkflow()] })
+    const client = mockClient(async (id) => makeResponse({
+      id,
+      nodes: [{ id: 'n1', name: 'Send SMS', type: 'n8n-nodes-base.twilio', typeVersion: 1, position: [0, 0], parameters: {}, credentials: { twilioApi: { id: 'placeholder-id', name: 'Twilio' } } }],
+    }))
+    const result = await runPreflight(pack, { live: true, client })
+    expect(result.verdict).toBe('NO-GO')
+    expect(checkFor(result, 'placeholder-credentials')?.status).toBe('fail')
+    expect(checkFor(result, 'placeholder-credentials')?.detail).toContain('Send SMS')
+    expect(checkFor(result, 'placeholder-credentials')?.detail).toContain('twilioApi')
+  })
+
+  it('also flags an empty/missing credential id, not just the literal placeholder string', async () => {
+    const pack = makePack({ workflows: [cleanWorkflow()] })
+    const client = mockClient(async (id) => makeResponse({
+      id,
+      nodes: [{ id: 'n1', name: 'Send SMS', type: 'n8n-nodes-base.twilio', typeVersion: 1, position: [0, 0], parameters: {}, credentials: { twilioApi: { id: '', name: 'Twilio' } } }],
+    }))
+    const result = await runPreflight(pack, { live: true, client })
+    expect(result.verdict).toBe('NO-GO')
+    expect(checkFor(result, 'placeholder-credentials')?.status).toBe('fail')
+  })
+
+  it('passes when every credential id is a real (non-placeholder, non-empty) value', async () => {
+    const pack = makePack({ workflows: [cleanWorkflow()] })
+    const client = mockClient(async (id) => makeResponse({
+      id,
+      nodes: [{ id: 'n1', name: 'Send SMS', type: 'n8n-nodes-base.twilio', typeVersion: 1, position: [0, 0], parameters: {}, credentials: { twilioApi: { id: 'real-cred-abc123', name: 'Twilio' } } }],
+    }))
+    const result = await runPreflight(pack, { live: true, client })
+    expect(checkFor(result, 'placeholder-credentials')?.status).toBe('pass')
+  })
+
+  it('degrades to warn (not fail, not abort) when a workflow fetch fails, and still evaluates the rest', async () => {
+    const pack = makePack({
+      workflows: [cleanWorkflow({ name: 'Broken', workflowId: 'wf-bad' }), cleanWorkflow({ name: 'Fine', workflowId: 'wf-ok' })],
+    })
+    const client = mockClient(async (id) => {
+      if (id === 'wf-bad') throw new Error('network error')
+      return makeResponse({ id })
+    })
+    const result = await runPreflight(pack, { live: true, client })
+    expect(checkFor(result, 'placeholder-credentials')?.status).toBe('warn')
+    expect(checkFor(result, 'placeholder-credentials')?.detail).toContain('Broken')
+  })
+})
+
+describe('runPreflight — with --live: Google Sheets ID signal', () => {
+  it('confidently flags an empty Sheet ID as NO-GO', async () => {
+    const pack = makePack({ workflows: [cleanWorkflow()] })
+    const client = mockClient(async (id) => makeResponse({
+      id,
+      nodes: [{ id: 'n1', name: 'Read Sheet', type: 'n8n-nodes-base.googleSheets', typeVersion: 4, position: [0, 0], parameters: {} }],
+    }))
+    const result = await runPreflight(pack, { live: true, client })
+    expect(result.verdict).toBe('NO-GO')
+    expect(checkFor(result, 'sheets-ids')?.status).toBe('fail')
+    expect(checkFor(result, 'sheets-ids')?.detail).toContain('Read Sheet')
+  })
+
+  it('never renders a bare pass for a non-empty Sheet ID -- the unverified caveat is always present', async () => {
+    const pack = makePack({ workflows: [cleanWorkflow()] })
+    const client = mockClient(async (id) => makeResponse({
+      id,
+      nodes: [{ id: 'n1', name: 'Read Sheet', type: 'n8n-nodes-base.googleSheets', typeVersion: 4, position: [0, 0], parameters: { documentId: { __rl: true, mode: 'id', value: '1BxiMVs0XRA5real' } } }],
+    }))
+    const result = await runPreflight(pack, { live: true, client })
+    const check = checkFor(result, 'sheets-ids')
+    expect(check?.status).toBe('pass')
+    expect(check?.detail).toContain('unverified')
+    expect(check?.detail).toContain('confirm manually')
+  })
+
+  it('passes with no caveat when there are no Google Sheets nodes at all', async () => {
+    const pack = makePack({ workflows: [cleanWorkflow()] })
+    const client = mockClient(async (id) => makeResponse({ id }))
+    const result = await runPreflight(pack, { live: true, client })
+    const check = checkFor(result, 'sheets-ids')
+    expect(check?.status).toBe('pass')
+    expect(check?.detail).toBeUndefined()
+  })
+})
+
+describe('runPreflight — webhook-shaped workflow enumeration (--live only, no rendered check)', () => {
+  it('populates webhookShapedWorkflows without adding a visible check line', async () => {
+    const pack = makePack({ workflows: [cleanWorkflow({ name: 'Has Webhook' })] })
+    const client = mockClient(async (id) => makeResponse({
+      id,
+      nodes: [{ id: 'n1', name: 'Webhook', type: 'n8n-nodes-base.webhook', typeVersion: 1, position: [0, 0], parameters: { path: 'x', httpMethod: 'POST' } }],
+    }))
+    const result = await runPreflight(pack, { live: true, client })
+    expect(result.webhookShapedWorkflows).toEqual(['Has Webhook'])
+    expect(result.checks.some((c) => c.id.includes('webhook'))).toBe(false)
+  })
+
+  it('is undefined when --live was not passed', async () => {
+    const pack = makePack({ workflows: [cleanWorkflow()] })
+    const result = await runPreflight(pack)
+    expect(result.webhookShapedWorkflows).toBeUndefined()
   })
 })

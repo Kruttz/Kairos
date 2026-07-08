@@ -1,5 +1,8 @@
 import type { WorkflowPackResult } from './pack-builder.js'
-import { computeRiskFindings } from './pack-bundle.js'
+import type { N8nWorkflow } from '../types/workflow.js'
+import { computeRiskFindings, fetchWorkflowJson } from './pack-bundle.js'
+import { findSheetNodes } from './pack-wirer.js'
+import { findWebhookTrigger } from '../utils/webhook-verify.js'
 import type { N8nApiClient } from '../providers/n8n/index.js'
 
 export type CheckStatus = 'pass' | 'fail' | 'warn' | 'skip' | 'info'
@@ -19,6 +22,10 @@ export interface PreflightResult {
   businessContext: string
   verdict: PreflightVerdict
   checks: PreflightCheck[]
+  /** Names of workflows found (via --live) to have a webhook trigger -- populated only when
+   * --live was passed; consumed by Phase 3's --bundle-dir test-artifact check, not rendered
+   * as a check of its own here. */
+  webhookShapedWorkflows?: string[]
 }
 
 export interface PreflightOptions {
@@ -43,10 +50,11 @@ const STATUS_ICON: Record<CheckStatus, string> = {
  * rather than naively reporting a pass because pack.workflows happens to be empty. A checklist
  * that silently looks all-green on a pack that was never generated would be actively misleading.
  */
-export async function runPreflight(pack: WorkflowPackResult, _options: PreflightOptions = {}): Promise<PreflightResult> {
+export async function runPreflight(pack: WorkflowPackResult, options: PreflightOptions = {}): Promise<PreflightResult> {
   const checks: PreflightCheck[] = []
   const findings = computeRiskFindings(pack)
   const isEscalated = pack.escalation !== undefined
+  const live = options.live === true && options.client !== undefined
 
   // 1. Escalation
   if (pack.escalation) {
@@ -133,6 +141,77 @@ export async function runPreflight(pack: WorkflowPackResult, _options: Preflight
       : { id: 'credentials-checklist', label: 'Credentials to connect before launch', status: 'info', detail: 'None required' })
   }
 
+  // 8 & 9. Placeholder credential IDs, and a best-effort Google Sheets ID signal -- both need
+  // a live fetch. Fetched once per workflow, shared across both checks (and check 10's webhook
+  // enumeration) rather than re-fetching per check.
+  let webhookShapedWorkflows: string[] | undefined
+  if (isEscalated) {
+    checks.push({ id: 'placeholder-credentials', label: 'No placeholder/unwired credential IDs', status: 'skip', detail: 'N/A -- pack never built' })
+    checks.push({ id: 'sheets-ids', label: 'Google Sheets IDs set', status: 'skip', detail: 'N/A -- pack never built' })
+  } else if (!live) {
+    checks.push({ id: 'placeholder-credentials', label: 'No placeholder/unwired credential IDs', status: 'skip', detail: 'N/A -- needs --live' })
+    checks.push({ id: 'sheets-ids', label: 'Google Sheets IDs set', status: 'skip', detail: 'N/A -- needs --live' })
+  } else {
+    const liveData = await fetchLiveWorkflowData(pack, options.client!)
+
+    const unwiredCreds: string[] = []
+    const credFetchFailures: string[] = []
+    const emptySheetIds: string[] = []
+    const unverifiedSheetIds: string[] = []
+    const sheetFetchFailures: string[] = []
+    const webhookShaped: string[] = []
+
+    for (const [name, data] of liveData) {
+      if (data.fetchError) {
+        credFetchFailures.push(`${name} (${data.fetchError})`)
+        sheetFetchFailures.push(`${name} (${data.fetchError})`)
+        continue
+      }
+      if (!data.workflow) continue // not deployed -- already covered by the undeployed-workflows check
+
+      for (const node of data.workflow.nodes) {
+        if (!node.credentials) continue
+        for (const [credType, ref] of Object.entries(node.credentials)) {
+          if (!ref.id || ref.id === 'placeholder-id') {
+            unwiredCreds.push(`${name} → "${node.name}" (${credType})`)
+          }
+        }
+      }
+
+      for (const sheetNode of findSheetNodes(data.workflow)) {
+        if (!sheetNode.currentDocId) emptySheetIds.push(`${name} → "${sheetNode.nodeName}"`)
+        else unverifiedSheetIds.push(`${name} → "${sheetNode.nodeName}"`)
+      }
+
+      if (findWebhookTrigger(data.workflow)) webhookShaped.push(name)
+    }
+
+    if (unwiredCreds.length > 0) {
+      const suffix = credFetchFailures.length > 0 ? ` | Could not verify: ${credFetchFailures.join('; ')}` : ''
+      checks.push({ id: 'placeholder-credentials', label: 'No placeholder/unwired credential IDs', status: 'fail', detail: `Unwired: ${unwiredCreds.join('; ')}${suffix}` })
+    } else if (credFetchFailures.length > 0) {
+      checks.push({ id: 'placeholder-credentials', label: 'No placeholder/unwired credential IDs', status: 'warn', detail: `Could not verify: ${credFetchFailures.join('; ')}` })
+    } else {
+      checks.push({ id: 'placeholder-credentials', label: 'No placeholder/unwired credential IDs', status: 'pass' })
+    }
+
+    // The Sheets check must never render a bare pass when it found real values to (not fully)
+    // verify -- there's no placeholder-literal convention for Sheet IDs the way there is for
+    // credentials, so a non-empty value is only ever "not obviously wrong," never confirmed.
+    if (emptySheetIds.length > 0) {
+      const suffix = sheetFetchFailures.length > 0 ? ` | Could not verify: ${sheetFetchFailures.join('; ')}` : ''
+      checks.push({ id: 'sheets-ids', label: 'Google Sheets IDs set', status: 'fail', detail: `Not set: ${emptySheetIds.join('; ')}${suffix}` })
+    } else if (unverifiedSheetIds.length > 0) {
+      checks.push({ id: 'sheets-ids', label: 'Google Sheets IDs set', status: 'pass', detail: `${unverifiedSheetIds.length} Sheet ID(s) present but unverified -- no placeholder marker exists for this field, confirm manually: ${unverifiedSheetIds.join('; ')}` })
+    } else if (sheetFetchFailures.length > 0) {
+      checks.push({ id: 'sheets-ids', label: 'Google Sheets IDs set', status: 'warn', detail: `Could not verify: ${sheetFetchFailures.join('; ')}` })
+    } else {
+      checks.push({ id: 'sheets-ids', label: 'Google Sheets IDs set', status: 'pass' })
+    }
+
+    webhookShapedWorkflows = webhookShaped
+  }
+
   const verdict = computeVerdict(checks, isEscalated)
 
   return {
@@ -140,7 +219,31 @@ export async function runPreflight(pack: WorkflowPackResult, _options: Preflight
     businessContext: pack.businessContext,
     verdict,
     checks,
+    ...(webhookShapedWorkflows !== undefined ? { webhookShapedWorkflows } : {}),
   }
+}
+
+interface LiveWorkflowData {
+  /** null when the workflow was never deployed (no workflowId) or its live fetch failed. */
+  workflow: N8nWorkflow | null
+  /** Set only when there WAS a workflowId but the fetch itself failed (n8n unreachable,
+   * workflow deleted) -- distinct from "never deployed," which isn't a fetch failure. */
+  fetchError: string | null
+}
+
+/** Fetches each deployed workflow's current n8n state once, shared across every --live check
+ * (placeholder credentials, Sheets IDs, webhook enumeration) rather than re-fetching per check. */
+async function fetchLiveWorkflowData(pack: WorkflowPackResult, client: N8nApiClient): Promise<Map<string, LiveWorkflowData>> {
+  const result = new Map<string, LiveWorkflowData>()
+  for (const wf of pack.workflows) {
+    if (!wf.workflowId) {
+      result.set(wf.name, { workflow: null, fetchError: null })
+      continue
+    }
+    const workflow = await fetchWorkflowJson(wf.workflowId, client)
+    result.set(wf.name, { workflow, fetchError: workflow ? null : `could not fetch workflow ${wf.workflowId} from n8n` })
+  }
+  return result
 }
 
 function computeVerdict(checks: PreflightCheck[], isEscalated: boolean): PreflightVerdict {

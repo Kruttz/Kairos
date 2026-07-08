@@ -4,6 +4,17 @@ All notable changes to `@kairos-sdk/core` are documented here. Format loosely fo
 
 ## [Unreleased]
 
+### New: `kairos preflight <pack> --live` (Phase 2 — live n8n checks)
+Adds the two checks that genuinely need a live n8n fetch, on top of Phase 1's offline checklist: placeholder/unwired credential IDs, and a best-effort Google Sheets ID signal. Also quietly enumerates webhook-shaped workflows for Phase 3's `--bundle-dir` cross-reference (stored on `PreflightResult.webhookShapedWorkflows`, not rendered as a check of its own yet).
+
+**Placeholder credentials**: Kairos's generation prompt tells Claude to write the literal string `"placeholder-id"` for every credential reference — confirmed via direct source inspection, never checked anywhere at runtime before this. `--live` fetches each workflow (reusing `fetchWorkflowJson()` from the Delivery Bundle, no new n8n API surface needed) and scans every node's `credentials` map for that literal, **or an empty/missing `id`** — broadened from the original plan after a mid-implementation refinement: a credential slot with `id: ''` or no `id` at all is just as unwired as the literal placeholder, and costs nothing extra to also catch.
+
+**Google Sheets IDs**: reuses `findSheetNodes()`/`extractSheetDocumentId()` (already exported from `pack-wirer.ts`, previously computed there but never used for any decision). Unlike credentials, there's no placeholder-literal convention for Sheet document IDs, confirmed by direct research — so an empty value is confidently flagged, but a non-empty value renders as a pass **that always carries an explicit "unverified, confirm manually" caveat** rather than a bare checkmark. Overclaiming certainty here would be worse than the honest alternative.
+
+One workflow's live-fetch failure degrades that workflow's live checks to a `warn` ("could not verify"), never aborts the rest of the pack's checklist — same graceful-degradation contract as every Delivery Bundle live-fetch function. `--live` requires `N8N_BASE_URL`/`N8N_API_KEY`, fails fast with a clear message if missing.
+
+Tests: 10 new unit tests (skip-without-`--live` behavior, placeholder-string detection, empty/missing-id detection, real-id pass case, per-workflow fetch-failure degradation, empty vs. non-empty vs. no-sheet-nodes Sheets rendering, webhook enumeration presence/absence) + 2 CLI tests (a real mock-n8n-server run flagging a placeholder credential end-to-end, missing-env-vars exit code). 1139/1139 passing overall. Typecheck/lint clean.
+
 ### New: `kairos preflight <pack>` (Phase 1 — offline checks)
 The next operational-safety command after the Delivery Bundle, converged on after two rounds of second-opinion review: stop adding generator features, build one small go/no-go gate, then go use it on a real client engagement.
 
