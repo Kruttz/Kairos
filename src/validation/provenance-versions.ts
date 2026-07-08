@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { VALIDATOR_RULE_IDS } from './rule-metadata.js'
 import { SYSTEM_PROMPT_V1 } from '../generation/prompts/v1.js'
 import { NODE_CATALOG_SOURCE_VERSIONS } from './node-catalog-generated.js'
+import { resolveProfile, type PromptProfile } from '../generation/prompt-builder.js'
 
 function shortHash(content: string): string {
   return createHash('sha256').update(content).digest('hex').slice(0, 12)
@@ -25,12 +26,29 @@ export function getRuleSetVersion(): string {
 }
 
 /**
- * Content-derived prompt identifier: a hash of the actual system prompt string used for
- * generation. Always in sync by construction -- there's no separate "remember to bump this"
- * step, since it's computed from the exact live constant the designer sends to the model.
+ * Content-derived hash of the STATIC BASE system prompt template (SYSTEM_PROMPT_V1) only --
+ * NOT a hash of what was actually sent to the model for any given build. PromptBuilder.build()
+ * (src/generation/prompt-builder.ts) assembles the real prompt dynamically per request: the
+ * node catalog gets substituted in, and reference-workflow/pattern/memory/failure-rate blocks
+ * get appended depending on the match mode and prompt profile. Hashing that full assembled
+ * result would vary per build by design (different descriptions match different library
+ * workflows) rather than tracking a stable "version" of anything -- so this intentionally
+ * stays scoped to the one part that IS a fixed, versionable artifact: the base template
+ * string. Always in sync with that base template by construction (hashes the live constant,
+ * never a manually bumped label). See getPromptProfile() for the other input that
+ * deterministically affects prompt assembly and is cheap to record exactly.
  */
-export function getPromptVersion(): string {
+export function getPromptTemplateVersion(): string {
   return shortHash(SYSTEM_PROMPT_V1)
+}
+
+/**
+ * Which KAIROS_PROMPT_PROFILE ('minimal' | 'standard' | 'rich') shaped this build's prompt
+ * assembly -- recorded alongside getPromptTemplateVersion() since profile is a real, coarse
+ * input to what actually got sent, distinct from (and not captured by) the base-template hash.
+ */
+export function getPromptProfile(): PromptProfile {
+  return resolveProfile()
 }
 
 /**

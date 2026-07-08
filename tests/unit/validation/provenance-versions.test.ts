@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { getRuleSetVersion, getPromptVersion, getNodeCatalogVersion, getKairosVersion } from '../../../src/validation/provenance-versions.js'
+import { getRuleSetVersion, getPromptTemplateVersion, getPromptProfile, getNodeCatalogVersion, getKairosVersion } from '../../../src/validation/provenance-versions.js'
 import { VALIDATOR_RULE_IDS } from '../../../src/validation/rule-metadata.js'
 
 describe('provenance-versions', () => {
@@ -18,14 +18,27 @@ describe('provenance-versions', () => {
     expect(simulated).not.toBe(real)
   })
 
-  it('getPromptVersion is deterministic and non-empty', () => {
-    const v = getPromptVersion()
-    expect(v).toBe(getPromptVersion())
+  it('getPromptTemplateVersion is deterministic and non-empty', () => {
+    const v = getPromptTemplateVersion()
+    expect(v).toBe(getPromptTemplateVersion())
     expect(v.length).toBeGreaterThan(0)
   })
 
-  it('getRuleSetVersion and getPromptVersion produce different values (not accidentally the same hash)', () => {
-    expect(getRuleSetVersion()).not.toBe(getPromptVersion())
+  it('getRuleSetVersion and getPromptTemplateVersion produce different values (not accidentally the same hash)', () => {
+    expect(getRuleSetVersion()).not.toBe(getPromptTemplateVersion())
+  })
+
+  it('getPromptProfile returns the profile actually resolved from KAIROS_PROMPT_PROFILE (defaults to standard)', () => {
+    const original = process.env['KAIROS_PROMPT_PROFILE']
+    try {
+      delete process.env['KAIROS_PROMPT_PROFILE']
+      expect(getPromptProfile()).toBe('standard')
+      process.env['KAIROS_PROMPT_PROFILE'] = 'rich'
+      expect(getPromptProfile()).toBe('rich')
+    } finally {
+      if (original === undefined) delete process.env['KAIROS_PROMPT_PROFILE']
+      else process.env['KAIROS_PROMPT_PROFILE'] = original
+    }
   })
 
   it('getNodeCatalogVersion returns the real pinned source package versions', () => {

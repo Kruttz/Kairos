@@ -3,7 +3,7 @@ import { Kairos } from '../../src/client.js'
 import { N8nProvider } from '../../src/providers/n8n/provider.js'
 import { WorkflowDesigner } from '../../src/generation/designer.js'
 import { computeWorkflowHash } from '../../src/utils/workflow-hash.js'
-import { getRuleSetVersion, getPromptVersion, getNodeCatalogVersion, getKairosVersion } from '../../src/validation/provenance-versions.js'
+import { getRuleSetVersion, getPromptTemplateVersion, getPromptProfile, getNodeCatalogVersion, getKairosVersion } from '../../src/validation/provenance-versions.js'
 import type { DesignResult } from '../../src/generation/types.js'
 
 function canned(temperature = 0.3): DesignResult {
@@ -54,7 +54,8 @@ describe('BuildResult.provenance plumbing', () => {
     expect(result.provenance?.runId.length).toBeGreaterThan(0)
     expect(result.provenance?.kairosVersion).toBe(getKairosVersion())
     expect(result.provenance?.ruleSetVersion).toBe(getRuleSetVersion())
-    expect(result.provenance?.promptVersion).toBe(getPromptVersion())
+    expect(result.provenance?.promptTemplateVersion).toBe(getPromptTemplateVersion())
+    expect(result.provenance?.promptProfile).toBe(getPromptProfile())
     expect(result.provenance?.nodeCatalogVersion).toEqual(getNodeCatalogVersion())
     expect(result.provenance?.workflowHash).toBe(computeWorkflowHash(result.workflow))
   })

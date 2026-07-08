@@ -427,16 +427,16 @@ describe('runPreflight — bundle manifest freshness (Phase 3)', () => {
     const { mkdtemp, rm, writeFile } = await import('node:fs/promises')
     const { tmpdir } = await import('node:os')
     const { join } = await import('node:path')
-    const { getRuleSetVersion, getPromptVersion, getNodeCatalogVersion, getKairosVersion } = await import('../../../src/validation/provenance-versions.js')
+    const { getRuleSetVersion, getPromptTemplateVersion, getPromptProfile, getNodeCatalogVersion, getKairosVersion } = await import('../../../src/validation/provenance-versions.js')
     const dir = await mkdtemp(join(tmpdir(), 'kairos-preflight-same-provenance-'))
     try {
       await writeFile(join(dir, 'bundle-manifest.json'), JSON.stringify({
         generatedAt: '2026-07-08T20:35:59.000Z', packName: 'empire-homecare', files: [], skipped: [],
-        provenance: { kairosVersion: getKairosVersion(), ruleSetVersion: getRuleSetVersion(), promptVersion: getPromptVersion(), nodeCatalogVersion: getNodeCatalogVersion() },
+        provenance: { kairosVersion: getKairosVersion(), ruleSetVersion: getRuleSetVersion(), promptTemplateVersion: getPromptTemplateVersion(), promptProfile: getPromptProfile(), nodeCatalogVersion: getNodeCatalogVersion() },
       }))
       const pack = makePack({ workflows: [cleanWorkflow()] })
       const result = await runPreflight(pack, { bundleDir: dir })
-      expect(checkFor(result, 'bundle-manifest')?.detail).toContain('same Kairos version/rule-set/prompt/catalog as current')
+      expect(checkFor(result, 'bundle-manifest')?.detail).toContain('same Kairos version/rule-set/prompt-template/prompt-profile/catalog as current')
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
@@ -450,11 +450,11 @@ describe('runPreflight — bundle manifest freshness (Phase 3)', () => {
     try {
       await writeFile(join(dir, 'bundle-manifest.json'), JSON.stringify({
         generatedAt: '2026-07-08T20:35:59.000Z', packName: 'empire-homecare', files: [], skipped: [],
-        provenance: { kairosVersion: 'stale-version', ruleSetVersion: 'stale-version', promptVersion: 'stale-version', nodeCatalogVersion: {} },
+        provenance: { kairosVersion: 'stale-version', ruleSetVersion: 'stale-version', promptTemplateVersion: 'stale-version', promptProfile: 'standard', nodeCatalogVersion: {} },
       }))
       const pack = makePack({ workflows: [cleanWorkflow()] })
       const result = await runPreflight(pack, { bundleDir: dir })
-      expect(checkFor(result, 'bundle-manifest')?.detail).toContain('different Kairos version/rule-set/prompt/catalog than current')
+      expect(checkFor(result, 'bundle-manifest')?.detail).toContain('different Kairos version/rule-set/prompt-template/prompt-profile/catalog than current')
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
@@ -463,11 +463,12 @@ describe('runPreflight — bundle manifest freshness (Phase 3)', () => {
 
 describe('runPreflight — provenance stamp', () => {
   it('always includes real content-derived provenance, regardless of --live/--bundle-dir', async () => {
-    const { getRuleSetVersion, getPromptVersion, getNodeCatalogVersion } = await import('../../../src/validation/provenance-versions.js')
+    const { getRuleSetVersion, getPromptTemplateVersion, getPromptProfile, getNodeCatalogVersion } = await import('../../../src/validation/provenance-versions.js')
     const pack = makePack({ workflows: [cleanWorkflow()] })
     const result = await runPreflight(pack)
     expect(result.provenance.ruleSetVersion).toBe(getRuleSetVersion())
-    expect(result.provenance.promptVersion).toBe(getPromptVersion())
+    expect(result.provenance.promptTemplateVersion).toBe(getPromptTemplateVersion())
+    expect(result.provenance.promptProfile).toBe(getPromptProfile())
     expect(result.provenance.nodeCatalogVersion).toEqual(getNodeCatalogVersion())
   })
 })

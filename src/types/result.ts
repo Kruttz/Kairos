@@ -9,9 +9,9 @@ export interface CredentialRequirement {
  * under today's rules/catalog/prompt, or an older set?" and "what model/settings produced
  * it?" without any diffing, history, or rollback mechanic. See
  * src/validation/provenance-versions.ts and src/utils/workflow-hash.ts for how each field is
- * derived; ruleSetVersion and promptVersion are content-derived hashes (never a manually
- * bumped constant), nodeCatalogVersion is the exact pinned source-package versions the
- * catalog was generated from.
+ * derived; ruleSetVersion and promptTemplateVersion are content-derived hashes (never a
+ * manually bumped constant), nodeCatalogVersion is the exact pinned source-package versions
+ * the catalog was generated from.
  */
 export interface BuildProvenance {
   /** The published @kairos-sdk/core version that produced this build. */
@@ -24,7 +24,15 @@ export interface BuildProvenance {
   temperature: number | null
   runId: string
   ruleSetVersion: string
-  promptVersion: string
+  /** Hash of the static base system prompt template ONLY -- not the actual per-request
+   * assembled prompt (which varies with the node catalog, matched library workflows,
+   * patterns, and profile). See getPromptTemplateVersion() in provenance-versions.ts for why
+   * that scope is deliberate, not an oversight. */
+  promptTemplateVersion: string
+  /** Which KAIROS_PROMPT_PROFILE ('minimal'/'standard'/'rich') shaped this build's prompt
+   * assembly -- the other real input to what was actually sent, recorded alongside the
+   * base-template hash above since it isn't captured by that hash. */
+  promptProfile: string
   nodeCatalogVersion: Record<string, string>
   /** Deterministic hash of the built workflow's nodes/connections/settings -- see
    * src/utils/workflow-hash.ts. Always computable, including for dry-run builds, since it

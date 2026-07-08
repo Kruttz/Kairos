@@ -7,7 +7,7 @@ import type { N8nApiClient } from '../../../src/providers/n8n/index.js'
 import type { N8nWorkflowResponse } from '../../../src/providers/n8n/types.js'
 import type { WorkflowPackResult } from '../../../src/pack/pack-builder.js'
 import { computeWorkflowHash } from '../../../src/utils/workflow-hash.js'
-import { getRuleSetVersion, getPromptVersion, getNodeCatalogVersion, getKairosVersion } from '../../../src/validation/provenance-versions.js'
+import { getRuleSetVersion, getPromptTemplateVersion, getPromptProfile, getNodeCatalogVersion, getKairosVersion } from '../../../src/validation/provenance-versions.js'
 
 function makePack(overrides: Partial<WorkflowPackResult> = {}): WorkflowPackResult {
   return {
@@ -540,7 +540,8 @@ describe('writeBundle', () => {
     expect(manifest.provenance).toBeDefined()
     expect(manifest.provenance?.kairosVersion).toBe(getKairosVersion())
     expect(manifest.provenance?.ruleSetVersion).toBe(getRuleSetVersion())
-    expect(manifest.provenance?.promptVersion).toBe(getPromptVersion())
+    expect(manifest.provenance?.promptTemplateVersion).toBe(getPromptTemplateVersion())
+    expect(manifest.provenance?.promptProfile).toBe(getPromptProfile())
     expect(manifest.provenance?.nodeCatalogVersion).toEqual(getNodeCatalogVersion())
   })
 

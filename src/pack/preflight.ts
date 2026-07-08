@@ -6,7 +6,7 @@ import { computeRiskFindings, fetchWorkflowJson, slugifyWorkflowName, type Bundl
 import { findSheetNodes } from './pack-wirer.js'
 import { findWebhookTrigger } from '../utils/webhook-verify.js'
 import type { N8nApiClient } from '../providers/n8n/index.js'
-import { getRuleSetVersion, getPromptVersion, getNodeCatalogVersion, getKairosVersion } from '../validation/provenance-versions.js'
+import { getRuleSetVersion, getPromptTemplateVersion, getPromptProfile, getNodeCatalogVersion, getKairosVersion } from '../validation/provenance-versions.js'
 
 export type CheckStatus = 'pass' | 'fail' | 'warn' | 'skip' | 'info'
 
@@ -66,7 +66,8 @@ export async function runPreflight(pack: WorkflowPackResult, options: PreflightO
   const provenance: BundleProvenance = {
     kairosVersion: getKairosVersion(),
     ruleSetVersion: getRuleSetVersion(),
-    promptVersion: getPromptVersion(),
+    promptTemplateVersion: getPromptTemplateVersion(),
+    promptProfile: getPromptProfile(),
     nodeCatalogVersion: getNodeCatalogVersion(),
   }
 
@@ -274,10 +275,11 @@ export async function runPreflight(pack: WorkflowPackResult, options: PreflightO
         ? ' Bundle predates provenance tracking -- cannot compare against current rules/catalog/prompt.'
         : manifest.provenance.kairosVersion === provenance.kairosVersion
           && manifest.provenance.ruleSetVersion === provenance.ruleSetVersion
-          && manifest.provenance.promptVersion === provenance.promptVersion
+          && manifest.provenance.promptTemplateVersion === provenance.promptTemplateVersion
+          && manifest.provenance.promptProfile === provenance.promptProfile
           && JSON.stringify(manifest.provenance.nodeCatalogVersion) === JSON.stringify(provenance.nodeCatalogVersion)
-          ? ' Bundle was generated under the same Kairos version/rule-set/prompt/catalog as current.'
-          : ' Bundle was generated under a different Kairos version/rule-set/prompt/catalog than current -- re-exporting may pick up different behavior.'
+          ? ' Bundle was generated under the same Kairos version/rule-set/prompt-template/prompt-profile/catalog as current.'
+          : ' Bundle was generated under a different Kairos version/rule-set/prompt-template/prompt-profile/catalog than current -- re-exporting may pick up different behavior.'
       checks.push({ id: 'bundle-manifest', label: 'Bundle manifest', status: 'info', detail: `Last generated: ${manifest.generatedAt}.${skipSummary}${provenanceSummary}` })
     } catch (err) {
       checks.push({ id: 'bundle-manifest', label: 'Bundle manifest', status: 'warn', detail: `Could not read bundle-manifest.json at ${options.bundleDir}: ${err instanceof Error ? err.message : String(err)}` })

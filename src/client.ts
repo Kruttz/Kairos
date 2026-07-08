@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import type { N8nWorkflow, Tag } from './types/workflow.js'
 import type { BuildResult, BuildProvenance, WorkflowListItem, ExecutionSummary, ExecutionDetail, SmokeTestResult, CredentialRequirement } from './types/result.js'
 import { computeWorkflowHash } from './utils/workflow-hash.js'
-import { getRuleSetVersion, getPromptVersion, getNodeCatalogVersion, getKairosVersion } from './validation/provenance-versions.js'
+import { getRuleSetVersion, getPromptTemplateVersion, getPromptProfile, getNodeCatalogVersion, getKairosVersion } from './validation/provenance-versions.js'
 import type { ClientOptions, BuildOptions, DeleteOptions, ExecutionFilter } from './types/options.js'
 import type { IWorkflowLibrary, WorkflowMatch, WorkflowMetadataInput } from './library/types.js'
 import { NullLibrary } from './library/null-library.js'
@@ -115,7 +115,8 @@ export class Kairos {
       temperature: designResult.attemptMetadata.at(-1)?.temperature ?? null,
       runId,
       ruleSetVersion: getRuleSetVersion(),
-      promptVersion: getPromptVersion(),
+      promptTemplateVersion: getPromptTemplateVersion(),
+      promptProfile: getPromptProfile(),
       nodeCatalogVersion: getNodeCatalogVersion(),
       workflowHash: computeWorkflowHash(workflow),
     }

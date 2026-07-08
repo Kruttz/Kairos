@@ -13,9 +13,15 @@ import { classifyIntent, formatIntentRequirements } from '../library/intent-map.
 
 const CRITICAL_SCORE_THRESHOLD = 0.15
 
-type PromptProfile = 'minimal' | 'standard' | 'rich'
+export type PromptProfile = 'minimal' | 'standard' | 'rich'
 
-function resolveProfile(): PromptProfile {
+/**
+ * Exported so provenance-versions.ts can record which profile actually shaped a given build's
+ * prompt (KAIROS_PROMPT_PROFILE isn't itself part of any hash -- it directly gates how much of
+ * the prompt gets assembled, from reference workflows to pattern guidance, so it's recorded
+ * alongside the base-template hash rather than folded into it).
+ */
+export function resolveProfile(): PromptProfile {
   const env = process.env['KAIROS_PROMPT_PROFILE']
   if (env === 'minimal' || env === 'standard' || env === 'rich') return env
   return 'standard'

@@ -9,7 +9,7 @@ import { parseExecutionTrace, getSlowestNodes } from '../telemetry/execution-tra
 import { generateTestPayload, generateOpenApiContract } from './webhook-schema.js'
 import { generateHandoff } from './pack-exporter.js'
 import { computeWorkflowHash } from '../utils/workflow-hash.js'
-import { getRuleSetVersion, getPromptVersion, getNodeCatalogVersion, getKairosVersion } from '../validation/provenance-versions.js'
+import { getRuleSetVersion, getPromptTemplateVersion, getPromptProfile, getNodeCatalogVersion, getKairosVersion } from '../validation/provenance-versions.js'
 
 export function slugifyWorkflowName(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'workflow'
@@ -450,7 +450,11 @@ export async function writeOpenApiFiles(
 export interface BundleProvenance {
   kairosVersion: string
   ruleSetVersion: string
-  promptVersion: string
+  /** Hash of the static base system prompt template only -- see
+   * getPromptTemplateVersion() in provenance-versions.ts for why. */
+  promptTemplateVersion: string
+  /** Which KAIROS_PROMPT_PROFILE was active at export time. */
+  promptProfile: string
   nodeCatalogVersion: Record<string, string>
 }
 
@@ -481,7 +485,8 @@ export async function writeBundle(pack: WorkflowPackResult, client: N8nApiClient
     provenance: {
       kairosVersion: getKairosVersion(),
       ruleSetVersion: getRuleSetVersion(),
-      promptVersion: getPromptVersion(),
+      promptTemplateVersion: getPromptTemplateVersion(),
+      promptProfile: getPromptProfile(),
       nodeCatalogVersion: getNodeCatalogVersion(),
     },
   }
