@@ -4,6 +4,8 @@ All notable changes to `@kairos-sdk/core` are documented here. Format loosely fo
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-07
+
 ### New: `kairos pack export <pack> --impact-notes` (Phase 4 — client diagnostic worksheet)
 A static, fill-in-the-blank Markdown worksheet for a human to complete during a client diagnostic call — not generated from any pack data. Seven fixed fields: current manual process, time spent weekly, error/failure points, revenue leakage, before/after metric, human owner, follow-up date.
 
