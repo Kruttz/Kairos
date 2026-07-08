@@ -161,6 +161,19 @@ export function generateHandoff(pack: WorkflowPackResult): string {
   lines.push(`- Update Google Sheets data as business information changes`)
   lines.push(`- Rotate API credentials before expiration (n8n Settings → Credentials)`)
   lines.push(`- Run \`kairos validate-pack <name>\` before activating after any changes`)
+  line()
+
+  // Backup & restore expectations -- correcting a "rollback" framing this project has
+  // deliberately never used in code, but a client reading a timestamped workflow.json export
+  // could reasonably assume otherwise without this being stated explicitly.
+  lines.push(`## About the Exported workflow.json Files`)
+  line()
+  lines.push(
+    `The \`workflow.json\` file exported per workflow (via \`kairos pack export --bundle\`) is a **restore candidate**, ` +
+    `not a one-command rollback. Redeploying it can still depend on credentials being reconnected, webhooks being ` +
+    `re-registered with n8n, and the target n8n instance/version matching what this workflow was built against — ` +
+    `none of which the JSON file alone captures or restores automatically.`
+  )
 
   return lines.join('\n')
 }

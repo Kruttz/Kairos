@@ -4,6 +4,20 @@ All notable changes to `@kairos-sdk/core` are documented here. Format loosely fo
 
 ## [Unreleased]
 
+### Fixed: Step 5 provenance closure pass (Codex review)
+An independent review of the provenance tuple above found real gaps before it shipped. All addressed in one closure pass, 7 commits:
+
+- **The biggest one: `BuildResult.provenance` was silently discarded at the pack-builder boundary.** `pack-builder.ts`'s build loop only ever copied `workflowId`/`deployed`/`generationAttempts`/`credentialsNeeded`/`finalIssues` from each `Kairos.build()` result onto `PackWorkflowResult` -- provenance never reached `PackWorkflowResult`, `WorkflowPackResult`, or (transitively) `BundleManifest`. Added `PackWorkflowResult.provenance?: BuildProvenance`, copied through.
+- **Bundle-manifest per-workflow hash only ever answered "what does this look like now," never "what did Kairos build."** Renamed the ambiguous `workflowHash` to `liveExportHash` (fresh live-fetch, unchanged behavior) and added `originalBuildHash` (from the now-preserved `PackWorkflowResult.provenance.workflowHash`) alongside it -- both raw values recorded, comparing them (build-vs-live drift) is left to the consumer, not auto-classified.
+- **No way to tell which Kairos release produced a build/bundle.** Added `getKairosVersion()`, reading the nearest `package.json` by walking up parent directories rather than a fixed number of `../` segments -- this file's depth under `src/` doesn't match its depth under the flat `dist/` tsup produces, so the fixed-depth pattern `mcp-server.ts` already uses wasn't safe to copy here.
+- **`computeWorkflowHash()` had no algorithm/schema version.** A future change to the canonicalization logic would have been silently indistinguishable from a real workflow change. Every hash now carries a `w1:` schema-version prefix, bumped whenever the algorithm itself changes.
+- **`promptVersion` only ever hashed the static base template, not what was actually sent.** `PromptBuilder.buildSystem()` dynamically assembles the real per-request prompt (node catalog substituted in, reference/pattern/memory blocks appended per profile) -- hashing that would produce a per-build fingerprint, not a stable version. Renamed to `promptTemplateVersion` with an honest doc comment, and added a separate `promptProfile` field (which `KAIROS_PROMPT_PROFILE` value shaped this build) as the other real, cheaply-recorded input the base-template hash alone can't capture.
+- **Activation provenance was never implemented**, despite being listed in the original plan. Explicitly moved to Step 6's `workflow_activated` ledger event instead of leaving it silently unaddressed (`docs/plans/hardening-and-chaining-plan.md`).
+- **Separate hygiene fix, its own no-behavior-change commit:** `pack-bundle.ts` contained a literal NUL byte inside a Map-key template string (harmless at runtime, but made `grep`/`file` treat the whole source file as binary) -- replaced with a real space.
+- **The "restore candidate, not rollback" documentation gap**, called out in the original Step 5 plan but not yet written: `handoff.md` now explicitly states that an exported `workflow.json` is a restore candidate, not a one-command rollback -- redeploying it can still need credentials reconnected, webhooks re-registered, and a matching n8n version, none of which the JSON alone restores.
+
+Tests: ~55 new/updated across nine files, including build-vs-live drift tests using real computed hashes (not placeholder strings) for both the no-drift and drift-detected cases, and a mixed-pack test (one workflow with recorded provenance, one without). 1218/1218 passing overall. Typecheck/lint clean.
+
 ### New: provenance tuple across BuildResult, bundle manifests, and preflight
 Answers "what was actually true when this was built/exported" without any diffing, history, or rollback mechanic -- purely additive data, no new checks fail because of it.
 

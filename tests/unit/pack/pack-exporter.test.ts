@@ -126,6 +126,14 @@ describe('generateHandoff()', () => {
     expect(md).toContain('validate-pack')
   })
 
+  it('describes exported workflow.json files as a restore candidate, not a rollback', () => {
+    const md = generateHandoff(makePack())
+    expect(md).toContain('restore candidate')
+    expect(md).toContain('not a one-command rollback')
+    expect(md).toContain('credentials being reconnected')
+    expect(md).toContain('webhooks being')
+  })
+
   it('does not include activation checklist when no workflows deployed', () => {
     const pack = makePack({
       workflows: [{
