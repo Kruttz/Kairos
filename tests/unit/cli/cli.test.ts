@@ -539,6 +539,70 @@ describe('CLI — parseArgs / routing', () => {
     })
   })
 
+  describe('preflight', () => {
+    it('exits 0 with a GO verdict for a clean pack, no n8n required', async () => {
+      const fakeHome = await mkdtemp(join(tmpdir(), 'kairos-cli-preflight-'))
+      try {
+        const { mkdir, writeFile } = await import('node:fs/promises')
+        const packsDir = join(fakeHome, '.kairos', 'packs')
+        await mkdir(packsDir, { recursive: true })
+        await writeFile(join(packsDir, 'test-pack.json'), JSON.stringify({
+          businessContext: 'Empire Homecare', packName: 'test-pack', status: 'ready_for_test',
+          workflows: [{ name: 'Clean', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1, credentialsNeeded: [], finalIssues: [] }],
+          allCredentials: [], sheetsColumns: [], assumptions: [], testChecklist: [], builtAt: '2026-01-01T00:00:00.000Z',
+        }))
+
+        const r = run(['preflight', 'test-pack'], { HOME: fakeHome })
+        expect(r.status).toBe(0)
+        expect(r.stdout).toContain('# Empire Homecare — Preflight')
+        expect(r.stdout).toContain('**Verdict: GO**')
+      } finally {
+        await rm(fakeHome, { recursive: true, force: true })
+      }
+    })
+
+    it('exits 1 with a NO-GO verdict when an error-severity issue exists', async () => {
+      const fakeHome = await mkdtemp(join(tmpdir(), 'kairos-cli-preflight-nogo-'))
+      try {
+        const { mkdir, writeFile } = await import('node:fs/promises')
+        const packsDir = join(fakeHome, '.kairos', 'packs')
+        await mkdir(packsDir, { recursive: true })
+        await writeFile(join(packsDir, 'test-pack.json'), JSON.stringify({
+          businessContext: 'Empire Homecare', packName: 'test-pack', status: 'needs_attention',
+          workflows: [{ name: 'Broken', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1, credentialsNeeded: [], finalIssues: [{ rule: 17, severity: 'error', message: 'Bad credential shape' }] }],
+          allCredentials: [], sheetsColumns: [], assumptions: [], testChecklist: [], builtAt: '2026-01-01T00:00:00.000Z',
+        }))
+
+        const r = run(['preflight', 'test-pack'], { HOME: fakeHome })
+        expect(r.status).toBe(1)
+        expect(r.stdout).toContain('**Verdict: NO-GO**')
+      } finally {
+        await rm(fakeHome, { recursive: true, force: true })
+      }
+    })
+
+    it('--json prints structured output', async () => {
+      const fakeHome = await mkdtemp(join(tmpdir(), 'kairos-cli-preflight-json-'))
+      try {
+        const { mkdir, writeFile } = await import('node:fs/promises')
+        const packsDir = join(fakeHome, '.kairos', 'packs')
+        await mkdir(packsDir, { recursive: true })
+        await writeFile(join(packsDir, 'test-pack.json'), JSON.stringify({
+          businessContext: 'Empire Homecare', packName: 'test-pack', status: 'ready_for_test',
+          workflows: [], allCredentials: [], sheetsColumns: [], assumptions: [], testChecklist: [], builtAt: '2026-01-01T00:00:00.000Z',
+        }))
+
+        const r = run(['preflight', 'test-pack', '--json'], { HOME: fakeHome })
+        expect(r.status).toBe(0)
+        const parsed = JSON.parse(r.stdout)
+        expect(parsed.verdict).toBe('GO')
+        expect(Array.isArray(parsed.checks)).toBe(true)
+      } finally {
+        await rm(fakeHome, { recursive: true, force: true })
+      }
+    })
+  })
+
   describe('pack export --risk-report', () => {
     it('prints a risk report combining pack-structural and per-workflow issues, no n8n required', async () => {
       const fakeHome = await mkdtemp(join(tmpdir(), 'kairos-cli-pack-risk-'))

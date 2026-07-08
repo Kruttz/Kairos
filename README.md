@@ -807,6 +807,13 @@ kairos pack wire my-pack --sheet-ids ./sheet-ids.json --dry-run
 # deploys, and schedule conflicts before activating it
 kairos validate-pack my-pack
 
+# Go/no-go launch checklist -- offline by default (saved pack JSON only, no n8n
+# required); exits 0 for GO/GO WITH WARNINGS, 1 for NO-GO/BLOCKED, so it's
+# scriptable as a real gate. Pass --live to also check live n8n state.
+kairos preflight my-pack
+kairos preflight my-pack --live
+kairos preflight my-pack --json
+
 # Print the saved pack as JSON, or generate a client-ready Markdown handoff
 # (status, blocking issues, credentials needed, setup/testing/activation checklists)
 kairos pack export my-pack

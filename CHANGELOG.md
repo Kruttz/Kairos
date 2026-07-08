@@ -4,6 +4,23 @@ All notable changes to `@kairos-sdk/core` are documented here. Format loosely fo
 
 ## [Unreleased]
 
+### New: `kairos preflight <pack>` (Phase 1 — offline checks)
+The next operational-safety command after the Delivery Bundle, converged on after two rounds of second-opinion review: stop adding generator features, build one small go/no-go gate, then go use it on a real client engagement.
+
+`generateRiskReport()` (Delivery Bundle Phase 3) already answers "did Kairos generate this correctly" — it's entirely derived from generation-time data. It has zero concept of "has the human actually finished the manual setup" (connected real credentials, wired real Google Sheet IDs). That's the gap `preflight` fills, and this phase ships the offline half — everything answerable from the saved pack JSON alone, no n8n required.
+
+Refactored `generateRiskReport()` to extract `computeRiskFindings(pack)` — the same escalation/severity-normalization/verdict computation, now reusable structured data instead of only-derivable-by-reparsing-Markdown. `generateRiskReport()`'s rendered output is unchanged (verified: all 34 existing tests pass unmodified).
+
+New `src/pack/preflight.ts`: `runPreflight()` returns structured `PreflightCheck[]` + an overall `GO`/`GO WITH WARNINGS`/`NO-GO`/`BLOCKED` verdict; `formatPreflightChecklist()` renders it as an actual line-by-line checklist (✓/✗/⚠/⊘), not narrative prose — the Delivery Bundle's other artifacts are reports, this one is a checklist because its whole purpose is scannable go/no-go, not context.
+
+Seven checks this phase: pack build completed (escalation), no unresolved blocking assumptions (checked independently of escalation — a pack built with `buildDespiteBlocking: true` can still carry unresolved blocking assumptions that `pack.escalation` won't catch, since escalation only fires when the pack was never built at all), pack-structural validation, all workflows deployed, no error-severity issues, no warning-severity issues (this is where Rule 59's missing-webhook-auth warning surfaces automatically, zero new logic needed), and an informational credential checklist.
+
+An escalated pack does **not** short-circuit the checklist the way `generateRiskReport()` does — every per-workflow check still renders, explicitly marked `skip` with "N/A -- pack never built" rather than naively reporting a pass because `pack.workflows` happens to be empty. A checklist that looks all-green on a pack that was never generated would be actively misleading.
+
+`kairos preflight <pack>` exits 0 for GO/GO WITH WARNINGS, 1 for NO-GO/BLOCKED (matching `validate-pack`'s existing exit-code convention) — scriptable as a real gate. `--json` prints structured output for automation.
+
+Tests: 11 unit tests (escalated-pack full-checklist skip behavior, clean-pack GO, blocking-assumptions-without-escalation NO-GO, undeployed workflows, error vs. warning severity verdict distinction, pack-structural validation, credentials checklist always-informational, checklist rendering) + 3 CLI tests (GO exit 0, NO-GO exit 1, `--json` shape). 1127/1127 passing overall. Typecheck/lint clean.
+
 ### Fix: Delivery Bundle — escalated packs, and staleness tracking for live-fetched artifacts
 A second-opinion review (Codex) checked the shipped Delivery Bundle plan against the actual code and found two genuine gaps, both fixed here (four other points it raised — `hashContent` correctness, monitoring-plan's drift-claiming discipline, OpenAPI path normalization, nested vs. flat JSON for multi-segment fields — were re-verified directly against the code and confirmed already correct, no change needed):
 

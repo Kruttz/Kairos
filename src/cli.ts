@@ -19,6 +19,7 @@ Usage:
   kairos pack export <name> [--handoff]
   kairos pack wire <name> [--sheet-ids <json-or-path>] [--dry-run]
   kairos validate-pack <name>
+  kairos preflight <name> [--live] [--bundle-dir <dir>] [--json]
   kairos trace record <n8n-workflow-id>
   kairos replace <n8n-id> <description>
   kairos memory add|list|search|forget|rebuild-index <client-id> [...]
@@ -52,6 +53,9 @@ Pack options:
   pack export <name> --handoff  Generate a client-ready Markdown handoff document
   pack wire <name>            Patch deployed workflows with real Google Sheet IDs
   validate-pack <name>        Cross-workflow safety check before activation
+  preflight <name>            Go/no-go launch checklist -- offline by default (saved pack only)
+  preflight <name> --live     Also checks live n8n state: placeholder credentials, Sheet IDs, webhook artifacts
+  preflight <name> --bundle-dir <dir>  Cross-check against a previously generated --bundle output
 
 Patterns options:
   --days <days>   Analysis window (default: 30)
@@ -1212,6 +1216,41 @@ async function handleValidatePack(positional: string[]): Promise<void> {
   if (errors.length > 0) process.exit(1)
 }
 
+async function handlePreflight(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const packName = positional[0]
+  if (!packName) {
+    console.error('Usage: kairos preflight <pack-name> [--live] [--bundle-dir <dir>] [--json]')
+    process.exit(1)
+  }
+
+  const { readFile } = await import('node:fs/promises')
+  const { join } = await import('node:path')
+  const { homedir } = await import('node:os')
+
+  const packPath = join(homedir(), '.kairos', 'packs', `${packName}.json`)
+
+  let pack: import('./pack/pack-builder.js').WorkflowPackResult
+  try {
+    const content = await readFile(packPath, 'utf-8')
+    pack = JSON.parse(content) as import('./pack/pack-builder.js').WorkflowPackResult
+  } catch {
+    console.error(`Pack not found: ${packPath}`)
+    console.error('Run "kairos build-pack <context>" to create one.')
+    process.exit(1)
+  }
+
+  const { runPreflight, formatPreflightChecklist } = await import('./pack/preflight.js')
+  const result = await runPreflight(pack, {})
+
+  if (flags['json'] === true) {
+    console.log(JSON.stringify(result, null, 2))
+  } else {
+    console.log(formatPreflightChecklist(result))
+  }
+
+  if (result.verdict === 'NO-GO' || result.verdict === 'BLOCKED') process.exit(1)
+}
+
 async function handleInit(): Promise<void> {
   const { writeFile, readFile, mkdir } = await import('node:fs/promises')
   const { join } = await import('node:path')
@@ -1420,6 +1459,9 @@ async function main(): Promise<void> {
     }
     case 'validate-pack':
       await handleValidatePack(positional)
+      break
+    case 'preflight':
+      await handlePreflight(positional, flags)
       break
     case 'trace':
       await handleTrace(positional)
