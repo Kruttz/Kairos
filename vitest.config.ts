@@ -13,6 +13,7 @@ export default defineConfig({
     // instance. This only affects test execution, not production use of Kairos itself.
     pool: 'forks',
     exclude: ['tests/e2e/**', 'node_modules/**'],
+    setupFiles: ['./tests/setup/no-network-guard.ts'],
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],
