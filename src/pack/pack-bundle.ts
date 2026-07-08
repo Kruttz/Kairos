@@ -125,7 +125,13 @@ export function generateCredentialsDoc(pack: WorkflowPackResult): string {
 
   for (const wf of pack.workflows) {
     for (const cred of wf.credentialsNeeded) {
-      const key = `${cred.service} ${cred.credentialType}`
+      // JSON.stringify of a tuple, not a delimited string -- a plain-character delimiter
+      // (space, or any other single visible character) can collide, e.g. service="Google",
+      // credentialType="Sheets OAuth" vs. service="Google Sheets", credentialType="OAuth"
+      // would join to the identical string "Google Sheets OAuth" under a space-joined key.
+      // JSON.stringify preserves the exact field boundary regardless of what either field
+      // contains.
+      const key = JSON.stringify([cred.service, cred.credentialType])
       const entry = byService.get(key) ?? { service: cred.service, credentialType: cred.credentialType, descriptions: new Set(), workflows: new Set() }
       if (cred.description) entry.descriptions.add(cred.description)
       entry.workflows.add(wf.name)

@@ -4,6 +4,15 @@ All notable changes to `@kairos-sdk/core` are documented here. Format loosely fo
 
 ## [Unreleased]
 
+### Fixed: credentials.md grouping key could silently merge two distinct credentials
+A second, independent review caught a real regression in the NUL-byte fix above: replacing the literal NUL byte with a plain space (`` `${cred.service} ${cred.credentialType}` ``) is not collision-safe. `service="Google", credentialType="Sheets OAuth"` and `service="Google Sheets", credentialType="OAuth"` both join to the identical string `"Google Sheets OAuth"` — two genuinely different credentials would have silently merged into one `credentials.md` entry, attributing one workflow's credential description and "needed by" list to the other's. The earlier commit's "no behavior change" claim was incorrect for this case (it was correct for the byte-identity/typecheck/full-suite checks actually run, but those checks didn't include a collision scenario).
+
+Replaced the space join with `JSON.stringify([cred.service, cred.credentialType])`, which preserves the exact field boundary regardless of what either string contains -- not just a different single-character delimiter, which would only move the same class of collision to a different (still guessable) pair of inputs.
+
+Verified empirically, not just by inspection: temporarily reverted to the space-joined key, confirmed the new regression test actually fails against it, then restored the fix and confirmed it passes.
+
+Tests: 1 new regression test (the exact colliding pair from the review, confirming both remain distinct `## Google` / `## Google Sheets` sections with correctly separated descriptions and "needed by" workflows). 1219/1219 passing overall. Typecheck/lint clean.
+
 ### Fixed: Step 5 provenance closure pass (Codex review)
 An independent review of the provenance tuple above found real gaps before it shipped. All addressed in one closure pass, 7 commits:
 

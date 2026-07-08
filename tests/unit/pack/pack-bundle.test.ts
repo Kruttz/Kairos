@@ -221,6 +221,30 @@ describe('generateCredentialsDoc', () => {
     expect(md).toContain('Empire Homecare')
     expect(md).toContain('## Setup Order')
   })
+
+  it('does not merge two distinct (service, credentialType) pairs that would collide under a plain space-joined key', () => {
+    // service="Google" + credentialType="Sheets OAuth" and service="Google Sheets" +
+    // credentialType="OAuth" both join to the identical string "Google Sheets OAuth" if the
+    // grouping key were `${service} ${credentialType}` -- confirms the two remain distinct
+    // entries, not merged into one.
+    const pack = makePack({
+      workflows: [
+        { name: 'A', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1, credentialsNeeded: [{ service: 'Google', credentialType: 'Sheets OAuth', description: 'Desc A' }] },
+        { name: 'B', purpose: 'x', workflowId: 'wf-2', deployed: true, generationAttempts: 1, credentialsNeeded: [{ service: 'Google Sheets', credentialType: 'OAuth', description: 'Desc B' }] },
+      ],
+    })
+    const md = generateCredentialsDoc(pack)
+    expect(md).toContain('## Google')
+    expect(md).toContain('## Google Sheets')
+    expect(md).toContain('`Sheets OAuth`')
+    expect(md).toContain('`OAuth`')
+    expect(md).toContain('Desc A')
+    expect(md).toContain('Desc B')
+    // Each workflow's credential is attributed to exactly its own entry, not merged together.
+    const googleSection = md.slice(md.indexOf('## Google\n'), md.indexOf('## Google Sheets'))
+    expect(googleSection).toContain('Needed by:** A')
+    expect(googleSection).not.toContain('Needed by:** A, B')
+  })
 })
 
 describe('generateRiskReport', () => {
