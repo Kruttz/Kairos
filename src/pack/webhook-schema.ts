@@ -131,3 +131,70 @@ export function generateTestPayload(workflow: N8nWorkflow): TestPayload | null {
 
   return payload
 }
+
+/** Same nested-path structure as buildNestedSample(), but building a JSON Schema shape (all leaf fields typed `string` -- no real type information exists beyond the field name) instead of placeholder values. */
+function buildNestedSchema(paths: string[]): Record<string, unknown> {
+  const properties: Record<string, { type: string; properties?: Record<string, unknown> }> = {}
+  for (const path of paths) {
+    const segments = path.split('.')
+    let cursor = properties
+    for (let i = 0; i < segments.length - 1; i++) {
+      const seg = segments[i]!
+      if (cursor[seg]?.properties === undefined) cursor[seg] = { type: 'object', properties: {} }
+      cursor = cursor[seg]!.properties as Record<string, { type: string; properties?: Record<string, unknown> }>
+    }
+    cursor[segments[segments.length - 1]!] = { type: 'string' }
+  }
+  return properties
+}
+
+export interface OpenApiContract {
+  openapi: '3.0.3'
+  info: {
+    title: string
+    version: string
+    description: string
+    'x-kairos-generated': 'heuristic'
+  }
+  paths: Record<string, Record<string, {
+    parameters?: Array<{ name: string; in: 'query' | 'header'; required: false; schema: { type: 'string' } }>
+    requestBody?: { content: { 'application/json': { schema: { type: 'object'; properties: Record<string, unknown> } } } }
+    responses: { '200': { description: string } }
+  }>>
+}
+
+/**
+ * Minimal, valid OpenAPI 3.0.3 document for a webhook-shaped workflow, reusing
+ * extractWebhookFieldRefs() rather than a second field-mining pass. Returns null for any
+ * workflow without a webhook trigger, same as generateTestPayload(). Every field is typed
+ * `string` and every query/header parameter is `required: false` -- the extractor can only
+ * confirm a field is REFERENCED somewhere, never that it's required or its real type; a
+ * wrong inferred type/requiredness would be worse than an honest, uniform "string, unverified."
+ * Marked `x-kairos-generated: 'heuristic'` throughout so nobody mistakes this for a hand-written
+ * contract -- do not remove that marker or the description disclaimer when touching this.
+ */
+export function generateOpenApiContract(workflow: N8nWorkflow): OpenApiContract | null {
+  const trigger = findWebhookTrigger(workflow)
+  if (!trigger) return null
+
+  const refs = extractWebhookFieldRefs(workflow)
+  const parameters: Array<{ name: string; in: 'query' | 'header'; required: false; schema: { type: 'string' } }> = [
+    ...refs.query.map((name) => ({ name, in: 'query' as const, required: false as const, schema: { type: 'string' as const } })),
+    ...refs.headers.map((name) => ({ name, in: 'header' as const, required: false as const, schema: { type: 'string' as const } })),
+  ]
+
+  const operation: OpenApiContract['paths'][string][string] = {
+    responses: { '200': { description: 'Success (response schema not inferred — n8n does not expose a typed response contract for webhook workflows)' } },
+  }
+  if (parameters.length > 0) operation.parameters = parameters
+  if (refs.body.length > 0) {
+    operation.requestBody = { content: { 'application/json': { schema: { type: 'object', properties: buildNestedSchema(refs.body) } } } }
+  }
+
+  const path = `/${trigger.path.replace(/^\/+/, '')}`
+  return {
+    openapi: '3.0.3',
+    info: { title: workflow.name, version: '1.0.0', description: WEBHOOK_INFERENCE_DISCLAIMER, 'x-kairos-generated': 'heuristic' },
+    paths: { [path]: { [trigger.httpMethod.toLowerCase()]: operation } },
+  }
+}

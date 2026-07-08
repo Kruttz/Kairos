@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { mkdtemp, rm, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { fetchWorkflowJson, writeWorkflowJsonFiles, slugifyWorkflowName, generateCredentialsDoc, generateRiskReport, generateMonitoringPlan, writeTestPayloadFiles } from '../../../src/pack/pack-bundle.js'
+import { fetchWorkflowJson, writeWorkflowJsonFiles, slugifyWorkflowName, generateCredentialsDoc, generateRiskReport, generateMonitoringPlan, writeTestPayloadFiles, writeOpenApiFiles, writeBundle } from '../../../src/pack/pack-bundle.js'
 import type { N8nApiClient } from '../../../src/providers/n8n/index.js'
 import type { N8nWorkflowResponse } from '../../../src/providers/n8n/types.js'
 import type { WorkflowPackResult } from '../../../src/pack/pack-builder.js'
@@ -405,5 +405,90 @@ describe('writeTestPayloadFiles', () => {
     expect(result.written).toHaveLength(1)
     expect(result.written[0]!.workflowName).toBe('Good')
     expect(result.skipped).toHaveLength(2)
+  })
+})
+
+describe('writeOpenApiFiles', () => {
+  it('writes a contract.openapi.json for a webhook-shaped workflow', async () => {
+    const dir = await makeTmpDir()
+    const client = mockClient(async (id) => makeResponse({
+      id, name: 'Referral Intake',
+      nodes: [{ id: 'n1', name: 'Webhook', type: 'n8n-nodes-base.webhook', typeVersion: 1, position: [0, 0], parameters: { path: 'referrals', httpMethod: 'POST' } }],
+    }))
+    const result = await writeOpenApiFiles([{ name: 'Referral Intake', workflowId: 'wf-1' }], client, dir)
+    expect(result.written).toHaveLength(1)
+    const content = JSON.parse(await readFile(join(dir, 'referral-intake.contract.openapi.json'), 'utf-8'))
+    expect(content.openapi).toBe('3.0.3')
+    expect(content.paths['/referrals'].post).toBeDefined()
+  })
+
+  it('skips a non-webhook workflow silently (not applicable)', async () => {
+    const dir = await makeTmpDir()
+    const client = mockClient(async (id) => makeResponse({
+      id, name: 'Internal',
+      nodes: [{ id: 'n1', name: 'Manual', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 0], parameters: {} }],
+    }))
+    const result = await writeOpenApiFiles([{ name: 'Internal', workflowId: 'wf-1' }], client, dir)
+    expect(result.written).toHaveLength(0)
+    expect(result.skipped[0]!.reason).toContain('not applicable')
+  })
+})
+
+describe('writeBundle', () => {
+  function mockBundleClient(): { client: N8nApiClient; workflows: string[] } {
+    const workflows: string[] = []
+    const client = {
+      getWorkflow: async (id: string) => {
+        workflows.push(id)
+        return makeResponse({
+          id, active: true,
+          nodes: [{ id: 'n1', name: 'Webhook', type: 'n8n-nodes-base.webhook', typeVersion: 1, position: [0, 0], parameters: { path: 'x', httpMethod: 'POST' } }],
+        })
+      },
+      getExecutions: async () => [],
+      getExecution: async () => { throw new Error('not implemented') },
+    } as unknown as N8nApiClient
+    return { client, workflows }
+  }
+
+  it('writes every pack-level and per-workflow artifact plus a manifest', async () => {
+    const dir = await makeTmpDir()
+    const pack = makePack({
+      workflows: [{ name: 'Referral Intake', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1, credentialsNeeded: [{ service: 'Gmail', credentialType: 'gmailOAuth2', description: 'x' }], finalIssues: [] }],
+    })
+    const { client } = mockBundleClient()
+
+    const manifest = await writeBundle(pack, client, dir)
+
+    for (const name of ['handoff.md', 'credentials.md', 'risk-report.md', 'monitoring-plan.md']) {
+      expect(manifest.files.some((f) => f.path.endsWith(name))).toBe(true)
+    }
+    expect(manifest.files.some((f) => f.path.endsWith('referral-intake.workflow.json'))).toBe(true)
+    expect(manifest.files.some((f) => f.path.endsWith('referral-intake.test-payloads.json'))).toBe(true)
+    expect(manifest.files.some((f) => f.path.endsWith('referral-intake.contract.openapi.json'))).toBe(true)
+
+    const manifestFile = JSON.parse(await readFile(join(dir, 'bundle-manifest.json'), 'utf-8'))
+    expect(manifestFile.packName).toBe(pack.packName)
+    expect(manifestFile.files.length).toBe(manifest.files.length)
+  })
+
+  it('records a skip (not a thrown error) for a non-webhook workflow\'s webhook-only artifacts', async () => {
+    const dir = await makeTmpDir()
+    const pack = makePack({
+      workflows: [{ name: 'Internal', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1, credentialsNeeded: [] }],
+    })
+    const client = {
+      getWorkflow: async (id: string) => makeResponse({
+        id, active: true,
+        nodes: [{ id: 'n1', name: 'Manual', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 0], parameters: {} }],
+      }),
+      getExecutions: async () => [],
+      getExecution: async () => { throw new Error('not implemented') },
+    } as unknown as N8nApiClient
+
+    const manifest = await writeBundle(pack, client, dir)
+    const openApiSkip = manifest.skipped.find((s) => s.artifact === 'contract.openapi.json')
+    expect(openApiSkip).toBeDefined()
+    expect(openApiSkip!.reason).toContain('not applicable')
   })
 })

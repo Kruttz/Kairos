@@ -837,6 +837,19 @@ kairos pack export my-pack --monitoring-plan
 # each output file). Skips workflows with no webhook trigger. Requires N8N_BASE_URL/N8N_API_KEY.
 kairos pack export my-pack --test-payloads ./deliverables
 
+# Write a minimal OpenAPI 3.0.3 document for each webhook-shaped workflow (path/method/
+# request schema/query+header params), reusing the same field inference as --test-payloads
+# and marked `x-kairos-generated: heuristic` throughout. Skips non-webhook workflows.
+# Requires N8N_BASE_URL/N8N_API_KEY.
+kairos pack export my-pack --openapi ./deliverables
+
+# Write the FULL client deliverable set in one command: handoff.md, credentials.md,
+# risk-report.md, monitoring-plan.md, one workflow.json per workflow, and
+# test-payloads.json/contract.openapi.json for every webhook-shaped workflow -- plus a
+# bundle-manifest.json listing exactly what was written and what was skipped (and why).
+# One failing piece never aborts the rest. Requires N8N_BASE_URL/N8N_API_KEY.
+kairos pack export my-pack --bundle ./deliverables
+
 # Record a deployed workflow's latest n8n execution into the library (improves retrieval)
 kairos trace record <n8n-workflow-id>
 

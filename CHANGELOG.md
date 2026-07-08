@@ -4,6 +4,19 @@ All notable changes to `@kairos-sdk/core` are documented here. Format loosely fo
 
 ## [Unreleased]
 
+### New: `kairos pack export --openapi <dir>` and `--bundle <dir>` (Delivery Bundle, Phase 6 — final)
+Sixth and final artifact, plus the orchestrator that ties all six phases together into one command. This completes the Delivery Bundle plan.
+
+`generateOpenApiContract()` reuses Phase 5's `extractWebhookFieldRefs()` rather than mining fields a second time — the marginal cost of this phase is mostly "assemble an OpenAPI document shape" given Phase 5 already exists. Body fields become a nested JSON Schema (`requestBody.content['application/json'].schema`); query/header fields become `parameters` entries with `in: 'query'`/`in: 'header'`. Every field is typed `string` and every parameter is `required: false` — the extractor can only confirm a field is *referenced* somewhere, never that it's required or its real type, and a wrong inferred type/requiredness would be worse than an honest, uniform "string, unverified." Marked `x-kairos-generated: 'heuristic'` throughout, with the same disclaimer text as `--test-payloads`, so nobody mistakes this for a hand-written contract. No new dependency (no `openapi-types`, no schema validator) — the document is small and hand-assembled consistently.
+
+`kairos pack export <name> --bundle <dir>` is the actual "client deliverable machine" this whole plan was building toward: writes every pack-level artifact (`handoff.md`, `credentials.md`, `risk-report.md`, `monitoring-plan.md`) and every applicable per-workflow artifact (`workflow.json` for all, `test-payloads.json`/`contract.openapi.json` for webhook-shaped ones only) into one directory, plus a `bundle-manifest.json` listing exactly what was written and what was skipped and why. Composes the existing `generate*`/`write*Files` functions from Phases 1-5 rather than duplicating any of their logic. One failing piece (n8n unreachable for one workflow, a workflow with no webhook trigger) never aborts the rest — every skip is recorded in the manifest, never silent.
+
+Tests: 6 new unit tests (`generateOpenApiContract()`: null for non-webhook, minimal valid document, nested body schema, query/header parameter placement, zero-fields case) + 2 `writeOpenApiFiles()` tests + 2 `writeBundle()` tests (full artifact set + manifest, non-webhook skip recorded not thrown) + 1 CLI integration test (pack with one webhook and one non-webhook workflow — confirms the full expected file set is written, webhook-only artifacts are correctly *absent* for the non-webhook workflow rather than empty-but-present, and the manifest accurately reflects both). 1111/1111 passing overall. Typecheck/lint clean.
+
+**One real bug found and fixed while writing this phase's JSDoc comment, not the code itself**: a doc comment describing this function as reusing "generate*/write*Files functions" broke the TypeScript parser, because `*/` inside a `/** ... */` comment closes the comment early — everything after it became malformed source code. Caught immediately by `npm run typecheck`, fixed by rewording. A small, easy-to-miss gotcha worth remembering: never write a literal `*/` sequence inside a JSDoc block, even in prose.
+
+This closes out the six-phase Delivery Bundle plan. All six artifacts (`workflow.json`, `credentials.md`, `risk-report.md`, `monitoring-plan.md`, `test-payloads.json`, `contract.openapi.json`) are available individually via their own flags, or together via `--bundle`.
+
 ### New: `kairos pack export --test-payloads <dir>` (Delivery Bundle, Phase 5)
 Fifth of six new client-deliverable artifacts, and the first that's genuinely new logic rather than a render over existing data -- confirmed nothing like this existed anywhere in the codebase.
 

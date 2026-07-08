@@ -566,6 +566,87 @@ describe('CLI — parseArgs / routing', () => {
     })
   })
 
+  describe('pack export --bundle', () => {
+    it('writes the full deliverable set for a pack with one webhook and one non-webhook workflow, plus an accurate manifest', async () => {
+      const mockN8n = createServer((req, res) => {
+        if (req.method === 'GET' && req.url === '/api/v1/workflows/wf-webhook') {
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            id: 'wf-webhook', name: 'Referral Intake', active: true,
+            nodes: [{ id: 'n1', name: 'Webhook', type: 'n8n-nodes-base.webhook', typeVersion: 1, position: [0, 0], parameters: { path: 'referrals', httpMethod: 'POST' } }],
+            connections: {}, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+          }))
+          return
+        }
+        if (req.method === 'GET' && req.url === '/api/v1/workflows/wf-internal') {
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            id: 'wf-internal', name: 'Internal Routing', active: true,
+            nodes: [{ id: 'n1', name: 'Manual', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 0], parameters: {} }],
+            connections: {}, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+          }))
+          return
+        }
+        if (req.method === 'GET' && req.url?.startsWith('/api/v1/executions?')) {
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ data: [], nextCursor: null }))
+          return
+        }
+        res.writeHead(404)
+        res.end()
+      })
+      await new Promise<void>((resolve) => mockN8n.listen(0, '127.0.0.1', resolve))
+      const addr = mockN8n.address()
+      if (addr === null || typeof addr === 'string') throw new Error('mock server failed to bind')
+      const mockN8nUrl = `http://127.0.0.1:${addr.port}`
+
+      const fakeHome = await mkdtemp(join(tmpdir(), 'kairos-cli-pack-bundle-'))
+      const outDir = join(fakeHome, 'out')
+      try {
+        const { mkdir, writeFile } = await import('node:fs/promises')
+        const packsDir = join(fakeHome, '.kairos', 'packs')
+        await mkdir(packsDir, { recursive: true })
+        await writeFile(join(packsDir, 'test-pack.json'), JSON.stringify({
+          businessContext: 'Test Co', packName: 'test-pack', status: 'ready_for_test',
+          workflows: [
+            { name: 'Referral Intake', purpose: 'x', workflowId: 'wf-webhook', deployed: true, generationAttempts: 1, credentialsNeeded: [{ service: 'Gmail', credentialType: 'gmailOAuth2', description: 'x' }], finalIssues: [] },
+            { name: 'Internal Routing', purpose: 'x', workflowId: 'wf-internal', deployed: true, generationAttempts: 1, credentialsNeeded: [], finalIssues: [] },
+          ],
+          allCredentials: [{ service: 'Gmail', credentialType: 'gmailOAuth2' }], sheetsColumns: [], assumptions: [], testChecklist: [], builtAt: '2026-01-01T00:00:00.000Z',
+        }))
+
+        const child = spawn(TSX, [CLI, 'pack', 'export', 'test-pack', '--bundle', outDir], {
+          encoding: 'utf-8',
+          env: { ...process.env, HOME: fakeHome, N8N_BASE_URL: mockN8nUrl, N8N_API_KEY: 'test-key' },
+        })
+        const exitCode = await new Promise<number | null>((resolve) => child.on('close', resolve))
+        expect(exitCode).toBe(0)
+
+        // Pack-level artifacts always present
+        for (const name of ['handoff.md', 'credentials.md', 'risk-report.md', 'monitoring-plan.md', 'bundle-manifest.json']) {
+          await expect(readFile(join(outDir, name), 'utf-8')).resolves.toBeTruthy()
+        }
+        // Per-workflow artifacts for the webhook workflow
+        await expect(readFile(join(outDir, 'referral-intake.workflow.json'), 'utf-8')).resolves.toBeTruthy()
+        await expect(readFile(join(outDir, 'referral-intake.test-payloads.json'), 'utf-8')).resolves.toBeTruthy()
+        await expect(readFile(join(outDir, 'referral-intake.contract.openapi.json'), 'utf-8')).resolves.toBeTruthy()
+        // workflow.json still applies to the non-webhook workflow
+        await expect(readFile(join(outDir, 'internal-routing.workflow.json'), 'utf-8')).resolves.toBeTruthy()
+        // webhook-only artifacts must be ABSENT (not empty-but-present) for the non-webhook workflow
+        await expect(readFile(join(outDir, 'internal-routing.test-payloads.json'), 'utf-8')).rejects.toThrow()
+        await expect(readFile(join(outDir, 'internal-routing.contract.openapi.json'), 'utf-8')).rejects.toThrow()
+
+        const manifest = JSON.parse(await readFile(join(outDir, 'bundle-manifest.json'), 'utf-8'))
+        expect(manifest.files.some((f: { path: string }) => f.path.endsWith('internal-routing.workflow.json'))).toBe(true)
+        expect(manifest.skipped.some((s: { artifact: string; workflowName?: string }) => s.artifact === 'test-payloads.json' && s.workflowName === 'Internal Routing')).toBe(true)
+        expect(manifest.skipped.some((s: { artifact: string; workflowName?: string }) => s.artifact === 'contract.openapi.json' && s.workflowName === 'Internal Routing')).toBe(true)
+      } finally {
+        await new Promise<void>((resolve) => mockN8n.close(() => resolve()))
+        await rm(fakeHome, { recursive: true, force: true })
+      }
+    }, 15_000)
+  })
+
   describe('pack export --test-payloads', () => {
     it('fetches each webhook-shaped workflow live and writes a heuristic sample payload, skipping non-webhook workflows', async () => {
       const mockN8n = createServer((req, res) => {

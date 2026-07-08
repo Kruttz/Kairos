@@ -901,7 +901,7 @@ async function handleBuildPack(positional: string[], flags: Record<string, strin
 async function handlePackExport(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const packName = positional[0]
   if (!packName) {
-    console.error('Usage: kairos pack export <pack-name> [--handoff] [--credentials] [--risk-report] [--monitoring-plan] [--workflow-json <dir>] [--test-payloads <dir>]')
+    console.error('Usage: kairos pack export <pack-name> [--handoff] [--credentials] [--risk-report] [--monitoring-plan] [--workflow-json <dir>] [--test-payloads <dir>] [--openapi <dir>] [--bundle <dir>]')
     process.exit(1)
   }
 
@@ -952,6 +952,40 @@ async function handlePackExport(positional: string[], flags: Record<string, stri
     for (const w of result.written) console.error(`Wrote ${w.path}`)
     for (const s of result.skipped) console.error(`Skipped "${s.workflowName}": ${s.reason}`)
     console.error(`\n${result.written.length} test-payloads.json file(s) written to ${outDir}, ${result.skipped.length} skipped.`)
+    return
+  }
+
+  if (typeof flags['openapi'] === 'string') {
+    const outDir = flags['openapi']
+    const n8nBaseUrl = process.env['N8N_BASE_URL']
+    const n8nApiKey = process.env['N8N_API_KEY']
+    if (!n8nBaseUrl || !n8nApiKey) {
+      console.error('N8N_BASE_URL and N8N_API_KEY are required for --openapi (fetches each workflow live from n8n).')
+      process.exit(1)
+    }
+    const { writeOpenApiFiles } = await import('./pack/pack-bundle.js')
+    const client = new N8nApiClient(n8nBaseUrl, n8nApiKey, CLI_LOGGER)
+    const result = await writeOpenApiFiles(pack.workflows, client, outDir)
+    for (const w of result.written) console.error(`Wrote ${w.path}`)
+    for (const s of result.skipped) console.error(`Skipped "${s.workflowName}": ${s.reason}`)
+    console.error(`\n${result.written.length} contract.openapi.json file(s) written to ${outDir}, ${result.skipped.length} skipped.`)
+    return
+  }
+
+  if (typeof flags['bundle'] === 'string') {
+    const outDir = flags['bundle']
+    const n8nBaseUrl = process.env['N8N_BASE_URL']
+    const n8nApiKey = process.env['N8N_API_KEY']
+    if (!n8nBaseUrl || !n8nApiKey) {
+      console.error('N8N_BASE_URL and N8N_API_KEY are required for --bundle (fetches each workflow live from n8n).')
+      process.exit(1)
+    }
+    const { writeBundle } = await import('./pack/pack-bundle.js')
+    const client = new N8nApiClient(n8nBaseUrl, n8nApiKey, CLI_LOGGER)
+    const manifest = await writeBundle(pack, client, outDir)
+    for (const f of manifest.files) console.error(`Wrote ${f.path}`)
+    for (const s of manifest.skipped) console.error(`Skipped ${s.artifact}${s.workflowName ? ` for "${s.workflowName}"` : ''}: ${s.reason}`)
+    console.error(`\n${manifest.files.length} file(s) written to ${outDir}, ${manifest.skipped.length} skipped. See bundle-manifest.json for details.`)
     return
   }
 
