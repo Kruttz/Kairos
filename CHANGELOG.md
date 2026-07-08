@@ -4,6 +4,10 @@ All notable changes to `@kairos-sdk/core` are documented here. Format loosely fo
 
 ## [Unreleased]
 
+### Fixed: Rule 126's message overclaimed a hard n8n requirement (wording only, no logic change)
+Rule 126's warning said "n8n requires UUID v4 format ... for all node IDs" and "Non-UUID IDs may cause issues with execution tracking." Checked against real n8n source (`workflow-structure-validation.ts`'s Zod schema types node `id` as `z.string().optional()`, no format constraint) and n8n's own editor code (which does generate `uuidv4()` by convention, but doesn't enforce or reject other formats): the claimed requirement doesn't exist, and no evidence of a runtime dependency on ID format was found. This is very likely why the rule fires on nearly every generated node in real telemetry (2,263 of ~435 build attempts) rather than indicating broken output.
+
+Reworded to state the accurate claim: n8n's editor conventionally generates UUID v4, a non-conforming ID would look conspicuously non-editor-generated, and n8n's own validation doesn't reject other formats. The check itself (still WARN, still flagging non-UUID-v4 IDs) is unchanged — this is a wording-only fix, not a logic or severity change. No test asserts on exact message text, so no test changes were needed.
 ### Fixed: Rule 58 false-positived on legitimate non-default credential types
 Rule 58 hardcoded exactly one "expected" credential type key per node type (`Record<string, string>`). Checked against real `n8n-nodes-base`/`@n8n/n8n-nodes-langchain` source during a ground-truth audit: 13 of the 25 node types it covers actually accept more than one valid credential type, gated by an authentication-style parameter in real n8n — e.g. Gmail's `serviceAccount` mode uses `googleApi` while `oAuth2` mode uses `gmailOAuth2`, both legitimate. Same for Google Sheets, Google Drive, Slack, Notion, Airtable (+ trigger variants), GitHub (+ trigger), HubSpot, and Jira (Cloud vs. Server vs. Server PAT). Rule 58 was warning "n8n will fail to find the credential at runtime" on every one of these legitimate alternates.
 

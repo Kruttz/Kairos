@@ -3282,7 +3282,7 @@ export class N8nValidator {
       if (!UUID_V4.test(node.id)) {
         this.warn(
           issues, 126,
-          `Node "${node.name}" has ID "${node.id}" which is not a valid UUID v4 — n8n requires UUID v4 format (xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx) for all node IDs. Non-UUID IDs may cause issues with execution tracking. Generate a proper UUID v4 for this node.`,
+          `Node "${node.name}" has ID "${node.id}" which is not a valid UUID v4 — n8n's own editor always generates UUID v4 (xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx) for node IDs, and a non-conforming ID stands out as clearly not editor-generated if the workflow is later opened there. n8n's own validation does not reject other ID formats. Generate a proper UUID v4 for this node for consistency.`,
           node.id,
         )
       }
