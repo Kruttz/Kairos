@@ -4,6 +4,15 @@ All notable changes to `@kairos-sdk/core` are documented here. Format loosely fo
 
 ## [Unreleased]
 
+### Fixed: bundle manifest omitted full build-time provenance, only the hash
+A second review pass caught that `PackWorkflowResult.provenance` (preserved through the pack-builder boundary in an earlier fix) was still only partially reaching the client deliverable: `writeBundle()` copied just `originalBuildHash` (a bare string) onto each workflow.json manifest entry, dropping the rest of the object -- model, maxTokens, temperature, runId, and the build-time rule-set/prompt/catalog versions were absent from `bundle-manifest.json` entirely, visible only in memory on the in-process `WorkflowPackResult`, never in what actually ships to a client.
+
+Added `buildProvenance?: BuildProvenance` to both `WriteWorkflowJsonResult.written` entries and `BundleManifest.files` entries, carrying the whole object through. Kept `originalBuildHash` alongside it (not removed) as a convenience duplicate of `buildProvenance.workflowHash` -- a plain string at the same nesting level as `liveExportHash`, so the common "just compare hashes" case doesn't require reaching into a nested object.
+
+Explicitly distinct from the manifest's existing top-level `provenance` field: that one is export-time (computed fresh when the bundle is written, the same values for every workflow in it); `buildProvenance` is per-workflow and build-time (what was genuinely true when that specific workflow was generated, which can predate the bundle's own export-time versions).
+
+Tests: 2 new (the full object -- not just the hash -- is present and matches exactly what `PackWorkflowResult.provenance` held, confirmed distinct from the manifest's export-time `provenance`; absent, not throwing, when the pack predates provenance tracking). 1221/1221 passing overall. Typecheck/lint clean.
+
 ### Fixed: credentials.md grouping key could silently merge two distinct credentials
 A second, independent review caught a real regression in the NUL-byte fix above: replacing the literal NUL byte with a plain space (`` `${cred.service} ${cred.credentialType}` ``) is not collision-safe. `service="Google", credentialType="Sheets OAuth"` and `service="Google Sheets", credentialType="OAuth"` both join to the identical string `"Google Sheets OAuth"` — two genuinely different credentials would have silently merged into one `credentials.md` entry, attributing one workflow's credential description and "needed by" list to the other's. The earlier commit's "no behavior change" claim was incorrect for this case (it was correct for the byte-identity/typecheck/full-suite checks actually run, but those checks didn't include a collision scenario).
 

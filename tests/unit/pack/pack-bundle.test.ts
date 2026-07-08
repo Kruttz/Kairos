@@ -626,6 +626,51 @@ describe('writeBundle', () => {
     expect(workflowJsonEntry.liveExportHash).not.toBe(workflowJsonEntry.originalBuildHash)
   })
 
+  it('carries the full per-workflow buildProvenance (model/temperature/maxTokens/runId/versions), distinct from the manifest\'s export-time provenance', async () => {
+    const dir = await makeTmpDir()
+    const buildTimeProvenance = {
+      kairosVersion: '0.9.0', model: 'claude-build-time-model', maxTokens: 8192, temperature: 0.4, runId: 'run-build-time',
+      ruleSetVersion: 'rules-build-time', promptTemplateVersion: 'prompt-build-time', promptProfile: 'rich',
+      nodeCatalogVersion: { 'n8n-nodes-base': '2.0.0' }, workflowHash: 'w1:buildtimehash',
+    }
+    const pack = makePack({
+      workflows: [{
+        name: 'Referral Intake', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1,
+        credentialsNeeded: [], finalIssues: [], provenance: buildTimeProvenance,
+      }],
+    })
+    const { client } = mockBundleClient()
+
+    const manifest = await writeBundle(pack, client, dir)
+    const workflowJsonEntry = manifest.files.find((f) => f.path.endsWith('referral-intake.workflow.json'))!
+
+    // The full build-time object -- not just the hash -- is present on the per-workflow entry.
+    expect(workflowJsonEntry.buildProvenance).toEqual(buildTimeProvenance)
+    expect(workflowJsonEntry.buildProvenance?.model).toBe('claude-build-time-model')
+    expect(workflowJsonEntry.buildProvenance?.temperature).toBe(0.4)
+    expect(workflowJsonEntry.buildProvenance?.maxTokens).toBe(8192)
+    expect(workflowJsonEntry.buildProvenance?.runId).toBe('run-build-time')
+
+    // Distinct from the manifest's top-level, export-time provenance -- computed fresh right
+    // now, the same for every workflow in the bundle, and carrying none of the per-build
+    // fields (model/temperature/maxTokens/runId) that only exist at build time.
+    expect(manifest.provenance?.kairosVersion).not.toBe(workflowJsonEntry.buildProvenance?.kairosVersion)
+    expect(manifest.provenance).not.toHaveProperty('model')
+    expect(manifest.provenance).not.toHaveProperty('temperature')
+  })
+
+  it('has no buildProvenance on the manifest entry when the pack predates provenance tracking', async () => {
+    const dir = await makeTmpDir()
+    const pack = makePack({
+      workflows: [{ name: 'Referral Intake', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1, credentialsNeeded: [], finalIssues: [] }],
+    })
+    const { client } = mockBundleClient()
+
+    const manifest = await writeBundle(pack, client, dir)
+    const workflowJsonEntry = manifest.files.find((f) => f.path.endsWith('referral-intake.workflow.json'))!
+    expect(workflowJsonEntry.buildProvenance).toBeUndefined()
+  })
+
   describe('build-vs-live drift detection (real computed hashes, not placeholder strings)', () => {
     const BUILT_WEBHOOK_NODE = { id: 'n1', name: 'Webhook', type: 'n8n-nodes-base.webhook', typeVersion: 1, position: [0, 0] as [number, number], parameters: { path: 'x', httpMethod: 'POST' } }
 

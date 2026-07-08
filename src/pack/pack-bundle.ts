@@ -56,8 +56,21 @@ export interface WriteWorkflowJsonResult {
      * (carried through PackWorkflowResult.provenance) -- absent when the pack predates
      * provenance tracking, or the workflow errored before a build result existed. Comparing
      * this against liveExportHash is how a consumer detects build-vs-live drift; this
-     * function only records both values, it doesn't classify or flag drift itself. */
+     * function only records both values, it doesn't classify or flag drift itself. A
+     * convenience duplicate of buildProvenance.workflowHash below, kept as a plain string at
+     * the same nesting level as liveExportHash so the common "just compare hashes" case
+     * doesn't require reaching into a nested object. */
     originalBuildHash?: string
+    /**
+     * This workflow's full build-time provenance (model, maxTokens, temperature, runId,
+     * ruleSetVersion, promptTemplateVersion, promptProfile, nodeCatalogVersion,
+     * kairosVersion, workflowHash) -- carried through from PackWorkflowResult.provenance.
+     * Distinct from BundleManifest.provenance (export-time, what Kairos considers "current"
+     * right now): this is what was genuinely true when THIS workflow was originally built,
+     * which may be an earlier Kairos version/rule-set/prompt than what generated this bundle.
+     * Absent under the same conditions as originalBuildHash.
+     */
+    buildProvenance?: BuildProvenance
   }>
   skipped: Array<{ workflowName: string; reason: string }>
 }
@@ -97,6 +110,7 @@ export async function writeWorkflowJsonFiles(
       fetchedAt,
       liveExportHash: computeWorkflowHash(workflow),
       ...(wf.provenance?.workflowHash ? { originalBuildHash: wf.provenance.workflowHash } : {}),
+      ...(wf.provenance ? { buildProvenance: wf.provenance } : {}),
     })
   }
 
@@ -499,8 +513,20 @@ export interface BundleManifest {
     /** Only present on workflow.json entries, and only when the pack recorded build-time
      * provenance for that workflow -- hash of the workflow as Kairos originally built it.
      * Comparing this against liveExportHash is how build-vs-live drift is detected;
-     * writeBundle() only records both values, it doesn't classify drift itself. */
+     * writeBundle() only records both values, it doesn't classify drift itself. A convenience
+     * duplicate of buildProvenance.workflowHash below. */
     originalBuildHash?: string
+    /**
+     * This workflow's full build-time provenance (model, maxTokens, temperature, runId,
+     * ruleSetVersion, promptTemplateVersion, promptProfile, nodeCatalogVersion,
+     * kairosVersion, workflowHash) -- carried through from PackWorkflowResult.provenance.
+     * Distinct from this manifest's top-level `provenance` field (export-time, what Kairos
+     * considers "current" right now, the same for every workflow in the bundle): this is
+     * per-workflow and reflects what was genuinely true when THAT SPECIFIC workflow was
+     * originally built, which can predate the bundle's own export-time versions. Only present
+     * on workflow.json entries, and only when the pack recorded it.
+     */
+    buildProvenance?: BuildProvenance
   }>
   skipped: Array<{ artifact: string; workflowName?: string; reason: string }>
   /** Absent only on manifests deserialized from a bundle written before this field existed --
@@ -562,10 +588,12 @@ export async function writeBundle(pack: WorkflowPackResult, client: N8nApiClient
       // contract.openapi.json are derived artifacts, not the workflow definition itself).
       const liveExportHash = 'liveExportHash' in w ? w.liveExportHash : undefined
       const originalBuildHash = 'originalBuildHash' in w ? w.originalBuildHash : undefined
+      const buildProvenance = 'buildProvenance' in w ? w.buildProvenance : undefined
       manifest.files.push({
         artifact, workflowName: w.workflowName, path: w.path, fetchedAt: w.fetchedAt,
         ...(liveExportHash ? { liveExportHash } : {}),
         ...(originalBuildHash ? { originalBuildHash } : {}),
+        ...(buildProvenance ? { buildProvenance } : {}),
       })
     }
     for (const s of result.skipped) manifest.skipped.push({ artifact, workflowName: s.workflowName, reason: s.reason })
