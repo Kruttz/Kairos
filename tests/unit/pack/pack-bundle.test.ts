@@ -6,6 +6,8 @@ import { fetchWorkflowJson, writeWorkflowJsonFiles, slugifyWorkflowName, generat
 import type { N8nApiClient } from '../../../src/providers/n8n/index.js'
 import type { N8nWorkflowResponse } from '../../../src/providers/n8n/types.js'
 import type { WorkflowPackResult } from '../../../src/pack/pack-builder.js'
+import { computeWorkflowHash } from '../../../src/utils/workflow-hash.js'
+import { getRuleSetVersion, getPromptVersion, getNodeCatalogVersion } from '../../../src/validation/provenance-versions.js'
 
 function makePack(overrides: Partial<WorkflowPackResult> = {}): WorkflowPackResult {
   return {
@@ -524,5 +526,40 @@ describe('writeBundle', () => {
     const openApiSkip = manifest.skipped.find((s) => s.artifact === 'contract.openapi.json')
     expect(openApiSkip).toBeDefined()
     expect(openApiSkip!.reason).toContain('not applicable')
+  })
+
+  it('stamps the manifest with content-derived rule-set/prompt/catalog provenance', async () => {
+    const dir = await makeTmpDir()
+    const pack = makePack({
+      workflows: [{ name: 'Referral Intake', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1, credentialsNeeded: [], finalIssues: [] }],
+    })
+    const { client } = mockBundleClient()
+
+    const manifest = await writeBundle(pack, client, dir)
+
+    expect(manifest.provenance).toBeDefined()
+    expect(manifest.provenance?.ruleSetVersion).toBe(getRuleSetVersion())
+    expect(manifest.provenance?.promptVersion).toBe(getPromptVersion())
+    expect(manifest.provenance?.nodeCatalogVersion).toEqual(getNodeCatalogVersion())
+  })
+
+  it('records workflowHash on the workflow.json entry, computed from the live-fetched content', async () => {
+    const dir = await makeTmpDir()
+    const pack = makePack({
+      workflows: [{ name: 'Referral Intake', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1, credentialsNeeded: [], finalIssues: [] }],
+    })
+    const { client } = mockBundleClient()
+
+    const manifest = await writeBundle(pack, client, dir)
+
+    const workflowJsonEntry = manifest.files.find((f) => f.path.endsWith('referral-intake.workflow.json'))!
+    expect(workflowJsonEntry.workflowHash).toMatch(/^[0-9a-f]{64}$/)
+
+    const fetched = JSON.parse(await readFile(workflowJsonEntry.path, 'utf-8'))
+    expect(workflowJsonEntry.workflowHash).toBe(computeWorkflowHash(fetched))
+
+    // Derived artifacts (not the workflow definition itself) don't carry a workflowHash.
+    const testPayloadEntry = manifest.files.find((f) => f.path.endsWith('referral-intake.test-payloads.json'))!
+    expect(testPayloadEntry.workflowHash).toBeUndefined()
   })
 })

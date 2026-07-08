@@ -2,10 +2,11 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { WorkflowPackResult } from './pack-builder.js'
 import type { N8nWorkflow } from '../types/workflow.js'
-import { computeRiskFindings, fetchWorkflowJson, slugifyWorkflowName, type BundleManifest } from './pack-bundle.js'
+import { computeRiskFindings, fetchWorkflowJson, slugifyWorkflowName, type BundleManifest, type BundleProvenance } from './pack-bundle.js'
 import { findSheetNodes } from './pack-wirer.js'
 import { findWebhookTrigger } from '../utils/webhook-verify.js'
 import type { N8nApiClient } from '../providers/n8n/index.js'
+import { getRuleSetVersion, getPromptVersion, getNodeCatalogVersion } from '../validation/provenance-versions.js'
 
 export type CheckStatus = 'pass' | 'fail' | 'warn' | 'skip' | 'info'
 
@@ -28,6 +29,11 @@ export interface PreflightResult {
    * --live was passed; consumed by Phase 3's --bundle-dir test-artifact check, not rendered
    * as a check of its own here. */
   webhookShapedWorkflows?: string[]
+  /** What Kairos considers "current" at the moment this preflight ran -- always computed,
+   * regardless of --live/--bundle-dir, since these are properties of the running Kairos
+   * install, not something that needs a live n8n fetch. Compared against a --bundle-dir's
+   * stored manifest provenance (if present) in the bundle-manifest check below. */
+  provenance: BundleProvenance
 }
 
 export interface PreflightOptions {
@@ -57,6 +63,11 @@ export async function runPreflight(pack: WorkflowPackResult, options: PreflightO
   const findings = computeRiskFindings(pack)
   const isEscalated = pack.escalation !== undefined
   const live = options.live === true && options.client !== undefined
+  const provenance: BundleProvenance = {
+    ruleSetVersion: getRuleSetVersion(),
+    promptVersion: getPromptVersion(),
+    nodeCatalogVersion: getNodeCatalogVersion(),
+  }
 
   // 1. Escalation
   if (pack.escalation) {
@@ -253,7 +264,15 @@ export async function runPreflight(pack: WorkflowPackResult, options: PreflightO
       const skipSummary = manifest.skipped.length > 0
         ? ` ${manifest.skipped.length} artifact(s) were skipped during generation: ${manifest.skipped.map((s) => `${s.artifact}${s.workflowName ? ` (${s.workflowName})` : ''} -- ${s.reason}`).join('; ')}`
         : ''
-      checks.push({ id: 'bundle-manifest', label: 'Bundle manifest', status: 'info', detail: `Last generated: ${manifest.generatedAt}.${skipSummary}` })
+      // Absent on a bundle written before this field existed -- "unknown," not a mismatch.
+      const provenanceSummary = manifest.provenance === undefined
+        ? ' Bundle predates provenance tracking -- cannot compare against current rules/catalog/prompt.'
+        : manifest.provenance.ruleSetVersion === provenance.ruleSetVersion
+          && manifest.provenance.promptVersion === provenance.promptVersion
+          && JSON.stringify(manifest.provenance.nodeCatalogVersion) === JSON.stringify(provenance.nodeCatalogVersion)
+          ? ' Bundle was generated under the same rule-set/prompt/catalog versions as current.'
+          : ' Bundle was generated under different rule-set/prompt/catalog versions than current -- re-exporting may pick up different behavior.'
+      checks.push({ id: 'bundle-manifest', label: 'Bundle manifest', status: 'info', detail: `Last generated: ${manifest.generatedAt}.${skipSummary}${provenanceSummary}` })
     } catch (err) {
       checks.push({ id: 'bundle-manifest', label: 'Bundle manifest', status: 'warn', detail: `Could not read bundle-manifest.json at ${options.bundleDir}: ${err instanceof Error ? err.message : String(err)}` })
     }
@@ -266,6 +285,7 @@ export async function runPreflight(pack: WorkflowPackResult, options: PreflightO
     businessContext: pack.businessContext,
     verdict,
     checks,
+    provenance,
     ...(webhookShapedWorkflows !== undefined ? { webhookShapedWorkflows } : {}),
   }
 }

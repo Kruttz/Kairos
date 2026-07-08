@@ -4,6 +4,21 @@ All notable changes to `@kairos-sdk/core` are documented here. Format loosely fo
 
 ## [Unreleased]
 
+### New: provenance tuple across BuildResult, bundle manifests, and preflight
+Answers "what was actually true when this was built/exported" without any diffing, history, or rollback mechanic -- purely additive data, no new checks fail because of it.
+
+**`BuildResult.provenance`** (new, optional field): real `model`/`maxTokens` this Kairos instance was constructed with, the final attempt's actual `temperature`, the same `runId` already used for telemetry, plus three content-derived identifiers -- `ruleSetVersion` (hash of the active rule ID list), `promptVersion` (hash of the live system prompt string), `nodeCatalogVersion` (the exact pinned `n8n-nodes-base`/`@n8n/n8n-nodes-langchain` versions the catalog was generated from) -- and `workflowHash`, a new deterministic content hash (`src/utils/workflow-hash.ts`) sensitive to nodes/connections/settings. None of these are manually-bumped constants; all are computed from the actual running code, so they can't silently drift out of sync with what they claim to describe.
+
+Deliberately distinct from the existing `computeTopologyHash()` (used for template-library dedup), which is designed to be *insensitive* to node ids/parameter values/connections so structurally-similar templates match -- the opposite sensitivity profile from what provenance needs.
+
+**`BundleManifest.provenance`** (new, optional field): the same three content-derived identifiers, stamped fresh at `writeBundle()` time. Each `workflow.json` file entry also gets a `workflowHash` computed from its live-fetched content.
+
+**`PreflightResult.provenance`** (new, required field -- preflight results are never persisted/deserialized, so there's no backward-compat case to leave optional): the same three identifiers, always computed regardless of `--live`/`--bundle-dir`. The existing bundle-manifest check (`--bundle-dir`) now also compares the bundle's stored provenance against current, informationally noting "same versions," "different versions," or "predates provenance tracking" -- never changes the check's pass/warn/fail status, matching that check's existing purely-informational contract.
+
+Known, honestly-documented limitation: `ruleSetVersion` catches added/removed rules, not every internal logic change to an existing rule (e.g. the Rule 58 fix above doesn't change it, since Rule 58's ID didn't change) -- hashing the validator's actual source isn't reliably possible from a published, compiled package.
+
+Tests: 10 (workflow-hash) + 5 (version identifiers) + 4 (BuildResult plumbing) + 2 (bundle manifest) + 4 (preflight) = 25 new tests across four commits. 1206/1206 passing overall. Typecheck/lint clean.
+
 ### Fixed: Rule 126's message overclaimed a hard n8n requirement (wording only, no logic change)
 Rule 126's warning said "n8n requires UUID v4 format ... for all node IDs" and "Non-UUID IDs may cause issues with execution tracking." Checked against real n8n source (`workflow-structure-validation.ts`'s Zod schema types node `id` as `z.string().optional()`, no format constraint) and n8n's own editor code (which does generate `uuidv4()` by convention, but doesn't enforce or reject other formats): the claimed requirement doesn't exist, and no evidence of a runtime dependency on ID format was found. This is very likely why the rule fires on nearly every generated node in real telemetry (2,263 of ~435 build attempts) rather than indicating broken output.
 
