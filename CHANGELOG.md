@@ -4,6 +4,14 @@ All notable changes to `@kairos-sdk/core` are documented here. Format loosely fo
 
 ## [Unreleased]
 
+### Fix: Delivery Bundle — escalated packs, and staleness tracking for live-fetched artifacts
+A second-opinion review (Codex) checked the shipped Delivery Bundle plan against the actual code and found two genuine gaps, both fixed here (four other points it raised — `hashContent` correctness, monitoring-plan's drift-claiming discipline, OpenAPI path normalization, nested vs. flat JSON for multi-segment fields — were re-verified directly against the code and confirmed already correct, no change needed):
+
+- **`risk-report.md` never checked `pack.escalation`.** An escalated pack (`PackBuilder.build()` stopped before generating anything because of unresolved blocking assumptions) has zero workflows and zero issues — `generateRiskReport()` would previously and misleadingly report `READY` for a pack that doesn't actually exist yet. Now checks `pack.escalation` first and reports a distinct `BLOCKED — build never completed` status with the escalation reason and open questions, before any of the normal READY/NEEDS ATTENTION/NOT READY logic runs.
+- **Live-fetched per-workflow artifacts (`workflow.json`, `test-payloads.json`, `contract.openapi.json`) carried no record of when they were fetched.** Since these reflect n8n's *current* state (which can differ from what Kairos originally generated — hand-edited since, or drifted), `bundle-manifest.json`'s per-file entries now carry an optional `fetchedAt` timestamp for anything that came from a live fetch; pure-render, pack-level artifacts (`handoff.md`, `credentials.md`, `risk-report.md`) don't have a fetch moment and correctly leave it unset.
+
+Tests: 1 new `generateRiskReport()` test (escalated pack → BLOCKED, not READY, reason + questions rendered) + 2 new `fetchedAt` tests (`writeWorkflowJsonFiles()` records a timestamp in the expected window; `writeBundle()`'s manifest sets it for live-fetched artifacts and leaves it undefined for pure renders). 1113/1113 passing overall. Typecheck/lint clean.
+
 ### New: `kairos pack export --openapi <dir>` and `--bundle <dir>` (Delivery Bundle, Phase 6 — final)
 Sixth and final artifact, plus the orchestrator that ties all six phases together into one command. This completes the Delivery Bundle plan.
 

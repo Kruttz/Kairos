@@ -105,6 +105,16 @@ describe('writeWorkflowJsonFiles', () => {
     expect(content.name).toBe('Referral Intake')
   })
 
+  it('records fetchedAt (an ISO timestamp) since this is a live fetch that may differ from what Kairos originally generated', async () => {
+    const dir = await makeTmpDir()
+    const client = mockClient(async (id) => makeResponse({ id, name: 'Referral Intake' }))
+    const before = new Date().toISOString()
+    const result = await writeWorkflowJsonFiles([{ name: 'Referral Intake', workflowId: 'wf-1' }], client, dir)
+    const after = new Date().toISOString()
+    expect(result.written[0]!.fetchedAt >= before).toBe(true)
+    expect(result.written[0]!.fetchedAt <= after).toBe(true)
+  })
+
   it('skips a workflow with no workflowId, reporting why, without aborting the rest', async () => {
     const dir = await makeTmpDir()
     const client = mockClient(async (id) => makeResponse({ id }))
@@ -219,6 +229,23 @@ describe('generateRiskReport', () => {
     const md = generateRiskReport(pack)
     expect(md).toContain('**Overall status:** READY')
     expect(md).toContain('No issues found.')
+  })
+
+  it('reports BLOCKED (not READY) for an escalated pack that was never built, with the reason and open questions', () => {
+    const pack = makePack({
+      workflows: [],
+      escalation: {
+        reason: 'Blocking assumptions unresolved',
+        questions: ['What CRM does the client use?', 'Which Google Sheet holds facility contacts?'],
+        source: 'blocking_assumptions',
+      },
+    })
+    const md = generateRiskReport(pack)
+    expect(md).toContain('**Overall status:** BLOCKED')
+    expect(md).not.toContain('READY')
+    expect(md).toContain('Blocking assumptions unresolved')
+    expect(md).toContain('What CRM does the client use?')
+    expect(md).toContain('Which Google Sheet holds facility contacts?')
   })
 
   it('reports NOT READY when a workflow has an error-severity issue, with mitigation text', () => {
@@ -470,6 +497,13 @@ describe('writeBundle', () => {
     const manifestFile = JSON.parse(await readFile(join(dir, 'bundle-manifest.json'), 'utf-8'))
     expect(manifestFile.packName).toBe(pack.packName)
     expect(manifestFile.files.length).toBe(manifest.files.length)
+
+    // Live-fetched per-workflow artifacts carry their own fetchedAt (may differ from what
+    // Kairos originally generated); pure-render pack-level artifacts don't have a fetch moment.
+    const workflowJsonEntry = manifest.files.find((f) => f.path.endsWith('referral-intake.workflow.json'))!
+    expect(workflowJsonEntry.fetchedAt).toBeDefined()
+    const handoffEntry = manifest.files.find((f) => f.path.endsWith('handoff.md'))!
+    expect(handoffEntry.fetchedAt).toBeUndefined()
   })
 
   it('records a skip (not a thrown error) for a non-webhook workflow\'s webhook-only artifacts', async () => {
