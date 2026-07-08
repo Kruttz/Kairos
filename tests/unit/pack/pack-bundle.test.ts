@@ -601,4 +601,85 @@ describe('writeBundle', () => {
     // exactly the build-vs-live drift signal these two fields exist to make visible.
     expect(workflowJsonEntry.liveExportHash).not.toBe(workflowJsonEntry.originalBuildHash)
   })
+
+  describe('build-vs-live drift detection (real computed hashes, not placeholder strings)', () => {
+    const BUILT_WEBHOOK_NODE = { id: 'n1', name: 'Webhook', type: 'n8n-nodes-base.webhook', typeVersion: 1, position: [0, 0] as [number, number], parameters: { path: 'x', httpMethod: 'POST' } }
+
+    function provenanceWithHash(workflowHash: string) {
+      return {
+        kairosVersion: '0.10.0', model: 'claude-test', maxTokens: 16000, temperature: 0.3, runId: 'run-1',
+        ruleSetVersion: 'rules-1', promptTemplateVersion: 'prompt-1', promptProfile: 'standard',
+        nodeCatalogVersion: {}, workflowHash,
+      }
+    }
+
+    it('reports no drift (matching hashes) when the live workflow is unchanged since it was built', async () => {
+      const dir = await makeTmpDir()
+      // Mirrors exactly what fetchWorkflowJson() strips mockBundleClient()'s live response
+      // down to -- if the pack's stored build-time hash was computed from this same shape,
+      // a live fetch that returns the same content must produce the same hash.
+      const originalHash = computeWorkflowHash({ nodes: [BUILT_WEBHOOK_NODE], connections: {} })
+      const pack = makePack({
+        workflows: [{
+          name: 'Referral Intake', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1,
+          credentialsNeeded: [], finalIssues: [], provenance: provenanceWithHash(originalHash),
+        }],
+      })
+      const { client } = mockBundleClient()
+
+      const manifest = await writeBundle(pack, client, dir)
+      const entry = manifest.files.find((f) => f.path.endsWith('referral-intake.workflow.json'))!
+
+      expect(entry.originalBuildHash).toBe(entry.liveExportHash)
+    })
+
+    it('reports drift (mismatched hashes) when the live workflow has changed since it was built', async () => {
+      const dir = await makeTmpDir()
+      // A hash computed from a genuinely different (extra-node) version of the workflow --
+      // models "someone added a node in the n8n editor after Kairos built this."
+      const extraNode = { id: 'n2', name: 'Notify', type: 'n8n-nodes-base.slack', typeVersion: 1, position: [200, 0] as [number, number], parameters: {} }
+      const originalHash = computeWorkflowHash({ nodes: [BUILT_WEBHOOK_NODE, extraNode], connections: {} })
+      const pack = makePack({
+        workflows: [{
+          name: 'Referral Intake', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1,
+          credentialsNeeded: [], finalIssues: [], provenance: provenanceWithHash(originalHash),
+        }],
+      })
+      const { client } = mockBundleClient()
+
+      const manifest = await writeBundle(pack, client, dir)
+      const entry = manifest.files.find((f) => f.path.endsWith('referral-intake.workflow.json'))!
+
+      expect(entry.originalBuildHash).not.toBe(entry.liveExportHash)
+    })
+
+    it('handles a mixed pack -- one workflow with provenance, one without -- without throwing', async () => {
+      // Realistic scenario: a pack rebuilt/extended incrementally over time, where only the
+      // more recently (re)built workflow has provenance recorded.
+      const dir = await makeTmpDir()
+      const originalHash = computeWorkflowHash({ nodes: [BUILT_WEBHOOK_NODE], connections: {} })
+      const pack = makePack({
+        workflows: [
+          {
+            name: 'Referral Intake', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1,
+            credentialsNeeded: [], finalIssues: [], provenance: provenanceWithHash(originalHash),
+          },
+          {
+            name: 'Weekly Summary', purpose: 'y', workflowId: 'wf-2', deployed: true, generationAttempts: 1,
+            credentialsNeeded: [], finalIssues: [],
+          },
+        ],
+      })
+      const { client } = mockBundleClient()
+
+      const manifest = await writeBundle(pack, client, dir)
+
+      const withProvenance = manifest.files.find((f) => f.path.endsWith('referral-intake.workflow.json'))!
+      const withoutProvenance = manifest.files.find((f) => f.path.endsWith('weekly-summary.workflow.json'))!
+
+      expect(withProvenance.originalBuildHash).toBe(originalHash)
+      expect(withoutProvenance.originalBuildHash).toBeUndefined()
+      expect(withoutProvenance.liveExportHash).toMatch(/^w1:[0-9a-f]{64}$/)
+    })
+  })
 })
