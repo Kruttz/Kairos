@@ -4,6 +4,15 @@ All notable changes to `@kairos-sdk/core` are documented here. Format loosely fo
 
 ## [Unreleased]
 
+### New: `kairos preflight <pack> --bundle-dir <dir>` (Phase 3 — bundle cross-reference)
+Cross-checks a preflight run against a previously generated `--bundle` output directory: whether test-artifacts (`test-payloads.json`/`contract.openapi.json`) exist for each webhook-shaped workflow, and — if a `bundle-manifest.json` is present there — surfaces its raw `generatedAt` timestamp and any artifacts it had to skip during generation.
+
+Knowing *which* workflows are webhook-shaped requires the live node graph, so this check's meaning depends on `--live`, not just `--bundle-dir`. Without `--live`, the check reads exactly "Webhook artifact checks require --live" — refined mid-implementation from an earlier draft that would have said "N workflows may be webhook-shaped," which is a count preflight genuinely doesn't have without `--live` and shouldn't guess at. With `--live` but no `--bundle-dir`, it reports the real count it *does* have and recommends passing `--bundle-dir`. With both, it checks actual file presence — missing artifacts warn (`GO WITH WARNINGS` at most), never fail, since these are already-documented heuristic/best-effort artifacts from the Delivery Bundle and their absence shouldn't be treated as more serious than the artifacts themselves claim to be.
+
+Bundle manifest freshness is purely informational, not a go/no-go check — no invented staleness threshold (e.g. "stale after 7 days" would be fake precision with no basis); it's only rendered at all when `--bundle-dir` was actually given. Extended mid-implementation to also surface `manifest.skipped` entries (not just `generatedAt`) — if the bundle run had to skip generating `workflow.json` because an n8n fetch failed, preflight now shows that alongside the timestamp, since it's directly relevant to whether the pack is actually ready.
+
+Tests: 8 new unit tests (no-count-without-`--live` phrasing, informational count with `--live` only, warn-not-fail on missing artifacts, pass on present artifacts, manifest absent from output when no `--bundle-dir`, manifest found with skipped entries, manifest missing/malformed degrades to warn not throw) + 1 CLI test (`--bundle-dir` end-to-end with a real manifest file). 1147/1147 passing overall. Typecheck/lint clean.
+
 ### New: `kairos preflight <pack> --live` (Phase 2 — live n8n checks)
 Adds the two checks that genuinely need a live n8n fetch, on top of Phase 1's offline checklist: placeholder/unwired credential IDs, and a best-effort Google Sheets ID signal. Also quietly enumerates webhook-shaped workflows for Phase 3's `--bundle-dir` cross-reference (stored on `PreflightResult.webhookShapedWorkflows`, not rendered as a check of its own yet).
 

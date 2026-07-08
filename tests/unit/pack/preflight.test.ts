@@ -292,3 +292,117 @@ describe('runPreflight — webhook-shaped workflow enumeration (--live only, no 
     expect(result.webhookShapedWorkflows).toBeUndefined()
   })
 })
+
+describe('runPreflight — test-artifact presence (Phase 3)', () => {
+  it('without --live: never claims a specific count -- phrased as "requires --live", not "N workflows may be..."', async () => {
+    const pack = makePack({ workflows: [cleanWorkflow()] })
+    const result = await runPreflight(pack, { bundleDir: '/some/dir' })
+    const check = checkFor(result, 'test-artifacts')
+    expect(check?.status).toBe('skip')
+    expect(check?.detail).toBe('Webhook artifact checks require --live')
+  })
+
+  it('--live without --bundle-dir: reports a real count as informational, recommends --bundle-dir', async () => {
+    const pack = makePack({ workflows: [cleanWorkflow({ name: 'Has Webhook' })] })
+    const client = mockClient(async (id) => makeResponse({
+      id,
+      nodes: [{ id: 'n1', name: 'Webhook', type: 'n8n-nodes-base.webhook', typeVersion: 1, position: [0, 0], parameters: { path: 'x', httpMethod: 'POST' } }],
+    }))
+    const result = await runPreflight(pack, { live: true, client })
+    const check = checkFor(result, 'test-artifacts')
+    expect(check?.status).toBe('info')
+    expect(check?.detail).toContain('1 webhook-shaped workflow(s) found')
+    expect(check?.detail).toContain('--bundle-dir')
+  })
+
+  it('--live + --bundle-dir: warns (not fails) when artifacts are missing -- non-blocking at most GO WITH WARNINGS', async () => {
+    const { mkdtemp, rm } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dir = await mkdtemp(join(tmpdir(), 'kairos-preflight-bundle-'))
+    try {
+      const pack = makePack({ workflows: [cleanWorkflow({ name: 'Has Webhook' })] })
+      const client = mockClient(async (id) => makeResponse({
+        id,
+        nodes: [{ id: 'n1', name: 'Webhook', type: 'n8n-nodes-base.webhook', typeVersion: 1, position: [0, 0], parameters: { path: 'x', httpMethod: 'POST' } }],
+      }))
+      const result = await runPreflight(pack, { live: true, client, bundleDir: dir })
+      expect(result.verdict).not.toBe('NO-GO')
+      const check = checkFor(result, 'test-artifacts')
+      expect(check?.status).toBe('warn')
+      expect(check?.detail).toContain('test-payloads.json')
+      expect(check?.detail).toContain('contract.openapi.json')
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('--live + --bundle-dir: passes when both artifact files exist', async () => {
+    const { mkdtemp, rm, writeFile } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dir = await mkdtemp(join(tmpdir(), 'kairos-preflight-bundle-'))
+    try {
+      await writeFile(join(dir, 'has-webhook.test-payloads.json'), '{}')
+      await writeFile(join(dir, 'has-webhook.contract.openapi.json'), '{}')
+      const pack = makePack({ workflows: [cleanWorkflow({ name: 'Has Webhook' })] })
+      const client = mockClient(async (id) => makeResponse({
+        id,
+        nodes: [{ id: 'n1', name: 'Webhook', type: 'n8n-nodes-base.webhook', typeVersion: 1, position: [0, 0], parameters: { path: 'x', httpMethod: 'POST' } }],
+      }))
+      const result = await runPreflight(pack, { live: true, client, bundleDir: dir })
+      expect(checkFor(result, 'test-artifacts')?.status).toBe('pass')
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('runPreflight — bundle manifest freshness (Phase 3)', () => {
+  it('is not rendered at all when --bundle-dir was not given', async () => {
+    const pack = makePack({ workflows: [cleanWorkflow()] })
+    const result = await runPreflight(pack)
+    expect(checkFor(result, 'bundle-manifest')).toBeUndefined()
+  })
+
+  it('surfaces generatedAt and skipped artifacts when the manifest exists', async () => {
+    const { mkdtemp, rm, writeFile } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dir = await mkdtemp(join(tmpdir(), 'kairos-preflight-manifest-'))
+    try {
+      await writeFile(join(dir, 'bundle-manifest.json'), JSON.stringify({
+        generatedAt: '2026-07-08T20:35:59.000Z',
+        packName: 'empire-homecare',
+        files: [],
+        skipped: [{ artifact: 'workflow.json', workflowName: 'Missed-Call Text-Back', reason: 'n8n fetch failed' }],
+      }))
+      const pack = makePack({ workflows: [cleanWorkflow()] })
+      const result = await runPreflight(pack, { bundleDir: dir })
+      const check = checkFor(result, 'bundle-manifest')
+      expect(check?.status).toBe('info')
+      expect(check?.detail).toContain('2026-07-08T20:35:59.000Z')
+      expect(check?.detail).toContain('workflow.json')
+      expect(check?.detail).toContain('Missed-Call Text-Back')
+      expect(check?.detail).toContain('n8n fetch failed')
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('warns (does not throw) when bundle-manifest.json is missing at the given --bundle-dir', async () => {
+    const { mkdtemp, rm } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dir = await mkdtemp(join(tmpdir(), 'kairos-preflight-nomanifest-'))
+    try {
+      const pack = makePack({ workflows: [cleanWorkflow()] })
+      const result = await runPreflight(pack, { bundleDir: dir })
+      const check = checkFor(result, 'bundle-manifest')
+      expect(check?.status).toBe('warn')
+      expect(check?.detail).toContain('Could not read bundle-manifest.json')
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+})

@@ -666,6 +666,34 @@ describe('CLI — parseArgs / routing', () => {
         await rm(fakeHome, { recursive: true, force: true })
       }
     })
+
+    it('--bundle-dir surfaces bundle-manifest.json freshness and skipped artifacts', async () => {
+      const fakeHome = await mkdtemp(join(tmpdir(), 'kairos-cli-preflight-bundledir-'))
+      const bundleDir = await mkdtemp(join(tmpdir(), 'kairos-cli-preflight-bundle-out-'))
+      try {
+        const { mkdir, writeFile } = await import('node:fs/promises')
+        const packsDir = join(fakeHome, '.kairos', 'packs')
+        await mkdir(packsDir, { recursive: true })
+        await writeFile(join(packsDir, 'test-pack.json'), JSON.stringify({
+          businessContext: 'Empire Homecare', packName: 'test-pack', status: 'ready_for_test',
+          workflows: [], allCredentials: [], sheetsColumns: [], assumptions: [], testChecklist: [], builtAt: '2026-01-01T00:00:00.000Z',
+        }))
+        await writeFile(join(bundleDir, 'bundle-manifest.json'), JSON.stringify({
+          generatedAt: '2026-07-08T20:35:59.000Z', packName: 'test-pack', files: [],
+          skipped: [{ artifact: 'workflow.json', workflowName: 'Missed-Call Text-Back', reason: 'n8n fetch failed' }],
+        }))
+
+        const r = run(['preflight', 'test-pack', '--bundle-dir', bundleDir], { HOME: fakeHome })
+        expect(r.status).toBe(0)
+        expect(r.stdout).toContain('Bundle manifest')
+        expect(r.stdout).toContain('2026-07-08T20:35:59.000Z')
+        expect(r.stdout).toContain('workflow.json')
+        expect(r.stdout).toContain('n8n fetch failed')
+      } finally {
+        await rm(fakeHome, { recursive: true, force: true })
+        await rm(bundleDir, { recursive: true, force: true })
+      }
+    })
   })
 
   describe('pack export --risk-report', () => {

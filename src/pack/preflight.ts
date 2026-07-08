@@ -1,6 +1,8 @@
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import type { WorkflowPackResult } from './pack-builder.js'
 import type { N8nWorkflow } from '../types/workflow.js'
-import { computeRiskFindings, fetchWorkflowJson } from './pack-bundle.js'
+import { computeRiskFindings, fetchWorkflowJson, slugifyWorkflowName, type BundleManifest } from './pack-bundle.js'
 import { findSheetNodes } from './pack-wirer.js'
 import { findWebhookTrigger } from '../utils/webhook-verify.js'
 import type { N8nApiClient } from '../providers/n8n/index.js'
@@ -212,6 +214,51 @@ export async function runPreflight(pack: WorkflowPackResult, options: PreflightO
     webhookShapedWorkflows = webhookShaped
   }
 
+  // 11. Test-artifact presence -- knowing WHICH workflows are webhook-shaped requires --live
+  // (the live node graph), so this check's meaning depends on whether --live was also passed,
+  // not just whether --bundle-dir was. Never claim a count we don't actually have.
+  if (isEscalated) {
+    checks.push({ id: 'test-artifacts', label: 'Test artifacts generated for webhook workflows', status: 'skip', detail: 'N/A -- pack never built' })
+  } else if (!live) {
+    checks.push({ id: 'test-artifacts', label: 'Test artifacts generated for webhook workflows', status: 'skip', detail: 'Webhook artifact checks require --live' })
+  } else if (!options.bundleDir) {
+    const n = webhookShapedWorkflows?.length ?? 0
+    checks.push(n > 0
+      ? { id: 'test-artifacts', label: 'Test artifacts generated for webhook workflows', status: 'info', detail: `${n} webhook-shaped workflow(s) found -- pass --bundle-dir to check for generated test artifacts` }
+      : { id: 'test-artifacts', label: 'Test artifacts generated for webhook workflows', status: 'pass', detail: 'No webhook-shaped workflows found' })
+  } else {
+    const missing: string[] = []
+    for (const name of webhookShapedWorkflows ?? []) {
+      const slug = slugifyWorkflowName(name)
+      const testPayloadsExists = await fileExists(join(options.bundleDir, `${slug}.test-payloads.json`))
+      const openApiExists = await fileExists(join(options.bundleDir, `${slug}.contract.openapi.json`))
+      if (!testPayloadsExists) missing.push(`${name} (missing test-payloads.json)`)
+      if (!openApiExists) missing.push(`${name} (missing contract.openapi.json)`)
+    }
+    // Non-blocking at most GO WITH WARNINGS -- these are already-heuristic, best-effort
+    // artifacts (Delivery Bundle Phase 5/6); their absence shouldn't be treated as more
+    // serious than the artifacts themselves claim to be.
+    checks.push(missing.length > 0
+      ? { id: 'test-artifacts', label: 'Test artifacts generated for webhook workflows', status: 'warn', detail: missing.join('; ') }
+      : { id: 'test-artifacts', label: 'Test artifacts generated for webhook workflows', status: 'pass' })
+  }
+
+  // 12. Bundle manifest freshness -- purely informational, not a go/no-go check. Only rendered
+  // at all when --bundle-dir was actually given (there's nothing to report otherwise).
+  if (options.bundleDir) {
+    const manifestPath = join(options.bundleDir, 'bundle-manifest.json')
+    try {
+      const raw = await readFile(manifestPath, 'utf-8')
+      const manifest = JSON.parse(raw) as BundleManifest
+      const skipSummary = manifest.skipped.length > 0
+        ? ` ${manifest.skipped.length} artifact(s) were skipped during generation: ${manifest.skipped.map((s) => `${s.artifact}${s.workflowName ? ` (${s.workflowName})` : ''} -- ${s.reason}`).join('; ')}`
+        : ''
+      checks.push({ id: 'bundle-manifest', label: 'Bundle manifest', status: 'info', detail: `Last generated: ${manifest.generatedAt}.${skipSummary}` })
+    } catch (err) {
+      checks.push({ id: 'bundle-manifest', label: 'Bundle manifest', status: 'warn', detail: `Could not read bundle-manifest.json at ${options.bundleDir}: ${err instanceof Error ? err.message : String(err)}` })
+    }
+  }
+
   const verdict = computeVerdict(checks, isEscalated)
 
   return {
@@ -251,6 +298,15 @@ function computeVerdict(checks: PreflightCheck[], isEscalated: boolean): Preflig
   if (checks.some((c) => c.status === 'fail')) return 'NO-GO'
   if (checks.some((c) => c.status === 'warn')) return 'GO WITH WARNINGS'
   return 'GO'
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await readFile(path, 'utf-8')
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** Renders a PreflightResult as a scannable checklist -- one line per check, not narrative prose. */

@@ -820,6 +820,15 @@ kairos preflight my-pack --json
 # value is only ever "not obviously wrong," never confirmed -- always caveated).
 kairos preflight my-pack --live
 
+# --bundle-dir cross-checks against a previously generated --bundle output:
+# whether test-payloads.json/contract.openapi.json exist for each webhook-shaped
+# workflow (needs --live too, since knowing which workflows are webhook-shaped
+# needs the live node graph -- without --live this just says so, it never
+# guesses a count), and if bundle-manifest.json is there, surfaces its raw
+# generatedAt timestamp plus any artifacts it had to skip (no invented
+# staleness threshold -- you judge whether it's stale).
+kairos preflight my-pack --live --bundle-dir ./deliverables
+
 # Print the saved pack as JSON, or generate a client-ready Markdown handoff
 # (status, blocking issues, credentials needed, setup/testing/activation checklists)
 kairos pack export my-pack
