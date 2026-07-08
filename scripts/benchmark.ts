@@ -9,7 +9,13 @@
  *
  * Flags:
  *   --no-library   Run without library (NullLibrary) for baseline measurement
- *   --compare      Compare results against a previous run's JSON file
+ *   --compare      Compare results against a previous run's JSON file. Prints aggregate
+ *                  summary deltas plus, when the baseline file has a `results` array,
+ *                  an explicit list of any prompt that passed in the baseline and fails
+ *                  now (see scripts/benchmark-compare.ts) -- an aggregate delta alone can
+ *                  mask one regression if other prompts improve at the same time. This
+ *                  is manual and human-triggered by design (real Anthropic API calls,
+ *                  non-deterministic by nature) -- never wired into required CI.
  *   --tier <name>  Run only one difficulty tier instead of the first --count prompts.
  *                  One of: simple | medium | complex | edge | realworld | stress |
  *                  additional | backendApi | all. Overrides --count when both are given.
@@ -46,6 +52,7 @@ import { Kairos, FileLibrary } from '../src/index.js'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { findRegressions, formatRegressions } from './benchmark-compare.js'
 
 const PROMPTS = [
   // --- Simple (single trigger + 1-2 nodes) ---
@@ -402,7 +409,7 @@ async function runBenchmark(count: number, outputPath?: string, useLibrary = tru
     try {
       const { readFile } = await import('node:fs/promises')
       const raw = await readFile(comparePath, 'utf-8')
-      const baseline = JSON.parse(raw) as { summary: BenchmarkSummary }
+      const baseline = JSON.parse(raw) as { summary: BenchmarkSummary; results?: BenchmarkResult[] }
       const b = baseline.summary
 
       console.log('\n' + '═'.repeat(60))
@@ -420,6 +427,14 @@ async function runBenchmark(count: number, outputPath?: string, useLibrary = tru
       console.log(`Correction rate:     ${(b.correctionRate * 100).toFixed(1)}%       ${(summary.correctionRate * 100).toFixed(1)}%      ${delta(summary.correctionRate * 100, b.correctionRate * 100)}pp`)
       console.log(`Avg duration:        ${(b.avgDurationMs / 1000).toFixed(1)}s       ${(summary.avgDurationMs / 1000).toFixed(1)}s      ${delta(summary.avgDurationMs / 1000, b.avgDurationMs / 1000)}s`)
       console.log(`Failures:            ${b.failures}           ${summary.failures}          ${delta(summary.failures, b.failures)}`)
+
+      // Aggregate deltas can mask one prompt flipping pass->fail while others improve --
+      // this is a per-prompt check on top of the summary-level comparison above.
+      if (baseline.results) {
+        const regressions = findRegressions(baseline.results, results)
+        const formatted = formatRegressions(regressions)
+        if (formatted) console.log(formatted)
+      }
     } catch {
       console.log(`\nCould not load comparison file: ${comparePath}`)
     }
