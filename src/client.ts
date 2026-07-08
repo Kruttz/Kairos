@@ -1,6 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { N8nWorkflow, Tag } from './types/workflow.js'
-import type { BuildResult, WorkflowListItem, ExecutionSummary, ExecutionDetail, SmokeTestResult, CredentialRequirement } from './types/result.js'
+import type { BuildResult, BuildProvenance, WorkflowListItem, ExecutionSummary, ExecutionDetail, SmokeTestResult, CredentialRequirement } from './types/result.js'
+import { computeWorkflowHash } from './utils/workflow-hash.js'
+import { getRuleSetVersion, getPromptVersion, getNodeCatalogVersion } from './validation/provenance-versions.js'
 import type { ClientOptions, BuildOptions, DeleteOptions, ExecutionFilter } from './types/options.js'
 import type { IWorkflowLibrary, WorkflowMatch, WorkflowMetadataInput } from './library/types.js'
 import { NullLibrary } from './library/null-library.js'
@@ -44,13 +46,15 @@ export class Kairos {
   private readonly telemetryReader: TelemetryReader | null
   private readonly patternAnalyzer: PatternAnalyzer | null
   private readonly model: string
+  private readonly maxTokens: number
   private readonly memoryStore: ClientMemoryStore
   private saveQueue: Promise<string | null> = Promise.resolve(null)
 
   constructor(options: ClientOptions) {
     const logger = options.logger ?? nullLogger
     this.model = options.model ?? DEFAULT_MODEL
-    const maxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS
+    this.maxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS
+    const maxTokens = this.maxTokens
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
 
     if (options.n8nBaseUrl && options.n8nApiKey) {
@@ -100,6 +104,19 @@ export class Kairos {
   private validateDescription(description: string): void {
     if (!description || description.trim().length === 0) {
       throw new GuardError('Description is required and must be non-empty')
+    }
+  }
+
+  private buildProvenance(workflow: N8nWorkflow, designResult: DesignResult, runId: string): BuildProvenance {
+    return {
+      model: this.model,
+      maxTokens: this.maxTokens,
+      temperature: designResult.attemptMetadata.at(-1)?.temperature ?? null,
+      runId,
+      ruleSetVersion: getRuleSetVersion(),
+      promptVersion: getPromptVersion(),
+      nodeCatalogVersion: getNodeCatalogVersion(),
+      workflowHash: computeWorkflowHash(workflow),
     }
   }
 
@@ -223,6 +240,7 @@ export class Kairos {
         dryRun: true,
         summary,
         finalIssues: designResult.attemptMetadata.at(-1)?.issues ?? [],
+        provenance: this.buildProvenance(workflow, designResult, runId),
       }
     }
 
@@ -309,6 +327,7 @@ export class Kairos {
       dryRun: false,
       summary: finalSummary,
       finalIssues: designResult.attemptMetadata.at(-1)?.issues ?? [],
+      provenance: this.buildProvenance(workflow, designResult, runId),
       ...(smokeTestResult !== undefined ? { smokeTest: smokeTestResult } : {}),
       ...(webhookVerification !== null ? { webhookVerification } : {}),
     }
@@ -401,6 +420,7 @@ export class Kairos {
       dryRun: false,
       summary,
       finalIssues: designResult.attemptMetadata.at(-1)?.issues ?? [],
+      provenance: this.buildProvenance(designResult.workflow, designResult, runId),
     }
   }
 

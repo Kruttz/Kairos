@@ -4,6 +4,32 @@ export interface CredentialRequirement {
   description: string
 }
 
+/**
+ * What was actually true when this specific workflow was built -- answers "was this built
+ * under today's rules/catalog/prompt, or an older set?" and "what model/settings produced
+ * it?" without any diffing, history, or rollback mechanic. See
+ * src/validation/provenance-versions.ts and src/utils/workflow-hash.ts for how each field is
+ * derived; ruleSetVersion and promptVersion are content-derived hashes (never a manually
+ * bumped constant), nodeCatalogVersion is the exact pinned source-package versions the
+ * catalog was generated from.
+ */
+export interface BuildProvenance {
+  model: string
+  maxTokens: number
+  /** The final (successful) generation attempt's temperature. Null only when no attempt
+   * metadata is available (shouldn't happen for a successful build, but the field degrades
+   * honestly rather than fabricating a value). */
+  temperature: number | null
+  runId: string
+  ruleSetVersion: string
+  promptVersion: string
+  nodeCatalogVersion: Record<string, string>
+  /** Deterministic hash of the built workflow's nodes/connections/settings -- see
+   * src/utils/workflow-hash.ts. Always computable, including for dry-run builds, since it
+   * only needs nodes/connections/settings, not a deployed workflowId. */
+  workflowHash: string
+}
+
 export type SmokeTestStatus = 'passed' | 'failed' | 'error' | 'not-applicable'
 
 export interface SmokeTestResult {
@@ -37,6 +63,9 @@ export interface BuildResult {
   smokeTest?: SmokeTestResult
   /** Set only for webhook-triggered workflows built with activate: true — see src/utils/webhook-verify.ts */
   webhookVerification?: import('../utils/webhook-verify.js').WebhookReachabilityResult
+  /** Absent only on results deserialized from a pack persisted before this field existed —
+   * treat that case as "provenance unknown," never as an error. */
+  provenance?: BuildProvenance
 }
 
 export interface DeployResult {
