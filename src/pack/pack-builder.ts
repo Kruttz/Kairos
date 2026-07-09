@@ -142,7 +142,7 @@ const PLAN_PROMPT = `You are planning an n8n workflow automation pack for a busi
 
 Business context: {CONTEXT}
 
-Generate a list of 4-8 n8n workflows that would meaningfully automate this business's operations. Focus on workflows that save time on repetitive tasks, improve customer communication, prevent things falling through the cracks, and are realistic to implement with n8n nodes.
+Generate a list of 4-8 n8n workflows that would meaningfully automate this business's operations -- UNLESS the business context above explicitly states a specific number or an explicit list of workflows to build (e.g. "exactly two workflows", "build only these three: ..."), in which case build precisely that scope instead, even if it is fewer than 4 or more than 8. An explicit scope in the business context always overrides this default range. Focus on workflows that save time on repetitive tasks, improve customer communication, prevent things falling through the cracks, and are realistic to implement with n8n nodes.
 
 For each workflow, write a detailed build description (2-4 sentences) suitable for passing directly to an n8n workflow generator. Be specific: name the trigger type, data sources (Google Sheets columns if applicable), actions, and outputs.
 
