@@ -262,3 +262,111 @@ describe('Golden pack: non-webhook (schedule + email)', () => {
     expect(preflightResult.webhookShapedWorkflows ?? []).toEqual([])
   })
 })
+
+describe('Golden pack: chaining (Step 7 v4 / Step 8)', () => {
+  let outDir: string
+
+  afterEach(async () => {
+    vi.restoreAllMocks()
+    if (outDir) await rm(outDir, { recursive: true, force: true })
+  })
+
+  it('a downstream workflow receives the upstream\'s real webhook path via priorContext, and the full plan->build->writeBundle->preflight pipeline still works end to end', async () => {
+    const intakeWorkflow: N8nWorkflow = {
+      name: 'Referral Intake',
+      nodes: [
+        { id: 'n1', name: 'Referral Webhook', type: 'n8n-nodes-base.webhook', typeVersion: 2, position: [0, 0], parameters: { httpMethod: 'POST', path: 'referral-intake' } },
+      ],
+      connections: {},
+    }
+
+    // Hand-authored to simulate what a well-behaved LLM produces GIVEN correct priorContext --
+    // its body text references the upstream's real path, not a guessed/hallucinated one. LLM
+    // prompt-following itself isn't something a mocked test can verify (see Step 7 v4 Process
+    // step 9 / Step 8 Process step 5: that needs a manual real-model spot-check), but the DATA
+    // this fixture proves flows correctly end to end -- real path in, real path referenced out.
+    const confirmationWorkflow: N8nWorkflow = {
+      name: 'Referral Confirmation Email',
+      nodes: [
+        { id: 'n1', name: 'Manual Trigger', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 0], parameters: {} },
+        { id: 'n2', name: 'Send Confirmation', type: 'n8n-nodes-base.emailSend', typeVersion: 2.1, position: [200, 0], parameters: { subject: 'Referral received', message: 'A new referral came in via /referral-intake' } },
+      ],
+      connections: { 'Manual Trigger': { main: [[{ node: 'Send Confirmation', type: 'main', index: 0 }]] } },
+    }
+
+    const workflowsByName: Record<string, N8nWorkflow> = {
+      'Referral Intake': intakeWorkflow,
+      'Referral Confirmation Email': confirmationWorkflow,
+    }
+
+    const buildCalls: Array<{ name: string; priorContext: unknown }> = []
+    const mockKairos = {
+      build: vi.fn(async (_description: string, options?: { name?: string; priorContext?: unknown }) => {
+        const name = options?.name ?? ''
+        buildCalls.push({ name, priorContext: options?.priorContext })
+        const workflow = workflowsByName[name]!
+        return {
+          workflowId: `wf-${name.toLowerCase().replace(/\s+/g, '-')}`,
+          name,
+          workflow,
+          credentialsNeeded: name === 'Referral Confirmation Email'
+            ? [{ service: 'SMTP', credentialType: 'smtp', description: 'x' }]
+            : [],
+          activationRequired: true,
+          generationAttempts: 1,
+          tokensInput: 400,
+          tokensOutput: 300,
+          dryRun: false,
+          summary: 'x',
+          finalIssues: [],
+        }
+      }),
+      drain: vi.fn().mockResolvedValue(undefined),
+    } as unknown as Kairos
+
+    const builder = new PackBuilder({ anthropicApiKey: 'sk-ant-test', kairos: mockKairos })
+    ;(builder as unknown as Record<string, unknown>)['client'] = makeMockAnthropic({
+      workflows: [
+        { name: 'Referral Intake', description: 'Webhook-triggered referral intake.', purpose: 'Capture referrals immediately.' },
+        { name: 'Referral Confirmation Email', description: 'Sends a confirmation referencing the intake webhook.', purpose: 'Confirm receipt to the team.', dependsOn: ['Referral Intake'] },
+      ],
+      assumptions: [],
+      sheetsColumns: [],
+      testChecklist: [],
+    })
+
+    const plan = await builder.plan('Empire Homecare referral intake with confirmation')
+    const pack = await builder.build(plan)
+
+    // The chain built correctly: both workflows deployed, plan order preserved in the result.
+    expect(pack.workflows).toHaveLength(2)
+    expect(pack.workflows[0]!.name).toBe('Referral Intake')
+    expect(pack.workflows[1]!.name).toBe('Referral Confirmation Email')
+    expect(pack.workflows.every((w) => w.deployed)).toBe(true)
+    expect(pack.workflows[1]!.dependsOn).toEqual([pack.workflows[0]!.workflowKey])
+
+    // The real webhook path flowed into the dependent's build call.
+    const confirmationCall = buildCalls.find((c) => c.name === 'Referral Confirmation Email')!
+    const priorContext = confirmationCall.priorContext as Array<{ webhookPath?: string; httpMethod?: string }>
+    expect(priorContext).toHaveLength(1)
+    expect(priorContext[0]!.webhookPath).toBe('referral-intake')
+    expect(priorContext[0]!.httpMethod).toBe('POST')
+
+    // The full delivery pipeline still works end to end for a chained pack.
+    outDir = await mkdtemp(join(tmpdir(), 'kairos-golden-chained-'))
+    const n8nClient = {
+      getWorkflow: vi.fn(async (id: string) => {
+        const matchedName = Object.keys(workflowsByName).find((name) => id === `wf-${name.toLowerCase().replace(/\s+/g, '-')}`)!
+        const workflow = workflowsByName[matchedName]!
+        return { id, name: workflow.name, active: false, nodes: workflow.nodes, connections: workflow.connections, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', versionId: 'v1' } as N8nWorkflowResponse
+      }),
+    } as unknown as N8nApiClient
+
+    const manifest: BundleManifest = await writeBundle(pack, n8nClient, outDir)
+    expect(manifest.skipped.filter((s) => s.artifact === 'workflow.json')).toEqual([])
+
+    const preflightResult = await runPreflight(pack)
+    expect(preflightResult.verdict).not.toBe('BLOCKED')
+    expect(preflightResult.checks.some((c) => c.status === 'fail')).toBe(false)
+  })
+})

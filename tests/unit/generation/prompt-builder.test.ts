@@ -157,6 +157,29 @@ describe('PromptBuilder', () => {
       const prompt = minimalBuilder.build({ description: 'test' }, [], [], undefined, undefined, [deployedRef])
       expect(prompt.system.some((b) => b.text.includes('Related Workflows Already Built'))).toBe(true)
     })
+
+    it('token-budget guardrail: a single-dependency chain adds a small, bounded amount to the prompt -- nowhere near a full workflow JSON\'s size', () => {
+      // Step 7 v4 §9 / Step 8 Process step 10: measure token delta chained vs non-chained.
+      // No live Anthropic call in required CI (this session's standing rule) -- character
+      // count is a reasonable, deterministic proxy for token count (~4 chars/token typically),
+      // and what actually matters here is proving the guardrail (compact, bounded, never a
+      // full N8nWorkflow JSON) holds in practice, not measuring an exact token number that
+      // would need a real API call to obtain.
+      const withoutChaining = builder.build({ description: 'test' }, [])
+      const withChaining = builder.build({ description: 'test' }, [], [], undefined, undefined, [deployedRef])
+
+      const baselineLength = withoutChaining.system.reduce((sum, b) => sum + b.text.length, 0)
+      const chainedLength = withChaining.system.reduce((sum, b) => sum + b.text.length, 0)
+      const delta = chainedLength - baselineLength
+
+      // A full workflow's JSON (even a small 2-node one) typically runs several thousand
+      // characters -- the whole point of WorkflowReference is staying an order of magnitude
+      // smaller than that per dependency.
+      expect(delta).toBeGreaterThan(0)
+      expect(delta).toBeLessThan(1000)
+      // eslint-disable-next-line no-console -- deliberate, human-readable report per Step 8 Process step 10, not left-over debug output
+      console.log(`[token-budget guardrail] single-dependency priorContext adds ${delta} chars (~${Math.round(delta / 4)} tokens) to the system prompt`)
+    })
   })
 
   it('includes global high-frequency failure rates', () => {
