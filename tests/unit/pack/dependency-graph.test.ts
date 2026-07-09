@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { assignWorkflowKeys } from '../../../src/pack/dependency-graph.js'
+import { assignWorkflowKeys, resolveBuildOrder } from '../../../src/pack/dependency-graph.js'
+import type { KeyedWorkflowPlan } from '../../../src/pack/dependency-graph.js'
 import type { WorkflowPlan } from '../../../src/pack/pack-builder.js'
 
 function makeWorkflow(name: string): WorkflowPlan {
@@ -38,5 +39,126 @@ describe('assignWorkflowKeys', () => {
     const [result] = assignWorkflowKeys([{ name: 'Referral Intake', description: 'Handles referrals', purpose: 'Speed' }])
     expect(result!.description).toBe('Handles referrals')
     expect(result!.purpose).toBe('Speed')
+  })
+})
+
+describe('resolveBuildOrder', () => {
+  function keyed(entries: Array<{ name: string; dependsOn?: unknown }>): KeyedWorkflowPlan[] {
+    const plans: WorkflowPlan[] = entries.map((e) => ({ name: e.name, description: 'x', purpose: 'x', ...(('dependsOn' in e) ? { dependsOn: e.dependsOn } : {}) }))
+    return assignWorkflowKeys(plans)
+  }
+
+  it('no dependencies: trivial order equals plan order, nothing rejected', () => {
+    const workflows = keyed([{ name: 'A' }, { name: 'B' }, { name: 'C' }])
+    const result = resolveBuildOrder(workflows)
+    expect(result.order.map((w) => w.workflowKey)).toEqual(['a', 'b', 'c'])
+    expect(result.rejected.size).toBe(0)
+    expect(result.deduped.size).toBe(0)
+  })
+
+  it('a simple valid chain: B depends on A, builds after it', () => {
+    const workflows = keyed([{ name: 'A' }, { name: 'B', dependsOn: ['A'] }])
+    const result = resolveBuildOrder(workflows)
+    const orderKeys = result.order.map((w) => w.workflowKey)
+    expect(orderKeys.indexOf('a')).toBeLessThan(orderKeys.indexOf('b'))
+    expect(result.rejected.size).toBe(0)
+    expect(result.resolvedDependsOn.get('b')).toEqual(['a'])
+  })
+
+  it('a forward-declared dependency (B listed before A in the plan, but B depends on A) still reorders correctly', () => {
+    const workflows = keyed([{ name: 'B', dependsOn: ['A'] }, { name: 'A' }])
+    const result = resolveBuildOrder(workflows)
+    const orderKeys = result.order.map((w) => w.workflowKey)
+    expect(orderKeys.indexOf('a')).toBeLessThan(orderKeys.indexOf('b'))
+    expect(result.rejected.size).toBe(0)
+  })
+
+  it('unknown dependency: rejects only the declaring workflow, unrelated workflows unaffected', () => {
+    const workflows = keyed([{ name: 'A', dependsOn: ['Nonexistent Workflow'] }, { name: 'B' }])
+    const result = resolveBuildOrder(workflows)
+    expect(result.rejected.get('a')).toEqual([{ reason: 'unknown_dependency', detail: 'Nonexistent Workflow' }])
+    expect(result.order.map((w) => w.workflowKey)).toEqual(['b'])
+  })
+
+  it('ambiguous dependency: two workflows share a name, a third depending on that name is rejected', () => {
+    const workflows = keyed([{ name: 'Send Email' }, { name: 'Send Email' }, { name: 'C', dependsOn: ['Send Email'] }])
+    const result = resolveBuildOrder(workflows)
+    const cRejection = result.rejected.get('c')
+    expect(cRejection).toBeDefined()
+    expect(cRejection![0]!.reason).toBe('ambiguous_dependency')
+    expect(cRejection![0]!.detail).toContain('send-email')
+    expect(cRejection![0]!.detail).toContain('send-email-2')
+    // The two ambiguously-named workflows themselves have no dependsOn problem of their own.
+    expect(result.order.map((w) => w.workflowKey)).toEqual(expect.arrayContaining(['send-email', 'send-email-2']))
+  })
+
+  it('malformed dependency (a bare string instead of an array) is rejected, not silently coerced to []', () => {
+    const workflows = keyed([{ name: 'A', dependsOn: 'Some Workflow' }])
+    const result = resolveBuildOrder(workflows)
+    expect(result.rejected.get('a')).toEqual([{ reason: 'malformed_dependency', detail: JSON.stringify('Some Workflow') }])
+    expect(result.order).toEqual([])
+  })
+
+  it('malformed dependency (an array containing a non-string element) is rejected', () => {
+    const workflows = keyed([{ name: 'A', dependsOn: ['B', 42] }])
+    const result = resolveBuildOrder(workflows)
+    expect(result.rejected.get('a')?.[0]?.reason).toBe('malformed_dependency')
+  })
+
+  it('missing dependsOn (undefined) resolves to an empty dependency set, not a rejection', () => {
+    const workflows = keyed([{ name: 'A' }])
+    const result = resolveBuildOrder(workflows)
+    expect(result.rejected.size).toBe(0)
+    expect(result.resolvedDependsOn.get('a')).toEqual([])
+  })
+
+  it('self-dependency: a workflow depending on its own name is rejected', () => {
+    const workflows = keyed([{ name: 'A', dependsOn: ['A'] }])
+    const result = resolveBuildOrder(workflows)
+    expect(result.rejected.get('a')).toEqual([{ reason: 'self_dependency', detail: 'a' }])
+    expect(result.order).toEqual([])
+  })
+
+  it('a 2-workflow cycle rejects both participants, unrelated workflows unaffected', () => {
+    const workflows = keyed([{ name: 'A', dependsOn: ['B'] }, { name: 'B', dependsOn: ['A'] }, { name: 'C' }])
+    const result = resolveBuildOrder(workflows)
+    expect(result.rejected.get('a')?.[0]?.reason).toBe('cycle')
+    expect(result.rejected.get('b')?.[0]?.reason).toBe('cycle')
+    expect(result.order.map((w) => w.workflowKey)).toEqual(['c'])
+  })
+
+  it('a 3-workflow cycle rejects all three participants', () => {
+    const workflows = keyed([{ name: 'A', dependsOn: ['B'] }, { name: 'B', dependsOn: ['C'] }, { name: 'C', dependsOn: ['A'] }])
+    const result = resolveBuildOrder(workflows)
+    expect(result.rejected.get('a')?.[0]?.reason).toBe('cycle')
+    expect(result.rejected.get('b')?.[0]?.reason).toBe('cycle')
+    expect(result.rejected.get('c')?.[0]?.reason).toBe('cycle')
+    expect(result.order).toEqual([])
+  })
+
+  it('duplicate dependency: deduped, not rejected -- the workflow still builds against the collapsed edge set', () => {
+    const workflows = keyed([{ name: 'A' }, { name: 'B', dependsOn: ['A', 'A'] }])
+    const result = resolveBuildOrder(workflows)
+    expect(result.rejected.size).toBe(0)
+    expect(result.deduped.get('b')).toEqual(['a'])
+    expect(result.resolvedDependsOn.get('b')).toEqual(['a'])
+    expect(result.order.map((w) => w.workflowKey)).toEqual(['a', 'b'])
+  })
+
+  it('never assigns a topological position to any rejected workflow, across every rejection category', () => {
+    const workflows = keyed([
+      { name: 'Unknown Dep', dependsOn: ['Nope'] },
+      { name: 'Ambiguous A' }, { name: 'Ambiguous A' }, { name: 'Uses Ambiguous', dependsOn: ['Ambiguous A'] },
+      { name: 'Malformed', dependsOn: 'not-an-array' },
+      { name: 'Self Dep', dependsOn: ['Self Dep'] },
+      { name: 'Cycle A', dependsOn: ['Cycle B'] }, { name: 'Cycle B', dependsOn: ['Cycle A'] },
+      { name: 'Clean' },
+    ])
+    const result = resolveBuildOrder(workflows)
+    const orderKeys = new Set(result.order.map((w) => w.workflowKey))
+    for (const rejectedKey of result.rejected.keys()) {
+      expect(orderKeys.has(rejectedKey)).toBe(false)
+    }
+    expect(orderKeys.has('clean')).toBe(true)
   })
 })

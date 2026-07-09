@@ -23,6 +23,16 @@ export interface WorkflowPlan {
    * this, never to raw display names, since two workflows can share a name.
    */
   workflowKey?: string
+  /**
+   * Raw, untrusted dependency declaration straight from the LLM's plan JSON -- other
+   * workflows' *names* (not keys) that this workflow needs to reference. Deliberately typed
+   * `unknown`, not `string[]`: resolveBuildOrder()'s own job (src/pack/dependency-graph.ts) is
+   * to validate this into a well-formed, resolved form, so the type must allow arriving as
+   * anything (missing, a bare string, an array of numbers, ...) for that validation to have
+   * something real to check. Never read this field directly -- always go through
+   * resolveBuildOrder()'s resolvedDependsOn output.
+   */
+  dependsOn?: unknown
 }
 
 export interface PackPlan {
