@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { PromptBuilder } from '../../../src/generation/prompt-builder.js'
 import { SYSTEM_PROMPT_V1 } from '../../../src/generation/prompts/v1.js'
 import type { WorkflowMatch } from '../../../src/library/types.js'
+import type { WorkflowReference } from '../../../src/pack/workflow-reference.js'
 
 function makeMatch(score: number, storedOverrides?: Record<string, unknown>): WorkflowMatch {
   return {
@@ -86,6 +87,76 @@ describe('PromptBuilder', () => {
     expect(warningBlock).toBeDefined()
     expect(warningBlock!.text).toContain('Rule 12')
     expect(warningBlock!.text).toContain('3x')
+  })
+
+  describe('priorContext rendering (pack chaining)', () => {
+    const deployedRef: WorkflowReference = {
+      workflowKey: 'referral-intake',
+      workflowName: 'Referral Intake',
+      deployed: true,
+      workflowId: 'wf-1',
+      httpMethod: 'POST',
+      webhookPath: 'referral-intake',
+      webhookUrl: 'https://n8n.example.com/webhook/referral-intake',
+      nodeNames: ['Referral Webhook', 'Notify Slack'],
+      credentialsUsed: ['slackApi'],
+    }
+
+    const dryRunRef: WorkflowReference = {
+      workflowKey: 'daily-summary',
+      workflowName: 'Daily Summary Prep',
+      deployed: false,
+      workflowId: null,
+      httpMethod: 'GET',
+      webhookPath: 'daily-summary',
+      nodeNames: ['Summary Trigger'],
+      credentialsUsed: [],
+    }
+
+    it('renders no chaining section at all when priorContext is absent', () => {
+      const prompt = builder.build({ description: 'test' }, [])
+      expect(prompt.system.some((b) => b.text.includes('Related Workflows Already Built'))).toBe(false)
+    })
+
+    it('renders no chaining section when priorContext is an empty array', () => {
+      const prompt = builder.build({ description: 'test' }, [], [], undefined, undefined, [])
+      expect(prompt.system.some((b) => b.text.includes('Related Workflows Already Built'))).toBe(false)
+    })
+
+    it('renders method/path/URL as distinct labeled lines for a deployed reference', () => {
+      const prompt = builder.build({ description: 'test' }, [], [], undefined, undefined, [deployedRef])
+      const block = prompt.system.find((b) => b.text.includes('Related Workflows Already Built'))
+      expect(block).toBeDefined()
+      expect(block!.text).toContain('### Referral Intake\n')
+      expect(block!.text).toContain('HTTP method: POST')
+      expect(block!.text).toContain('Webhook path (relative): referral-intake')
+      expect(block!.text).toContain('Full webhook URL: https://n8n.example.com/webhook/referral-intake')
+      expect(block!.text).toContain('Nodes: Referral Webhook, Notify Slack')
+      expect(block!.text).toContain('Credentials used: slackApi')
+    })
+
+    it('renders a dry-run reference with an explicit "not yet deployed" caveat and no URL line', () => {
+      const prompt = builder.build({ description: 'test' }, [], [], undefined, undefined, [dryRunRef])
+      const block = prompt.system.find((b) => b.text.includes('Related Workflows Already Built'))
+      expect(block).toBeDefined()
+      expect(block!.text).toContain('### Daily Summary Prep (not yet deployed — path/method only, no live URL)')
+      expect(block!.text).not.toContain('Full webhook URL')
+    })
+
+    it('renders multiple references as separate sections, deterministically', () => {
+      const prompt = builder.build({ description: 'test' }, [], [], undefined, undefined, [deployedRef, dryRunRef])
+      const block = prompt.system.find((b) => b.text.includes('Related Workflows Already Built'))!
+      const firstIndex = block.text.indexOf('Referral Intake')
+      const secondIndex = block.text.indexOf('Daily Summary Prep')
+      expect(firstIndex).toBeGreaterThanOrEqual(0)
+      expect(secondIndex).toBeGreaterThan(firstIndex)
+    })
+
+    it('renders regardless of profile (structural, not optional enrichment)', () => {
+      const minimalBuilder = new PromptBuilder('/nonexistent/patterns.json', 'minimal')
+      const prompt = minimalBuilder.build({ description: 'test' }, [], [], undefined, undefined, [deployedRef])
+      expect(prompt.system.some((b) => b.text.includes('Related Workflows Already Built'))).toBe(true)
+    })
   })
 
   it('includes global high-frequency failure rates', () => {

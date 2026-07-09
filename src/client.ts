@@ -193,6 +193,7 @@ export class Kairos {
         matches,
         globalFailureRates,
         clientContext,
+        options?.priorContext,
       )
     } catch (err) {
       if (err instanceof ValidationError || err instanceof GenerationError || err instanceof ResponseParseError) {

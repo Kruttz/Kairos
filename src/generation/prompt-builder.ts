@@ -5,6 +5,7 @@ import type { WorkflowMatch } from '../library/types.js'
 import type { RuleFailureRate } from '../telemetry/reader.js'
 import type { PatternAnalysis, Pattern } from '../telemetry/pattern-analyzer.js'
 import type { DesignRequest, BuiltPrompt, SystemPromptBlock } from './types.js'
+import type { WorkflowReference } from '../pack/workflow-reference.js'
 import { SYSTEM_PROMPT_V1 } from './prompts/v1.js'
 import { scoreToMode } from '../utils/thresholds.js'
 import { RULE_MITIGATIONS, RULE_EXAMPLES } from '../validation/rule-metadata.js'
@@ -45,9 +46,9 @@ export class PromptBuilder {
     return 10
   }
 
-  build(request: DesignRequest, matches: WorkflowMatch[], globalFailureRates: RuleFailureRate[] = [], dynamicCatalog?: string, clientContext?: string): BuiltPrompt {
+  build(request: DesignRequest, matches: WorkflowMatch[], globalFailureRates: RuleFailureRate[] = [], dynamicCatalog?: string, clientContext?: string, priorContext?: WorkflowReference[]): BuiltPrompt {
     const mode = this.resolveMode(matches)
-    const system = this.buildSystem(matches, mode, globalFailureRates, dynamicCatalog, request.description, clientContext)
+    const system = this.buildSystem(matches, mode, globalFailureRates, dynamicCatalog, request.description, clientContext, priorContext)
     const userMessage = this.buildUserMessage(request, matches, mode)
     return { system, userMessage, mode, matches }
   }
@@ -91,7 +92,7 @@ Fix ALL of the above issues in your new response. Do not repeat any of these mis
     return scoreToMode(top.score)
   }
 
-  private buildSystem(matches: WorkflowMatch[], mode: 'direct' | 'reference' | 'scratch', globalFailureRates: RuleFailureRate[] = [], dynamicCatalog?: string, description?: string, clientContext?: string): SystemPromptBlock[] {
+  private buildSystem(matches: WorkflowMatch[], mode: 'direct' | 'reference' | 'scratch', globalFailureRates: RuleFailureRate[] = [], dynamicCatalog?: string, description?: string, clientContext?: string, priorContext?: WorkflowReference[]): SystemPromptBlock[] {
     let basePrompt = SYSTEM_PROMPT_V1
     if (dynamicCatalog) {
       basePrompt = basePrompt.replace(
@@ -199,11 +200,42 @@ Fix ALL of the above issues in your new response. Do not repeat any of these mis
       }
     }
 
+    if (priorContext && priorContext.length > 0) {
+      blocks.push({ type: 'text', text: this.renderPriorContext(priorContext) })
+    }
+
     if (clientContext) {
       blocks.push({ type: 'text', text: clientContext })
     }
 
     return blocks
+  }
+
+  /**
+   * Renders pack-chaining's WorkflowReference[] (never a full N8nWorkflow JSON -- see
+   * docs/plans/hardening-and-chaining-plan.md Step 7 v4 §§4-6) as a deterministic, clearly
+   * labeled section. Always rendered when present, regardless of profile -- unlike the
+   * optional enrichment blocks above (patterns, reference workflows), this is structural
+   * information the model needs for correctness, not nice-to-have guidance.
+   *
+   * Method/path/URL are always separately labeled lines, never folded into one string -- a
+   * bare path must never be mistaken for a complete, callable URL. A workflow with
+   * deployed: false (dry-run) gets an explicit "(not yet deployed)" caveat instead of just
+   * omitting the URL silently, so the model isn't left to wonder why it's missing.
+   */
+  private renderPriorContext(priorContext: WorkflowReference[]): string {
+    const sections = priorContext.map((ref) => {
+      const header = ref.deployed ? ref.workflowName : `${ref.workflowName} (not yet deployed — path/method only, no live URL)`
+      const lines: string[] = []
+      if (ref.httpMethod) lines.push(`  - HTTP method: ${ref.httpMethod}`)
+      if (ref.webhookPath) lines.push(`  - Webhook path (relative): ${ref.webhookPath}`)
+      if (ref.webhookUrl) lines.push(`  - Full webhook URL: ${ref.webhookUrl}`)
+      lines.push(`  - Nodes: ${ref.nodeNames.join(', ')}`)
+      if (ref.credentialsUsed.length > 0) lines.push(`  - Credentials used: ${ref.credentialsUsed.join(', ')}`)
+      return `### ${header}\n${lines.join('\n')}`
+    })
+
+    return `## Related Workflows Already Built In This Pack\n\n${sections.join('\n\n')}`
   }
 
   private loadPatterns(): Pattern[] {

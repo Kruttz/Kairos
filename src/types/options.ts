@@ -1,6 +1,7 @@
 import type { ILogger } from '../utils/logger.js'
 import type { IWorkflowLibrary } from '../library/types.js'
 import type { NodeRegistry } from '../validation/registry.js'
+import type { WorkflowReference } from '../pack/workflow-reference.js'
 
 export interface ClientOptions {
   anthropicApiKey: string
@@ -33,6 +34,12 @@ export interface BuildOptions {
   activate?: boolean
   name?: string
   smokeTest?: boolean
+  /** Pack-chaining context: specific prior workflows in the same pack this build should be
+   * able to reference (real webhook path/method/URL, node names, credentials used) --
+   * populated by PackBuilder's build loop from resolveBuildOrder()'s validated dependsOn, not
+   * meant to be constructed by hand for a single build() call. Never a full N8nWorkflow JSON.
+   * See docs/plans/hardening-and-chaining-plan.md Step 7 v4 §§4,6. */
+  priorContext?: WorkflowReference[]
 }
 
 export interface DeleteOptions {
