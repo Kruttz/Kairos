@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { assignWorkflowKeys, resolveBuildOrder } from '../../../src/pack/dependency-graph.js'
-import type { KeyedWorkflowPlan } from '../../../src/pack/dependency-graph.js'
+import { assignWorkflowKeys, resolveBuildOrder, seedAvailabilityMap, canBuildWithDependencies } from '../../../src/pack/dependency-graph.js'
+import type { KeyedWorkflowPlan, AvailabilityMap } from '../../../src/pack/dependency-graph.js'
 import type { WorkflowPlan } from '../../../src/pack/pack-builder.js'
+import type { WorkflowReference } from '../../../src/pack/workflow-reference.js'
 
 function makeWorkflow(name: string): WorkflowPlan {
   return { name, description: 'x', purpose: 'x' }
@@ -160,5 +161,106 @@ describe('resolveBuildOrder', () => {
       expect(orderKeys.has(rejectedKey)).toBe(false)
     }
     expect(orderKeys.has('clean')).toBe(true)
+  })
+})
+
+describe('cascading build-time availability gate', () => {
+  function fakeReference(workflowKey: string, deployed: boolean): WorkflowReference {
+    return { workflowKey, workflowName: workflowKey, deployed, workflowId: deployed ? `wf-${workflowKey}` : null, nodeNames: [], credentialsUsed: [] }
+  }
+
+  /** Simulates what commit 8's real pack-builder loop will do: iterate resolveBuildOrder()'s
+   * order, gate each workflow on canBuildWithDependencies(), and record either a real
+   * WorkflowReference or 'unavailable' depending on simulateBuild's outcome for that key. */
+  function simulateLoop(
+    order: KeyedWorkflowPlan[],
+    resolvedDependsOn: Map<string, string[]>,
+    availability: AvailabilityMap,
+    simulateBuild: (key: string) => WorkflowReference | 'throw',
+  ): { attempted: string[]; skipped: string[] } {
+    const attempted: string[] = []
+    const skipped: string[] = []
+    for (const wf of order) {
+      const deps = resolvedDependsOn.get(wf.workflowKey) ?? []
+      if (!canBuildWithDependencies(availability, deps)) {
+        availability.set(wf.workflowKey, 'unavailable')
+        skipped.push(wf.workflowKey)
+        continue
+      }
+      attempted.push(wf.workflowKey)
+      const outcome = simulateBuild(wf.workflowKey)
+      availability.set(wf.workflowKey, outcome === 'throw' ? 'unavailable' : outcome)
+    }
+    return { attempted, skipped }
+  }
+
+  it('pre-seeds every rejected workflow as unavailable before any building happens', () => {
+    const rejected = new Map([['a', [{ reason: 'unknown_dependency' as const, detail: 'x' }]]])
+    const availability = seedAvailabilityMap(rejected)
+    expect(availability.get('a')).toBe('unavailable')
+  })
+
+  it('canBuildWithDependencies is true only when every dependency resolved to a real WorkflowReference', () => {
+    const availability: AvailabilityMap = new Map([
+      ['a', fakeReference('a', true)],
+      ['b', 'unavailable'],
+    ])
+    expect(canBuildWithDependencies(availability, ['a'])).toBe(true)
+    expect(canBuildWithDependencies(availability, ['b'])).toBe(false)
+    expect(canBuildWithDependencies(availability, ['a', 'b'])).toBe(false)
+    expect(canBuildWithDependencies(availability, [])).toBe(true)
+    expect(canBuildWithDependencies(availability, ['nonexistent'])).toBe(false)
+  })
+
+  it('a 3-workflow chain (C depends on B depends on A) where A\'s build throws cascades: B and C are both skipped, neither attempted', () => {
+    const workflows = assignWorkflowKeys([{ name: 'A', description: 'x', purpose: 'x' }, { name: 'B', description: 'x', purpose: 'x', dependsOn: ['A'] }, { name: 'C', description: 'x', purpose: 'x', dependsOn: ['B'] }])
+    const { order, rejected, resolvedDependsOn } = resolveBuildOrder(workflows)
+    const availability = seedAvailabilityMap(rejected)
+
+    const { attempted, skipped } = simulateLoop(order, resolvedDependsOn, availability, (key) => (key === 'a' ? 'throw' : fakeReference(key, true)))
+
+    expect(attempted).toEqual(['a'])
+    expect(skipped).toEqual(['b', 'c'])
+  })
+
+  it('the same chain where A is instead rejected by resolveBuildOrder() (not a build failure) produces the identical cascade', () => {
+    const workflows = assignWorkflowKeys([{ name: 'A', description: 'x', purpose: 'x', dependsOn: ['Nonexistent'] }, { name: 'B', description: 'x', purpose: 'x', dependsOn: ['A'] }, { name: 'C', description: 'x', purpose: 'x', dependsOn: ['B'] }])
+    const { order, rejected, resolvedDependsOn } = resolveBuildOrder(workflows)
+    expect(rejected.has('a')).toBe(true)
+    const availability = seedAvailabilityMap(rejected)
+
+    const { attempted, skipped } = simulateLoop(order, resolvedDependsOn, availability, (key) => fakeReference(key, true))
+
+    // A was never in `order` at all (rejected before generation spend), so it can't appear in
+    // `attempted`. B and C are both skipped via the pre-seeded 'unavailable' cascade.
+    expect(attempted).toEqual([])
+    expect(skipped).toEqual(['b', 'c'])
+  })
+
+  it('the same chain fully dry-run builds all three normally -- dry-run is never treated as unavailable', () => {
+    const workflows = assignWorkflowKeys([{ name: 'A', description: 'x', purpose: 'x' }, { name: 'B', description: 'x', purpose: 'x', dependsOn: ['A'] }, { name: 'C', description: 'x', purpose: 'x', dependsOn: ['B'] }])
+    const { order, rejected, resolvedDependsOn } = resolveBuildOrder(workflows)
+    const availability = seedAvailabilityMap(rejected)
+
+    const { attempted, skipped } = simulateLoop(order, resolvedDependsOn, availability, (key) => fakeReference(key, false))
+
+    expect(attempted).toEqual(['a', 'b', 'c'])
+    expect(skipped).toEqual([])
+    expect(availability.get('a')).toEqual(fakeReference('a', false))
+  })
+
+  it('an unrelated workflow with no path back to a failure still builds normally', () => {
+    const workflows = assignWorkflowKeys([
+      { name: 'A', description: 'x', purpose: 'x' },
+      { name: 'B', description: 'x', purpose: 'x', dependsOn: ['A'] },
+      { name: 'D', description: 'x', purpose: 'x' },
+    ])
+    const { order, rejected, resolvedDependsOn } = resolveBuildOrder(workflows)
+    const availability = seedAvailabilityMap(rejected)
+
+    const { attempted, skipped } = simulateLoop(order, resolvedDependsOn, availability, (key) => (key === 'a' ? 'throw' : fakeReference(key, true)))
+
+    expect(attempted).toEqual(['a', 'd'])
+    expect(skipped).toEqual(['b'])
   })
 })

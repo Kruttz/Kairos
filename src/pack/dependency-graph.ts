@@ -1,5 +1,6 @@
 import type { WorkflowPlan } from './pack-builder.js'
 import { slugifyWorkflowName } from './pack-bundle.js'
+import type { WorkflowReference } from './workflow-reference.js'
 
 /** A WorkflowPlan that has definitely been through assignWorkflowKeys() -- workflowKey is
  * required, not optional, at this point in the pipeline. resolveBuildOrder() requires this
@@ -227,4 +228,43 @@ export function resolveBuildOrder(workflows: KeyedWorkflowPlan[]): ResolveBuildO
   const order = orderedKeys.map((key) => byKey.get(key)!)
 
   return { order, rejected, deduped, resolvedDependsOn }
+}
+
+/**
+ * Build-time cascading availability gate (Step 7 v4 §7) -- distinct from resolveBuildOrder()'s
+ * plan-time rejection above. A dependency can pass validation (real key, acyclic) but its
+ * upstream workflow's actual build can still fail later; this map tracks that outcome so a
+ * downstream workflow's dependency lookup can tell "genuinely available" from "unavailable,"
+ * whether the cause was a rejection or a real build failure.
+ */
+export type AvailabilityMap = Map<string, WorkflowReference | 'unavailable'>
+
+/**
+ * Pre-seeds every rejected workflow (resolveBuildOrder()'s full `rejected` map, all five
+ * categories) as 'unavailable' BEFORE the build loop starts -- never discovered lazily as the
+ * loop reaches a rejected key, since resolveBuildOrder()'s `order` never contains a rejected
+ * workflow for the loop to "reach" in the first place. Call this once, before iterating `order`.
+ */
+export function seedAvailabilityMap(rejected: Map<string, DependencyRejection[]>): AvailabilityMap {
+  const availability: AvailabilityMap = new Map()
+  for (const key of rejected.keys()) {
+    availability.set(key, 'unavailable')
+  }
+  return availability
+}
+
+/**
+ * True only if every one of the given (already-resolved) dependency keys is present in the
+ * availability map as a real WorkflowReference -- never true if any dependency is missing
+ * entirely (shouldn't happen once the build loop processes workflows in resolveBuildOrder()'s
+ * order, but treated as unavailable rather than silently skipped if it ever does) or explicitly
+ * 'unavailable' (whether pre-seeded as rejected, or recorded by a prior loop iteration as a
+ * build failure). This is the one check that decides whether a workflow is even attempted --
+ * false means no generation spend for that workflow at all.
+ */
+export function canBuildWithDependencies(availability: AvailabilityMap, dependencyKeys: string[]): boolean {
+  return dependencyKeys.every((key) => {
+    const entry = availability.get(key)
+    return entry !== undefined && entry !== 'unavailable'
+  })
 }
