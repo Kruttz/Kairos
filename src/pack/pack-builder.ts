@@ -3,6 +3,10 @@ import type { Kairos } from '../client.js'
 import type { CredentialRequirement, BuildProvenance } from '../types/result.js'
 import type { ValidationIssue } from '../validation/types.js'
 import { extractScheduleIntervals } from '../utils/schedule-intervals.js'
+import { assignWorkflowKeys, resolveBuildOrder, seedAvailabilityMap, canBuildWithDependencies } from './dependency-graph.js'
+import type { AvailabilityMap } from './dependency-graph.js'
+import { toWorkflowReference } from './workflow-reference.js'
+import type { WorkflowReference } from './workflow-reference.js'
 
 export type AssumptionType = 'safe' | 'needs_confirmation' | 'blocking'
 export type PackStatus = 'draft' | 'blocked' | 'ready_for_test' | 'ready_for_activation' | 'active' | 'needs_attention'
@@ -73,6 +77,21 @@ export interface PackWorkflowResult {
    * on workflows that errored before a build result was produced.
    */
   provenance?: BuildProvenance
+  /**
+   * This workflow's assigned dependency-graph key (see assignWorkflowKeys()) -- persisted so
+   * the dependency topology resolveBuildOrder() computed doesn't disappear after one build()
+   * call. Present for every workflow, built or rejected. Absent on packs persisted before
+   * chaining existed.
+   */
+  workflowKey?: string
+  /**
+   * This workflow's final, resolved-and-deduplicated dependency keys (see
+   * resolveBuildOrder()'s resolvedDependsOn) -- not the raw LLM-provided names. May be absent
+   * or partial on a rejected workflow, depending on which validation pass rejected it (a
+   * workflow rejected for a malformed or unresolvable dependsOn never produced a resolvable
+   * edge set at all). Absent on packs persisted before chaining existed.
+   */
+  dependsOn?: string[]
 }
 
 /**
@@ -184,11 +203,18 @@ export class PackBuilder {
   private client: Anthropic
   private kairos: Kairos
   private model: string
+  /** Used only to construct a chained dependency's webhookUrl (see toWorkflowReference()) --
+   * Kairos itself doesn't expose the n8nBaseUrl it was constructed with, so PackBuilder needs
+   * its own copy for this one purpose. Falls back to N8N_BASE_URL, matching the same env var
+   * Kairos/the CLI already read. Absence just means webhookUrl never populates -- never
+   * fabricated, per Step 7 v4 §5. */
+  private n8nBaseUrl: string | undefined
 
-  constructor(options: { anthropicApiKey: string; kairos: Kairos; model?: string }) {
+  constructor(options: { anthropicApiKey: string; kairos: Kairos; model?: string; n8nBaseUrl?: string }) {
     this.client = new Anthropic({ apiKey: options.anthropicApiKey })
     this.kairos = options.kairos
     this.model = options.model ?? 'claude-sonnet-4-6'
+    this.n8nBaseUrl = options.n8nBaseUrl ?? process.env['N8N_BASE_URL']
   }
 
   async plan(businessContext: string): Promise<PackPlan> {
@@ -266,18 +292,73 @@ export class PackBuilder {
     // Never activate when blocking assumptions exist — safety gate
     const effectiveActivate = hasBlockingAssumptions ? false : (options.activate ?? false)
 
-    const results: PackWorkflowResult[] = []
-    const credentialMap = new Map<string, { service: string; credentialType: string }>()
+    // Step 7 v4's dependency-graph pipeline: assign stable keys, then validate/order against
+    // them. `order` (Pass 6's topological sort) is the EXECUTION sequence -- it never contains
+    // a rejected workflow, and does not necessarily match plan.workflows' original order. The
+    // RETURNED array must still match original plan order regardless (see the reassembly at
+    // the end of this method) -- these are two deliberately decoupled concerns.
+    const keyedWorkflows = assignWorkflowKeys(plan.workflows)
+    const { order, rejected, resolvedDependsOn } = resolveBuildOrder(keyedWorkflows)
+    const availability: AvailabilityMap = seedAvailabilityMap(rejected)
 
-    for (let i = 0; i < plan.workflows.length; i++) {
-      const wf = plan.workflows[i]!
-      options.onProgress?.(wf, i, plan.workflows.length)
+    const resultsByKey = new Map<string, PackWorkflowResult>()
+    const credentialMap = new Map<string, { service: string; credentialType: string }>()
+    let progressIndex = 0
+    const totalWorkflows = plan.workflows.length
+
+    // Every rejected workflow (Passes 1/2/4/5 of resolveBuildOrder()) never enters the build
+    // loop at all -- no generation spend, synthesized directly. This runs before the loop below
+    // so `resultsByKey` already has an entry for every rejected key by the time anything checks
+    // dependencies against it (mirrors seedAvailabilityMap()'s "pre-seed before building starts").
+    for (const [workflowKey, reasons] of rejected) {
+      const wf = keyedWorkflows.find((w) => w.workflowKey === workflowKey)!
+      options.onProgress?.(wf, progressIndex++, totalWorkflows)
+      resultsByKey.set(workflowKey, {
+        name: wf.name,
+        purpose: wf.purpose,
+        workflowId: null,
+        deployed: false,
+        generationAttempts: 0,
+        credentialsNeeded: [],
+        error: `Rejected before generation: ${reasons.map((r) => `${r.reason} (${r.detail})`).join('; ')}`,
+        workflowKey,
+        dependsOn: resolvedDependsOn.get(workflowKey) ?? [],
+      })
+    }
+
+    // Execution proper: build order (commit 4), gated by the cascading availability check
+    // (commit 7) -- a workflow whose dependency is unavailable (rejected above, or a prior
+    // iteration's build failure) is skipped here too, with zero generation spend, and marked
+    // unavailable itself so its own dependents cascade correctly.
+    for (const wf of order) {
+      options.onProgress?.(wf, progressIndex++, totalWorkflows)
+      const dependsOnKeys = resolvedDependsOn.get(wf.workflowKey) ?? []
+
+      if (!canBuildWithDependencies(availability, dependsOnKeys)) {
+        const unavailableKeys = dependsOnKeys.filter((k) => availability.get(k) === 'unavailable' || !availability.has(k))
+        availability.set(wf.workflowKey, 'unavailable')
+        resultsByKey.set(wf.workflowKey, {
+          name: wf.name,
+          purpose: wf.purpose,
+          workflowId: null,
+          deployed: false,
+          generationAttempts: 0,
+          credentialsNeeded: [],
+          error: `Not built: required dependenc${unavailableKeys.length === 1 ? 'y' : 'ies'} unavailable (${unavailableKeys.join(', ')})`,
+          workflowKey: wf.workflowKey,
+          dependsOn: dependsOnKeys,
+        })
+        continue
+      }
+
+      const priorContext: WorkflowReference[] = dependsOnKeys.map((k) => availability.get(k) as WorkflowReference)
 
       try {
         const result = await this.kairos.build(wf.description, {
           name: wf.name,
           dryRun: options.dryRun ?? false,
           activate: effectiveActivate,
+          ...(priorContext.length > 0 ? { priorContext } : {}),
         })
 
         for (const cred of result.credentialsNeeded) {
@@ -286,7 +367,8 @@ export class PackBuilder {
 
         const scheduleIntervals = extractScheduleIntervals(result.workflow)
 
-        results.push({
+        availability.set(wf.workflowKey, toWorkflowReference(result, wf.workflowKey, this.n8nBaseUrl))
+        resultsByKey.set(wf.workflowKey, {
           name: wf.name,
           purpose: wf.purpose,
           workflowId: result.workflowId,
@@ -296,9 +378,12 @@ export class PackBuilder {
           finalIssues: result.finalIssues,
           ...(scheduleIntervals.length > 0 ? { scheduleIntervals } : {}),
           ...(result.provenance ? { provenance: result.provenance } : {}),
+          workflowKey: wf.workflowKey,
+          dependsOn: dependsOnKeys,
         })
       } catch (err) {
-        results.push({
+        availability.set(wf.workflowKey, 'unavailable')
+        resultsByKey.set(wf.workflowKey, {
           name: wf.name,
           purpose: wf.purpose,
           workflowId: null,
@@ -306,9 +391,17 @@ export class PackBuilder {
           generationAttempts: 0,
           credentialsNeeded: [],
           error: err instanceof Error ? err.message : String(err),
+          workflowKey: wf.workflowKey,
+          dependsOn: dependsOnKeys,
         })
       }
     }
+
+    // Result-array reassembly (Step 7 v4 §11): the RETURNED array always matches
+    // plan.workflows' original order, regardless of the execution order above -- every
+    // existing consumer (CLI progress index, onProgress, handoff.md/credentials.md rendering)
+    // assumes that correspondence, and chaining must not silently break it.
+    const results = keyedWorkflows.map((wf) => resultsByKey.get(wf.workflowKey)!)
 
     const partial = {
       businessContext: plan.businessContext,

@@ -38,12 +38,17 @@ function makeMockAnthropic(responseText: string) {
   }
 }
 
+const MINIMAL_WORKFLOW = { name: 'Test Workflow', nodes: [], connections: {} }
+
 function makeMockKairos(overrides: Partial<{ workflowId: string; generationAttempts: number; workflow: unknown; finalIssues: unknown[]; provenance: unknown }> = {}): Kairos {
   return {
     build: vi.fn().mockResolvedValue({
       workflowId: overrides.workflowId ?? 'wf-123',
       name: 'Test Workflow',
-      workflow: overrides.workflow ?? {},
+      // A real BuildResult.workflow always has nodes/connections (N8nWorkflow's type
+      // guarantees it) -- toWorkflowReference() (chaining) reads .nodes on every successful
+      // build, so this fixture must match that real shape, not a bare {}.
+      workflow: overrides.workflow ?? MINIMAL_WORKFLOW,
       credentialsNeeded: [{ service: 'Gmail', credentialType: 'gmailOAuth2', description: 'Gmail OAuth2' }],
       activationRequired: false,
       generationAttempts: overrides.generationAttempts ?? 1,
@@ -293,7 +298,7 @@ describe('PackBuilder', () => {
           .mockResolvedValueOnce({
             workflowId: 'wf-ok',
             name: 'OK',
-            workflow: {},
+            workflow: MINIMAL_WORKFLOW,
             credentialsNeeded: [],
             activationRequired: false,
             generationAttempts: 1,
@@ -354,7 +359,7 @@ describe('PackBuilder', () => {
           .mockResolvedValueOnce({
             workflowId: 'wf-ok',
             name: 'OK',
-            workflow: {},
+            workflow: MINIMAL_WORKFLOW,
             credentialsNeeded: [],
             activationRequired: false,
             generationAttempts: 1,
@@ -381,13 +386,13 @@ describe('PackBuilder', () => {
       expect(result.packName).toBe('empire-homecare-dme-operations')
     })
 
-    it('calls onProgress for each workflow', async () => {
+    it('calls onProgress for each workflow, with the workflowKey the dependency graph assigned', async () => {
       const progress = vi.fn()
       const plan = { ...MOCK_PLAN_RESPONSE, businessContext: 'Test' }
       await builder.build(plan, { onProgress: progress })
       expect(progress).toHaveBeenCalledTimes(2)
-      expect(progress).toHaveBeenCalledWith(plan.workflows[0], 0, 2)
-      expect(progress).toHaveBeenCalledWith(plan.workflows[1], 1, 2)
+      expect(progress).toHaveBeenCalledWith({ ...plan.workflows[0], workflowKey: 'weekly-newsletter' }, 0, 2)
+      expect(progress).toHaveBeenCalledWith({ ...plan.workflows[1], workflowKey: 'new-customer-welcome' }, 1, 2)
     })
 
     it('passes dryRun and activate options to each kairos.build call', async () => {
@@ -414,6 +419,145 @@ describe('PackBuilder', () => {
       const builtAt = new Date(result.builtAt).getTime()
       expect(builtAt).toBeGreaterThanOrEqual(before)
       expect(builtAt).toBeLessThanOrEqual(after)
+    })
+  })
+
+  describe('build() — pack chaining', () => {
+    /** A mock Kairos whose build() returns a distinct, name-keyed response per workflow (via
+     * options.name), so chaining tests can tell which call produced which result and can make
+     * one workflow's build behave differently (throw, or reference a webhook) than another's. */
+    function makeChainingMockKairos(behaviors: Record<string, { throws?: boolean; webhookPath?: string }> = {}): { kairos: Kairos; calls: Array<{ name: string; priorContext: unknown }> } {
+      const calls: Array<{ name: string; priorContext: unknown }> = []
+      const build = vi.fn(async (_description: string, options?: { name?: string; dryRun?: boolean; priorContext?: unknown }) => {
+        const name = options?.name ?? 'unknown'
+        calls.push({ name, priorContext: options?.priorContext })
+        const behavior = behaviors[name]
+        if (behavior?.throws) throw new Error(`Simulated build failure for ${name}`)
+        const nodes = behavior?.webhookPath
+          ? [{ id: 'n1', name: 'Webhook', type: 'n8n-nodes-base.webhook', typeVersion: 2, position: [0, 0] as [number, number], parameters: { httpMethod: 'POST', path: behavior.webhookPath } }]
+          : []
+        const dryRun = options?.dryRun ?? false
+        return {
+          workflowId: dryRun ? null : `wf-${name}`,
+          name,
+          workflow: { name, nodes, connections: {} },
+          credentialsNeeded: [],
+          activationRequired: false,
+          generationAttempts: 1,
+          dryRun,
+          finalIssues: [],
+        }
+      })
+      return { kairos: { build, drain: vi.fn().mockResolvedValue(undefined) } as unknown as Kairos, calls }
+    }
+
+    it('passes the real upstream webhook path as priorContext when a workflow depends on another', async () => {
+      const { kairos, calls } = makeChainingMockKairos({ A: { webhookPath: 'referral-intake' } })
+      builder = new PackBuilder({ anthropicApiKey: 'sk-ant-test', kairos })
+      ;(builder as unknown as Record<string, unknown>)['client'] = makeMockAnthropic(JSON.stringify({
+        workflows: [{ name: 'A', description: 'x', purpose: 'x' }, { name: 'B', description: 'y', purpose: 'y', dependsOn: ['A'] }],
+        assumptions: [], sheetsColumns: [], testChecklist: [],
+      }))
+      const plan = await builder.plan('Test business')
+      await builder.build(plan)
+
+      const bCall = calls.find((c) => c.name === 'B')!
+      expect(bCall.priorContext).toBeDefined()
+      const priorContext = bCall.priorContext as Array<{ workflowKey: string; webhookPath?: string }>
+      expect(priorContext[0]!.workflowKey).toBe('a')
+      expect(priorContext[0]!.webhookPath).toBe('referral-intake')
+    })
+
+    it('preserves original plan order in the returned array even when a forward-declared dependency changes build order', async () => {
+      const { kairos } = makeChainingMockKairos()
+      builder = new PackBuilder({ anthropicApiKey: 'sk-ant-test', kairos })
+      // B is listed FIRST in the plan but depends on A, listed SECOND -- A must build first,
+      // but the returned array must still show B at index 0 (original plan position).
+      ;(builder as unknown as Record<string, unknown>)['client'] = makeMockAnthropic(JSON.stringify({
+        workflows: [{ name: 'B', description: 'y', purpose: 'y', dependsOn: ['A'] }, { name: 'A', description: 'x', purpose: 'x' }],
+        assumptions: [], sheetsColumns: [], testChecklist: [],
+      }))
+      const plan = await builder.plan('Test business')
+      const result = await builder.build(plan)
+
+      expect(result.workflows[0]!.name).toBe('B')
+      expect(result.workflows[1]!.name).toBe('A')
+      expect(result.workflows[0]!.deployed).toBe(true)
+      expect(result.workflows[1]!.deployed).toBe(true)
+    })
+
+    it('persists workflowKey and dependsOn onto every PackWorkflowResult, built or rejected', async () => {
+      const { kairos } = makeChainingMockKairos()
+      builder = new PackBuilder({ anthropicApiKey: 'sk-ant-test', kairos })
+      ;(builder as unknown as Record<string, unknown>)['client'] = makeMockAnthropic(JSON.stringify({
+        workflows: [
+          { name: 'A', description: 'x', purpose: 'x' },
+          { name: 'B', description: 'y', purpose: 'y', dependsOn: ['A'] },
+          { name: 'C', description: 'z', purpose: 'z', dependsOn: ['Nonexistent'] },
+        ],
+        assumptions: [], sheetsColumns: [], testChecklist: [],
+      }))
+      const plan = await builder.plan('Test business')
+      const result = await builder.build(plan)
+
+      expect(result.workflows[0]!.workflowKey).toBe('a')
+      expect(result.workflows[0]!.dependsOn).toEqual([])
+      expect(result.workflows[1]!.workflowKey).toBe('b')
+      expect(result.workflows[1]!.dependsOn).toEqual(['a'])
+      expect(result.workflows[2]!.workflowKey).toBe('c')
+      expect(result.workflows[2]!.error).toContain('unknown_dependency')
+
+      // Round-trips through JSON exactly as any persisted pack does.
+      const roundTripped = JSON.parse(JSON.stringify(result)) as typeof result
+      expect(roundTripped.workflows[1]!.workflowKey).toBe('b')
+      expect(roundTripped.workflows[1]!.dependsOn).toEqual(['a'])
+    })
+
+    it('never calls kairos.build for a rejected workflow -- zero generation spend', async () => {
+      const { kairos, calls } = makeChainingMockKairos()
+      builder = new PackBuilder({ anthropicApiKey: 'sk-ant-test', kairos })
+      ;(builder as unknown as Record<string, unknown>)['client'] = makeMockAnthropic(JSON.stringify({
+        workflows: [{ name: 'A', description: 'x', purpose: 'x', dependsOn: ['A'] }],
+        assumptions: [], sheetsColumns: [], testChecklist: [],
+      }))
+      const plan = await builder.plan('Test business')
+      const result = await builder.build(plan)
+
+      expect(calls).toHaveLength(0)
+      expect(result.workflows[0]!.error).toContain('self_dependency')
+    })
+
+    it('a build-time failure cascades: the dependent is never attempted', async () => {
+      const { kairos, calls } = makeChainingMockKairos({ A: { throws: true } })
+      builder = new PackBuilder({ anthropicApiKey: 'sk-ant-test', kairos })
+      ;(builder as unknown as Record<string, unknown>)['client'] = makeMockAnthropic(JSON.stringify({
+        workflows: [{ name: 'A', description: 'x', purpose: 'x' }, { name: 'B', description: 'y', purpose: 'y', dependsOn: ['A'] }],
+        assumptions: [], sheetsColumns: [], testChecklist: [],
+      }))
+      const plan = await builder.plan('Test business')
+      const result = await builder.build(plan)
+
+      expect(calls.map((c) => c.name)).toEqual(['A'])
+      expect(result.workflows[0]!.error).toContain('Simulated build failure')
+      expect(result.workflows[1]!.error).toContain('unavailable')
+    })
+
+    it('a fully dry-run chained pack builds every workflow normally with deployed: false throughout', async () => {
+      const { kairos, calls } = makeChainingMockKairos({ A: { webhookPath: 'intake' } })
+      builder = new PackBuilder({ anthropicApiKey: 'sk-ant-test', kairos })
+      ;(builder as unknown as Record<string, unknown>)['client'] = makeMockAnthropic(JSON.stringify({
+        workflows: [{ name: 'A', description: 'x', purpose: 'x' }, { name: 'B', description: 'y', purpose: 'y', dependsOn: ['A'] }],
+        assumptions: [], sheetsColumns: [], testChecklist: [],
+      }))
+      const plan = await builder.plan('Test business')
+      const result = await builder.build(plan, { dryRun: true })
+
+      expect(calls.map((c) => c.name)).toEqual(['A', 'B'])
+      const bCall = calls.find((c) => c.name === 'B')!
+      const priorContext = bCall.priorContext as Array<{ deployed: boolean; webhookPath?: string; webhookUrl?: string }>
+      expect(priorContext[0]!.deployed).toBe(false)
+      expect(priorContext[0]!.webhookPath).toBe('intake')
+      expect(priorContext[0]!.webhookUrl).toBeUndefined()
     })
   })
 
