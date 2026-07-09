@@ -16,6 +16,13 @@ export interface WorkflowPlan {
   name: string
   description: string
   purpose: string
+  /**
+   * Stable key derived from `name` at plan-normalization time (see
+   * src/pack/dependency-graph.ts's assignWorkflowKeys()) -- absent on a freshly-parsed plan
+   * straight from the LLM, populated before build() runs. Dependency declarations resolve to
+   * this, never to raw display names, since two workflows can share a name.
+   */
+  workflowKey?: string
 }
 
 export interface PackPlan {
