@@ -34,7 +34,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 const DEFAULT_MODEL = process.env['KAIROS_MODEL'] ?? 'claude-sonnet-4-6'
-const DEFAULT_MAX_TOKENS = process.env['KAIROS_MAX_TOKENS'] ? parseInt(process.env['KAIROS_MAX_TOKENS'], 10) : 16000
+export const DEFAULT_MAX_TOKENS = process.env['KAIROS_MAX_TOKENS'] ? parseInt(process.env['KAIROS_MAX_TOKENS'], 10) : 16000
 const DEFAULT_TIMEOUT_MS = process.env['KAIROS_TIMEOUT_MS'] ? parseInt(process.env['KAIROS_TIMEOUT_MS'], 10) : 300000
 
 export class Kairos {

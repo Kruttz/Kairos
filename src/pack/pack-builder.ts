@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { Kairos } from '../client.js'
+import { DEFAULT_MAX_TOKENS } from '../client.js'
 import type { CredentialRequirement, BuildProvenance } from '../types/result.js'
 import type { ValidationIssue } from '../validation/types.js'
 import { extractScheduleIntervals } from '../utils/schedule-intervals.js'
@@ -7,6 +8,7 @@ import { assignWorkflowKeys, resolveBuildOrder, seedAvailabilityMap, canBuildWit
 import type { AvailabilityMap } from './dependency-graph.js'
 import { toWorkflowReference } from './workflow-reference.js'
 import type { WorkflowReference } from './workflow-reference.js'
+import { slugifyWorkflowName } from './pack-bundle.js'
 
 export type AssumptionType = 'safe' | 'needs_confirmation' | 'blocking'
 export type PackStatus = 'draft' | 'blocked' | 'ready_for_test' | 'ready_for_activation' | 'active' | 'needs_attention'
@@ -174,11 +176,12 @@ Return ONLY valid JSON with no markdown or extra text:
   ]
 }`
 
+/** Reuses slugifyWorkflowName()'s 60-char cap rather than a second, uncapped slug
+ * implementation -- a real-model spot-check (Step 9) crashed on save (ENAMETOOLONG) when a
+ * realistic full-paragraph business context produced a 400+ char filename; short synthetic
+ * test contexts never surfaced this. */
 function derivePackName(businessContext: string): string {
-  return businessContext
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
+  return slugifyWorkflowName(businessContext)
 }
 
 function normalizeAssumptions(raw: unknown[]): TypedAssumption[] {
@@ -209,19 +212,25 @@ export class PackBuilder {
    * Kairos/the CLI already read. Absence just means webhookUrl never populates -- never
    * fabricated, per Step 7 v4 §5. */
   private n8nBaseUrl: string | undefined
+  /** Was hardcoded at 4096 -- too small for even a 3-workflow plan (found via a real-model
+   * spot-check, Step 9 of docs/plans/hardening-and-chaining-plan.md: the response was silently
+   * truncated mid-JSON-string). Reuses client.ts's DEFAULT_MAX_TOKENS/KAIROS_MAX_TOKENS
+   * convention rather than a second hardcoded magic number. */
+  private maxTokens: number
 
-  constructor(options: { anthropicApiKey: string; kairos: Kairos; model?: string; n8nBaseUrl?: string }) {
+  constructor(options: { anthropicApiKey: string; kairos: Kairos; model?: string; n8nBaseUrl?: string; maxTokens?: number }) {
     this.client = new Anthropic({ apiKey: options.anthropicApiKey })
     this.kairos = options.kairos
     this.model = options.model ?? 'claude-sonnet-4-6'
     this.n8nBaseUrl = options.n8nBaseUrl ?? process.env['N8N_BASE_URL']
+    this.maxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS
   }
 
   async plan(businessContext: string): Promise<PackPlan> {
     const prompt = PLAN_PROMPT.replace('{CONTEXT}', businessContext)
     const response = await this.client.messages.create({
       model: this.model,
-      max_tokens: 4096,
+      max_tokens: this.maxTokens,
       messages: [{ role: 'user', content: prompt }],
     })
 
