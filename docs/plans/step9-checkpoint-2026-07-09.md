@@ -104,3 +104,28 @@ pre-existing platform-level webhook-registration gap reproduced live and confirm
 correctly handled by existing Kairos design (`webhookVerification`, and now `webhookVerified` on
 `WorkflowReference`). One product-level finding (hardcoded 4-8 workflow range) documented, not
 acted on, per explicit scoping. Step 9 is complete.
+
+## Cleanup: disposal of the 7 `buildDespiteBlocking` test workflows (2026-07-09T14:34:00Z)
+
+Deleted the 7 deployed-but-inactive workflows from the `buildDespiteBlocking` real-flow test
+(the "What looked off" item above), per explicit authorization. Before deleting each, fetched it
+live from `jwagon.app.n8n.cloud` and verified all three of: workflow ID matches this checkpoint's
+list, `active` is `false`, and `name` matches this checkpoint run's workflow name. All 7 passed
+verification; none were skipped.
+
+| Workflow ID | Name | Verified | Deleted |
+|---|---|---|---|
+| `5PG8gfQFwcSGmzyk` | Referral Intake | id ✓, inactive ✓, name ✓ | ✓ |
+| `tac4sqkWkjB2ApiU` | Referral Confirmation Email | id ✓, inactive ✓, name ✓ | ✓ |
+| `xjMANL9USbiHaggb` | Referral Follow-Up Reminder | id ✓, inactive ✓, name ✓ | ✓ |
+| `1tDTXUz45GXIy0oK` | New Referral Slack Acknowledgment with Assignee Ping | id ✓, inactive ✓, name ✓ | ✓ |
+| `TRdRVH84dJcPt4QI` | Weekly Referral Summary Report | id ✓, inactive ✓, name ✓ | ✓ |
+| `L6DoAwh0L6tXwr5v` | Referral Error Alert | id ✓, inactive ✓, name ✓ | ✓ |
+| `svwYRvHKXQeAq1ki` | Referral Source Onboarding Email | id ✓, inactive ✓, name ✓ | ✓ |
+
+Deletion confirmed: re-fetching `5PG8gfQFwcSGmzyk` afterward returned HTTP 404 (workflow no
+longer exists). The two earlier hand-authored activation-test workflows (`QtF2pkjLTGD28g6m`,
+`UPIqkcDRyfhWZ55H`) were already deactivated and deleted during the checkpoint itself (see
+above). The `jwagon.app.n8n.cloud` account now has no remaining artifacts from this checkpoint.
+Bundle output (`step9-bundle/`), telemetry (`step9-telemetry/`), the saved pack JSON, and this
+checkpoint document are all preserved.
