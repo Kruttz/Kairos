@@ -6,6 +6,7 @@ import { ApiError } from '../../errors/api-error.js'
 import { ProviderError } from '../../errors/provider-error.js'
 import { GuardError } from '../../errors/guard-error.js'
 import { withRetry, fetchWithTimeout, isTransientNetworkError } from '../../utils/retry.js'
+import { buildWebhookUrl } from '../../utils/webhook-url.js'
 import type {
   N8nWorkflowResponse,
   N8nWorkflowListResponse,
@@ -242,7 +243,7 @@ export class N8nApiClient {
 
   async triggerWebhookProduction(path: string, httpMethod: string): Promise<{ statusCode: number; body: string }> {
     const cleanPath = path.startsWith('/') ? path : `/${path}`
-    const url = `${this.baseUrl.replace(/\/$/, '')}/webhook${cleanPath}`
+    const url = buildWebhookUrl(this.baseUrl, path)
     const method = httpMethod.toUpperCase()
     this.logger.debug(`n8n ${method} webhook ${cleanPath}`)
     try {
