@@ -166,7 +166,10 @@ describe('resolveBuildOrder', () => {
 
 describe('cascading build-time availability gate', () => {
   function fakeReference(workflowKey: string, deployed: boolean): WorkflowReference {
-    return { workflowKey, workflowName: workflowKey, deployed, workflowId: deployed ? `wf-${workflowKey}` : null, nodeNames: [], credentialsUsed: [] }
+    // activated mirrors deployed here -- these availability-gate simulation tests only care
+    // about the deployed-vs-dry-run distinction, not the separate deployed/activated split
+    // (that's exercised directly in prompt-builder.test.ts and workflow-reference.test.ts).
+    return { workflowKey, workflowName: workflowKey, deployed, activated: deployed, workflowId: deployed ? `wf-${workflowKey}` : null, nodeNames: [], credentialsUsed: [] }
   }
 
   /** Simulates what commit 8's real pack-builder loop will do: iterate resolveBuildOrder()'s

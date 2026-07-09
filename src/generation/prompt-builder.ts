@@ -219,23 +219,42 @@ Fix ALL of the above issues in your new response. Do not repeat any of these mis
    * information the model needs for correctness, not nice-to-have guidance.
    *
    * Method/path/URL are always separately labeled lines, never folded into one string -- a
-   * bare path must never be mistaken for a complete, callable URL. A workflow with
-   * deployed: false (dry-run) gets an explicit "(not yet deployed)" caveat instead of just
-   * omitting the URL silently, so the model isn't left to wonder why it's missing.
+   * bare path must never be mistaken for a complete URL. Three distinct lifecycle states are
+   * rendered distinctly (see describeLifecycleStatus()) -- a corrected model from an earlier
+   * draft that only distinguished "deployed" vs. not, which conflated "the endpoint exists"
+   * with "the endpoint is live and reachable." The webhook URL line itself is always labeled
+   * as a deterministic endpoint, never implied to be proof of reachability.
    */
   private renderPriorContext(priorContext: WorkflowReference[]): string {
     const sections = priorContext.map((ref) => {
-      const header = ref.deployed ? ref.workflowName : `${ref.workflowName} (not yet deployed — path/method only, no live URL)`
+      const status = this.describeLifecycleStatus(ref)
+      const header = `${ref.workflowName} (${status})`
       const lines: string[] = []
       if (ref.httpMethod) lines.push(`  - HTTP method: ${ref.httpMethod}`)
       if (ref.webhookPath) lines.push(`  - Webhook path (relative): ${ref.webhookPath}`)
-      if (ref.webhookUrl) lines.push(`  - Full webhook URL: ${ref.webhookUrl}`)
+      if (ref.webhookUrl) lines.push(`  - Webhook URL (deterministic endpoint -- not proof of reachability): ${ref.webhookUrl}`)
       lines.push(`  - Nodes: ${ref.nodeNames.join(', ')}`)
       if (ref.credentialsUsed.length > 0) lines.push(`  - Credentials used: ${ref.credentialsUsed.join(', ')}`)
       return `### ${header}\n${lines.join('\n')}`
     })
 
     return `## Related Workflows Already Built In This Pack\n\n${sections.join('\n\n')}`
+  }
+
+  /**
+   * Describes exactly one of the three workflow lifecycle states this design distinguishes
+   * (Step 7 v4, corrected after an earlier draft conflated "deployed" with "live" and implied
+   * webhookUrl meant "callable"): not created (dry-run), deployed but inactive, or activated --
+   * with reachability called out as its own, separately-verified fact even once activated,
+   * since activation alone doesn't prove the specific webhook endpoint actually responds.
+   */
+  private describeLifecycleStatus(ref: WorkflowReference): string {
+    if (!ref.deployed) return 'not created — path/method only, no live URL'
+    if (!ref.activated) return 'deployed, activation still required — URL below is the deterministic endpoint, not yet live'
+    if (ref.webhookVerified === true) return 'activated, reachability verified'
+    if (ref.webhookVerified === false) return 'activated, but a reachability check found it not responding'
+    if (ref.webhookVerified === null) return 'activated, reachability check was inconclusive'
+    return 'activated, reachability not verified'
   }
 
   private loadPatterns(): Pattern[] {

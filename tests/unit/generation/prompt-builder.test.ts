@@ -90,10 +90,32 @@ describe('PromptBuilder', () => {
   })
 
   describe('priorContext rendering (pack chaining)', () => {
-    const deployedRef: WorkflowReference = {
+    // Three distinct lifecycle states this design must render distinctly (Step 7 v4,
+    // corrected after an earlier draft conflated "deployed" with "live" and implied
+    // webhookUrl meant "callable" -- see workflow-reference.ts's doc comment for the full
+    // breakdown). Note: tests/ is excluded from tsconfig.json's typecheck scope (vitest's
+    // esbuild transform strips types without validating them), so these fixtures must be
+    // kept in sync with WorkflowReference by hand -- a stale fixture missing a required
+    // field silently becomes `undefined` at runtime rather than a compile error, exactly
+    // what happened here when `activated` was added and these fixtures weren't updated.
+
+    const dryRunRef: WorkflowReference = {
+      workflowKey: 'daily-summary',
+      workflowName: 'Daily Summary Prep',
+      deployed: false,
+      activated: false,
+      workflowId: null,
+      httpMethod: 'GET',
+      webhookPath: 'daily-summary',
+      nodeNames: ['Summary Trigger'],
+      credentialsUsed: [],
+    }
+
+    const deployedInactiveRef: WorkflowReference = {
       workflowKey: 'referral-intake',
       workflowName: 'Referral Intake',
       deployed: true,
+      activated: false,
       workflowId: 'wf-1',
       httpMethod: 'POST',
       webhookPath: 'referral-intake',
@@ -102,15 +124,27 @@ describe('PromptBuilder', () => {
       credentialsUsed: ['slackApi'],
     }
 
-    const dryRunRef: WorkflowReference = {
-      workflowKey: 'daily-summary',
-      workflowName: 'Daily Summary Prep',
-      deployed: false,
-      workflowId: null,
-      httpMethod: 'GET',
-      webhookPath: 'daily-summary',
-      nodeNames: ['Summary Trigger'],
-      credentialsUsed: [],
+    const activatedUnverifiedRef: WorkflowReference = {
+      ...deployedInactiveRef,
+      activated: true,
+    }
+
+    const activatedVerifiedRef: WorkflowReference = {
+      ...deployedInactiveRef,
+      activated: true,
+      webhookVerified: true,
+    }
+
+    const activatedFailedVerificationRef: WorkflowReference = {
+      ...deployedInactiveRef,
+      activated: true,
+      webhookVerified: false,
+    }
+
+    const activatedInconclusiveVerificationRef: WorkflowReference = {
+      ...deployedInactiveRef,
+      activated: true,
+      webhookVerified: null,
     }
 
     it('renders no chaining section at all when priorContext is absent', () => {
@@ -123,28 +157,54 @@ describe('PromptBuilder', () => {
       expect(prompt.system.some((b) => b.text.includes('Related Workflows Already Built'))).toBe(false)
     })
 
-    it('renders method/path/URL as distinct labeled lines for a deployed reference', () => {
-      const prompt = builder.build({ description: 'test' }, [], [], undefined, undefined, [deployedRef])
+    it('state 1 -- dry-run: not created, relative method/path only, no URL', () => {
+      const prompt = builder.build({ description: 'test' }, [], [], undefined, undefined, [dryRunRef])
       const block = prompt.system.find((b) => b.text.includes('Related Workflows Already Built'))
       expect(block).toBeDefined()
-      expect(block!.text).toContain('### Referral Intake\n')
+      expect(block!.text).toContain('### Daily Summary Prep (not created — path/method only, no live URL)')
+      expect(block!.text).toContain('HTTP method: GET')
+      expect(block!.text).toContain('Webhook path (relative): daily-summary')
+      expect(block!.text).not.toContain('Webhook URL')
+    })
+
+    it('state 2 -- deployed but inactive: URL known, but activation still required', () => {
+      const prompt = builder.build({ description: 'test' }, [], [], undefined, undefined, [deployedInactiveRef])
+      const block = prompt.system.find((b) => b.text.includes('Related Workflows Already Built'))
+      expect(block).toBeDefined()
+      expect(block!.text).toContain('### Referral Intake (deployed, activation still required — URL below is the deterministic endpoint, not yet live)')
       expect(block!.text).toContain('HTTP method: POST')
       expect(block!.text).toContain('Webhook path (relative): referral-intake')
-      expect(block!.text).toContain('Full webhook URL: https://n8n.example.com/webhook/referral-intake')
+      expect(block!.text).toContain('Webhook URL (deterministic endpoint -- not proof of reachability): https://n8n.example.com/webhook/referral-intake')
       expect(block!.text).toContain('Nodes: Referral Webhook, Notify Slack')
       expect(block!.text).toContain('Credentials used: slackApi')
     })
 
-    it('renders a dry-run reference with an explicit "not yet deployed" caveat and no URL line', () => {
-      const prompt = builder.build({ description: 'test' }, [], [], undefined, undefined, [dryRunRef])
-      const block = prompt.system.find((b) => b.text.includes('Related Workflows Already Built'))
-      expect(block).toBeDefined()
-      expect(block!.text).toContain('### Daily Summary Prep (not yet deployed — path/method only, no live URL)')
-      expect(block!.text).not.toContain('Full webhook URL')
+    it('state 3 -- activated with no reachability check run: URL known, reachability explicitly not verified', () => {
+      const prompt = builder.build({ description: 'test' }, [], [], undefined, undefined, [activatedUnverifiedRef])
+      const block = prompt.system.find((b) => b.text.includes('Related Workflows Already Built'))!
+      expect(block.text).toContain('### Referral Intake (activated, reachability not verified)')
+    })
+
+    it('state 3 variant -- activated with a verified-reachable check', () => {
+      const prompt = builder.build({ description: 'test' }, [], [], undefined, undefined, [activatedVerifiedRef])
+      const block = prompt.system.find((b) => b.text.includes('Related Workflows Already Built'))!
+      expect(block.text).toContain('### Referral Intake (activated, reachability verified)')
+    })
+
+    it('state 3 variant -- activated but a reachability check found it not responding', () => {
+      const prompt = builder.build({ description: 'test' }, [], [], undefined, undefined, [activatedFailedVerificationRef])
+      const block = prompt.system.find((b) => b.text.includes('Related Workflows Already Built'))!
+      expect(block.text).toContain('### Referral Intake (activated, but a reachability check found it not responding)')
+    })
+
+    it('state 3 variant -- activated with an inconclusive reachability check (null, not a confirmed failure)', () => {
+      const prompt = builder.build({ description: 'test' }, [], [], undefined, undefined, [activatedInconclusiveVerificationRef])
+      const block = prompt.system.find((b) => b.text.includes('Related Workflows Already Built'))!
+      expect(block.text).toContain('### Referral Intake (activated, reachability check was inconclusive)')
     })
 
     it('renders multiple references as separate sections, deterministically', () => {
-      const prompt = builder.build({ description: 'test' }, [], [], undefined, undefined, [deployedRef, dryRunRef])
+      const prompt = builder.build({ description: 'test' }, [], [], undefined, undefined, [deployedInactiveRef, dryRunRef])
       const block = prompt.system.find((b) => b.text.includes('Related Workflows Already Built'))!
       const firstIndex = block.text.indexOf('Referral Intake')
       const secondIndex = block.text.indexOf('Daily Summary Prep')
@@ -154,7 +214,7 @@ describe('PromptBuilder', () => {
 
     it('renders regardless of profile (structural, not optional enrichment)', () => {
       const minimalBuilder = new PromptBuilder('/nonexistent/patterns.json', 'minimal')
-      const prompt = minimalBuilder.build({ description: 'test' }, [], [], undefined, undefined, [deployedRef])
+      const prompt = minimalBuilder.build({ description: 'test' }, [], [], undefined, undefined, [deployedInactiveRef])
       expect(prompt.system.some((b) => b.text.includes('Related Workflows Already Built'))).toBe(true)
     })
 
@@ -166,7 +226,7 @@ describe('PromptBuilder', () => {
       // full N8nWorkflow JSON) holds in practice, not measuring an exact token number that
       // would need a real API call to obtain.
       const withoutChaining = builder.build({ description: 'test' }, [])
-      const withChaining = builder.build({ description: 'test' }, [], [], undefined, undefined, [deployedRef])
+      const withChaining = builder.build({ description: 'test' }, [], [], undefined, undefined, [deployedInactiveRef])
 
       const baselineLength = withoutChaining.system.reduce((sum, b) => sum + b.text.length, 0)
       const chainedLength = withChaining.system.reduce((sum, b) => sum + b.text.length, 0)

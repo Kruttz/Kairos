@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { toWorkflowReference } from '../../../src/pack/workflow-reference.js'
 import { buildWebhookUrl } from '../../../src/utils/webhook-url.js'
 import type { BuildResult } from '../../../src/types/result.js'
+import type { WebhookReachabilityResult } from '../../../src/utils/webhook-verify.js'
 
 function makeBuildResult(overrides: Partial<BuildResult> = {}): BuildResult {
   return {
@@ -63,6 +64,42 @@ describe('toWorkflowReference', () => {
     expect(ref.deployed).toBe(true)
     expect(ref.workflowId).toBe('wf-42')
     expect(ref.webhookUrl).toBe('https://n8n.example.com/webhook/referral-intake')
+  })
+
+  describe('the three lifecycle states (deployed / activated / webhookVerified)', () => {
+    it('state 1 -- dry-run: activated is false regardless of activationRequired, since nothing was deployed', () => {
+      const ref = toWorkflowReference(makeBuildResult({ dryRun: true, workflowId: null, activationRequired: false }), 'referral-intake', 'https://n8n.example.com')
+      expect(ref.deployed).toBe(false)
+      expect(ref.activated).toBe(false)
+    })
+
+    it('state 2 -- deployed but inactive: activationRequired: true means activated is false, but the URL still populates', () => {
+      const ref = toWorkflowReference(makeBuildResult({ dryRun: false, activationRequired: true }), 'referral-intake', 'https://n8n.example.com')
+      expect(ref.deployed).toBe(true)
+      expect(ref.activated).toBe(false)
+      expect(ref.webhookUrl).toBe('https://n8n.example.com/webhook/referral-intake')
+    })
+
+    it('state 3 -- activated: deployed AND activationRequired: false means activated is true', () => {
+      const ref = toWorkflowReference(makeBuildResult({ dryRun: false, activationRequired: false }), 'referral-intake', 'https://n8n.example.com')
+      expect(ref.deployed).toBe(true)
+      expect(ref.activated).toBe(true)
+    })
+
+    it('webhookVerified is absent when the upstream build never ran a reachability probe', () => {
+      const ref = toWorkflowReference(makeBuildResult({ dryRun: false, activationRequired: false }), 'referral-intake')
+      expect(ref.webhookVerified).toBeUndefined()
+    })
+
+    it('webhookVerified mirrors BuildResult.webhookVerification.reachable exactly, including the null (inconclusive) case', () => {
+      const verifiedTrue: WebhookReachabilityResult = { reachable: true, detail: 'ok' }
+      const verifiedFalse: WebhookReachabilityResult = { reachable: false, detail: 'not registered' }
+      const verifiedNull: WebhookReachabilityResult = { reachable: null, detail: 'probe failed' }
+
+      expect(toWorkflowReference(makeBuildResult({ webhookVerification: verifiedTrue }), 'x').webhookVerified).toBe(true)
+      expect(toWorkflowReference(makeBuildResult({ webhookVerification: verifiedFalse }), 'x').webhookVerified).toBe(false)
+      expect(toWorkflowReference(makeBuildResult({ webhookVerification: verifiedNull }), 'x').webhookVerified).toBeNull()
+    })
   })
 
   it('has no httpMethod/webhookPath/webhookUrl for a workflow with no webhook trigger', () => {
