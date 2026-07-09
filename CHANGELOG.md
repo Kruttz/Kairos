@@ -4,6 +4,21 @@ All notable changes to `@kairos-sdk/core` are documented here. Format loosely fo
 
 ## [Unreleased]
 
+### New: pack-builder output chaining (Step 7/8)
+A later workflow in a multi-workflow pack can now declare `dependsOn` (by name) on an earlier one and receive its actual built output -- real webhook path/method/URL, node names, credentials used -- instead of only the shared upfront plan. Previously there was no channel at all for one workflow's build to inform another's.
+
+**Validation, before any generation spend:** `resolveBuildOrder()` runs a six-pass pipeline (shape check, name resolution, dedup, self-dependency, cycle detection, topological sort) entirely offline. Unknown, ambiguous (two workflows sharing a name), malformed, self-, and cyclic dependencies are all rejected per-workflow -- that workflow doesn't build at all, no tokens spent, and the rest of the pack is unaffected. A duplicate dependency (the same workflow listed twice) is deduped and builds normally, since it's redundant input, not a structural defect.
+
+**Build-time safety:** if a workflow's validated dependency later fails to actually build, the dependent is skipped too (cascading, transitively) rather than building against a reference that never existed. A dry-run workflow is never confused with a failed one -- dry-run packs get full content-level chaining (paths, methods, node names) with honestly-absent deploy-time fields, never blocked.
+
+**Bounded, typed context:** `WorkflowReference` never contains a full workflow JSON -- just the specific fields a downstream prompt needs, rendered as clearly labeled lines (HTTP method / webhook path / full URL kept visually distinct, so a relative path is never mistaken for a callable URL). Measured overhead: ~70 tokens per dependency.
+
+**Stable across the whole pipeline:** every workflow gets a slug-based `workflowKey` (deduped on collision) so dependencies never rely on fragile display-name matching. The pack's final result array always matches the original plan order, regardless of what order building actually happened in. `workflowKey`/`dependsOn` persist onto every `PackWorkflowResult` (built or rejected) so the dependency graph survives past one build call, not just used-and-discarded.
+
+**Fully backward compatible:** a plan with no `dependsOn` declarations anywhere -- every pack ever built before this feature existed -- behaves byte-for-byte as before: same prompt, same cost, same result order.
+
+Landed as 9 sequential commits (webhook-URL builder extraction, `WorkflowReference`, workflow-key assignment, the validation pipeline, prompt wiring, the availability gate, the pack-builder loop rewrite, and a golden-pack fixture + token measurement), each with its own tests, full suite green throughout. 54 new tests across the arc (1223 -> 1277). Typecheck/lint clean.
+
 ### Fixed: Step 6a's ledger emissions could throw out of writeBundle()/runPreflight()
 Both new `emit()` calls (previous entry) were unguarded -- a telemetry append failure (full disk, permissions, anything) would have thrown out of `writeBundle()`/`runPreflight()` and discarded an otherwise-fully-computed, already-written-to-disk result. Wrapped both in try/catch, silently swallowed: telemetry is a side-effecting log, not part of either function's own correctness, and must never change a bundle's manifest, a preflight verdict, or a CLI's exit status.
 
