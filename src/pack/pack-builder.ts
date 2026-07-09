@@ -125,6 +125,8 @@ Generate a list of 4-8 n8n workflows that would meaningfully automate this busin
 
 For each workflow, write a detailed build description (2-4 sentences) suitable for passing directly to an n8n workflow generator. Be specific: name the trigger type, data sources (Google Sheets columns if applicable), actions, and outputs.
 
+If a workflow needs to reference something another workflow in this same pack produces (e.g. a confirmation email that mentions the intake webhook's real path, or a summary that reports on a workflow that runs earlier), declare that with "dependsOn": an array of the OTHER workflow's exact "name" values from this same response. Only declare a dependency when the workflow genuinely needs to reference the other one's actual output — most workflows have no dependencies at all, and that's the normal case. Example: a "Missed-Call Text-Back" workflow and a "Daily Missed-Call Summary" workflow that reports on calls handled by the first would have the summary workflow declare "dependsOn": ["Missed-Call Text-Back"]. Omit "dependsOn" entirely for a workflow with no dependencies — do not include an empty array unless the workflow genuinely has zero dependencies and you want to be explicit about it.
+
 For assumptions, classify each one:
 - "safe": a clearly reasonable default the business likely expects (e.g. "Schedule runs Monday 9 AM")
 - "needs_confirmation": should be confirmed before going live but won't break things immediately (e.g. "Assumed professional email tone — confirm brand voice")
@@ -138,7 +140,8 @@ Return ONLY valid JSON with no markdown or extra text:
     {
       "name": "Short descriptive name",
       "description": "Detailed generator-ready description specifying trigger, data sources, actions, outputs",
-      "purpose": "One sentence explaining the business value"
+      "purpose": "One sentence explaining the business value",
+      "dependsOn": ["Exact name of another workflow in this same list, only if genuinely needed -- omit this field entirely otherwise"]
     }
   ],
   "assumptions": [

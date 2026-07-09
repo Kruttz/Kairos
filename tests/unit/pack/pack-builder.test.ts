@@ -120,6 +120,25 @@ describe('PackBuilder', () => {
       expect(plan.assumptions[0]!.type).toBe('needs_confirmation')
       expect(plan.assumptions[0]!.text).toBe('Who approves content?')
     })
+
+    it('passes dependsOn through untouched -- present, absent, and malformed cases all survive raw (validated later by resolveBuildOrder(), not here)', async () => {
+      const withDependsOn = {
+        workflows: [
+          { name: 'Missed-Call Text-Back', description: 'x', purpose: 'x' },
+          { name: 'Daily Missed-Call Summary', description: 'x', purpose: 'x', dependsOn: ['Missed-Call Text-Back'] },
+          { name: 'Malformed Example', description: 'x', purpose: 'x', dependsOn: 'not-an-array' },
+        ],
+        assumptions: [],
+        sheetsColumns: [],
+        testChecklist: [],
+      }
+      ;(builder as unknown as Record<string, unknown>)['client'] = makeMockAnthropic(JSON.stringify(withDependsOn))
+      const plan = await builder.plan('Test business')
+
+      expect(plan.workflows[0]!.dependsOn).toBeUndefined()
+      expect(plan.workflows[1]!.dependsOn).toEqual(['Missed-Call Text-Back'])
+      expect(plan.workflows[2]!.dependsOn).toBe('not-an-array')
+    })
   })
 
   describe('build()', () => {
