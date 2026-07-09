@@ -11,6 +11,7 @@ import { generateTestPayload, generateOpenApiContract } from './webhook-schema.j
 import { generateHandoff } from './pack-exporter.js'
 import { computeWorkflowHash } from '../utils/workflow-hash.js'
 import { getRuleSetVersion, getPromptTemplateVersion, getPromptProfile, getNodeCatalogVersion, getKairosVersion } from '../validation/provenance-versions.js'
+import type { TelemetryCollector } from '../telemetry/collector.js'
 
 export function slugifyWorkflowName(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'workflow'
@@ -540,8 +541,12 @@ export interface BundleManifest {
  * contract.openapi.json (the latter two only for webhook-shaped workflows). Composes the
  * existing generate-doc and write-files functions rather than duplicating their logic. One failing
  * piece never aborts the rest -- every skip is recorded, with why, in bundle-manifest.json.
+ *
+ * telemetry is optional -- when provided, emits one 'bundle_exported' event after the manifest
+ * is written; when omitted, writeBundle() behaves exactly as before (no telemetry dependency
+ * for callers that don't want one).
  */
-export async function writeBundle(pack: WorkflowPackResult, client: N8nApiClient, outDir: string): Promise<BundleManifest> {
+export async function writeBundle(pack: WorkflowPackResult, client: N8nApiClient, outDir: string, telemetry?: TelemetryCollector): Promise<BundleManifest> {
   await mkdir(outDir, { recursive: true })
   const manifest: BundleManifest = {
     generatedAt: new Date().toISOString(),
@@ -601,6 +606,15 @@ export async function writeBundle(pack: WorkflowPackResult, client: N8nApiClient
 
   const manifestPath = join(outDir, 'bundle-manifest.json')
   await writeJsonAtomic(manifestPath, manifest)
+
+  if (telemetry) {
+    await telemetry.emit('bundle_exported', {
+      packName: manifest.packName,
+      fileCount: manifest.files.length,
+      skippedCount: manifest.skipped.length,
+      hasProvenance: manifest.provenance !== undefined,
+    })
+  }
 
   return manifest
 }

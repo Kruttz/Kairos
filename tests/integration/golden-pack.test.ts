@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os'
 import { PackBuilder } from '../../src/pack/pack-builder.js'
 import { writeBundle, type BundleManifest } from '../../src/pack/pack-bundle.js'
 import { runPreflight } from '../../src/pack/preflight.js'
+import { TelemetryCollector } from '../../src/telemetry/collector.js'
+import type { TelemetryEvent } from '../../src/telemetry/types.js'
 import { findWebhookTrigger } from '../../src/utils/webhook-verify.js'
 import type { Kairos } from '../../src/client.js'
 import type { BuildResult } from '../../src/types/result.js'
@@ -52,12 +54,28 @@ function makeMockN8nClient(workflow: N8nWorkflow): N8nApiClient {
   return { getWorkflow: vi.fn().mockResolvedValue(response) } as unknown as N8nApiClient
 }
 
+async function readTelemetryEvents(telemetryDir: string): Promise<TelemetryEvent[]> {
+  const { readdir } = await import('node:fs/promises')
+  const files = await readdir(telemetryDir)
+  const events: TelemetryEvent[] = []
+  for (const file of files) {
+    if (!file.endsWith('.jsonl')) continue
+    const content = await readFile(join(telemetryDir, file), 'utf-8')
+    for (const line of content.split('\n').filter(Boolean)) {
+      events.push(JSON.parse(line) as TelemetryEvent)
+    }
+  }
+  return events
+}
+
 describe('Golden pack: webhook-shaped', () => {
   let outDir: string
+  let telemetryDir: string
 
   afterEach(async () => {
     vi.restoreAllMocks()
     if (outDir) await rm(outDir, { recursive: true, force: true })
+    if (telemetryDir) await rm(telemetryDir, { recursive: true, force: true })
   })
 
   it('plan -> build -> writeBundle -> preflight produces a clean pack with a real extracted webhook path', async () => {
@@ -126,8 +144,10 @@ describe('Golden pack: webhook-shaped', () => {
     expect(extractedWebhook).toEqual({ path: 'referral-intake', httpMethod: 'POST' })
 
     outDir = await mkdtemp(join(tmpdir(), 'kairos-golden-webhook-'))
+    telemetryDir = await mkdtemp(join(tmpdir(), 'kairos-golden-webhook-telemetry-'))
+    const telemetry = new TelemetryCollector(telemetryDir)
     const n8nClient = makeMockN8nClient(webhookWorkflow)
-    const manifest: BundleManifest = await writeBundle(pack, n8nClient, outDir)
+    const manifest: BundleManifest = await writeBundle(pack, n8nClient, outDir, telemetry)
 
     expect(manifest.skipped).toEqual([])
     const artifacts = manifest.files.map(f => f.artifact)
@@ -140,9 +160,22 @@ describe('Golden pack: webhook-shaped', () => {
     expect(writtenWorkflow.nodes.some(n => n.type === 'n8n-nodes-base.webhook')).toBe(true)
     expect(writtenWorkflow.nodes.some(n => n.type === 'n8n-nodes-base.slack')).toBe(true)
 
-    const preflightResult = await runPreflight(pack)
+    const preflightResult = await runPreflight(pack, { telemetry })
     expect(preflightResult.verdict).not.toBe('BLOCKED')
     expect(preflightResult.checks.some(c => c.status === 'fail')).toBe(false)
+
+    // Step 6a: both new ledger events actually fire, with the shape the plan calls for.
+    const events = await readTelemetryEvents(telemetryDir)
+    const bundleEvent = events.find(e => e.eventType === 'bundle_exported')
+    expect(bundleEvent).toBeDefined()
+    expect(bundleEvent!.data['packName']).toBe(pack.packName)
+    expect(bundleEvent!.data['fileCount']).toBe(manifest.files.length)
+    expect(bundleEvent!.data['hasProvenance']).toBe(true)
+
+    const preflightEvent = events.find(e => e.eventType === 'preflight_completed')
+    expect(preflightEvent).toBeDefined()
+    expect(preflightEvent!.data['packName']).toBe(pack.packName)
+    expect(preflightEvent!.data['verdict']).toBe(preflightResult.verdict)
   })
 })
 

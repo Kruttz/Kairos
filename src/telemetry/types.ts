@@ -5,11 +5,11 @@ export interface TelemetryEvent {
   timestamp: string
   sessionId: string
   runId?: string
-  eventType: 'build_start' | 'generation_attempt' | 'build_complete'
+  eventType: 'build_start' | 'generation_attempt' | 'build_complete' | 'bundle_exported' | 'preflight_completed'
   data: Record<string, unknown>
 }
 
-export const TELEMETRY_SCHEMA_VERSION = 2
+export const TELEMETRY_SCHEMA_VERSION = 3
 
 export interface AttemptMetadata {
   attempt: number
@@ -56,4 +56,25 @@ export interface BuildCompleteData {
   credentialsNeeded: number
   warnedRules: number[]
   workflowType?: string | null
+}
+
+export interface BundleExportedData {
+  packName: string
+  fileCount: number
+  skippedCount: number
+  /** Whether writeBundle() stamped the manifest's export-time provenance -- always true for
+   * any bundle written by code that includes this event type, kept explicit rather than
+   * assumed so a telemetry consumer never has to cross-reference source versions to know. */
+  hasProvenance: boolean
+}
+
+export interface PreflightCompletedData {
+  packName: string
+  /** Plain string, not PreflightVerdict -- telemetry/types.ts stays free of imports from
+   * pack/ (a higher-level module) the same way it already does for every other event type. */
+  verdict: string
+  checkCount: number
+  failCount: number
+  warnCount: number
+  live: boolean
 }

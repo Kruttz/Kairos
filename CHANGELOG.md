@@ -4,6 +4,15 @@ All notable changes to `@kairos-sdk/core` are documented here. Format loosely fo
 
 ## [Unreleased]
 
+### New: Step 6a — minimal operation ledger (bundle_exported, preflight_completed)
+Two new telemetry event types, `bundle_exported` and `preflight_completed`, deliberately the smallest possible slice of an eventual full ledger (Step 6b, deferred) -- the two events most directly useful before a real client engagement: "was this pack bundled, and what did preflight say." `TelemetryEvent['eventType']` widened from three to five variants; `TELEMETRY_SCHEMA_VERSION` bumped 2 -> 3.
+
+`writeBundle()` and `runPreflight()` both take an optional `telemetry?: TelemetryCollector` parameter -- when provided, one event fires at the end of each; when omitted (the previous signature), both behave exactly as before, no new dependency for callers that don't want one. CLI wiring reuses the existing `KAIROS_TELEMETRY`-driven decision `createClient()`/`createDryRunClient()` already make for `build`/`replace`, via a new `createTelemetryCollector()` helper, for the `pack export --bundle` and `preflight` commands.
+
+No retention sweep, no CLI read-back surface, no additional event types, no finding-taxonomy adapters -- all explicitly deferred to Step 6b, which is not gated on anything above.
+
+Tests: extended one of the existing Step 2 golden-pack integration fixtures (real `TelemetryCollector` pointed at a temp dir, both events read back and asserted end-to-end) rather than adding isolated unit tests only. 1221/1221 passing overall. Typecheck/lint clean.
+
 ### Fixed: bundle manifest omitted full build-time provenance, only the hash
 A second review pass caught that `PackWorkflowResult.provenance` (preserved through the pack-builder boundary in an earlier fix) was still only partially reaching the client deliverable: `writeBundle()` copied just `originalBuildHash` (a bare string) onto each workflow.json manifest entry, dropping the rest of the object -- model, maxTokens, temperature, runId, and the build-time rule-set/prompt/catalog versions were absent from `bundle-manifest.json` entirely, visible only in memory on the in-process `WorkflowPackResult`, never in what actually ships to a client.
 

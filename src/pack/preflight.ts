@@ -7,6 +7,7 @@ import { findSheetNodes } from './pack-wirer.js'
 import { findWebhookTrigger } from '../utils/webhook-verify.js'
 import type { N8nApiClient } from '../providers/n8n/index.js'
 import { getRuleSetVersion, getPromptTemplateVersion, getPromptProfile, getNodeCatalogVersion, getKairosVersion } from '../validation/provenance-versions.js'
+import type { TelemetryCollector } from '../telemetry/collector.js'
 
 export type CheckStatus = 'pass' | 'fail' | 'warn' | 'skip' | 'info'
 
@@ -40,6 +41,9 @@ export interface PreflightOptions {
   live?: boolean
   client?: N8nApiClient
   bundleDir?: string
+  /** Optional -- when provided, runPreflight() emits one 'preflight_completed' event at the
+   * end; when omitted, behaves exactly as before with no telemetry dependency. */
+  telemetry?: TelemetryCollector
 }
 
 const STATUS_ICON: Record<CheckStatus, string> = {
@@ -287,6 +291,17 @@ export async function runPreflight(pack: WorkflowPackResult, options: PreflightO
   }
 
   const verdict = computeVerdict(checks, isEscalated)
+
+  if (options.telemetry) {
+    await options.telemetry.emit('preflight_completed', {
+      packName: pack.packName,
+      verdict,
+      checkCount: checks.length,
+      failCount: checks.filter((c) => c.status === 'fail').length,
+      warnCount: checks.filter((c) => c.status === 'warn').length,
+      live,
+    })
+  }
 
   return {
     packName: pack.packName,

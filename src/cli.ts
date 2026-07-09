@@ -4,6 +4,7 @@ import { Kairos } from './client.js'
 import { FileLibrary } from './library/file-library.js'
 import { TemplateSyncer } from './templates/syncer.js'
 import { PatternAnalyzer } from './telemetry/pattern-analyzer.js'
+import type { TelemetryCollector } from './telemetry/collector.js'
 import { N8nApiClient } from './providers/n8n/api-client.js'
 import { NodeSyncer } from './validation/node-syncer.js'
 import type { NodeRegistry } from './validation/registry.js'
@@ -155,6 +156,17 @@ function getTelemetryOption(): boolean | string | undefined {
   if (telemetryEnv === 'true') return true
   if (telemetryEnv && telemetryEnv !== 'false') return telemetryEnv
   return undefined
+}
+
+// For standalone functions (writeBundle(), runPreflight()) that take an optional
+// TelemetryCollector directly rather than going through a Kairos instance -- same
+// KAIROS_TELEMETRY-driven decision createClient()/createDryRunClient() already make, just
+// producing a collector instance instead of a Kairos constructor option.
+async function createTelemetryCollector(): Promise<TelemetryCollector | undefined> {
+  const telemetry = getTelemetryOption()
+  if (telemetry === undefined) return undefined
+  const { TelemetryCollector } = await import('./telemetry/collector.js')
+  return new TelemetryCollector(typeof telemetry === 'string' ? telemetry : undefined)
 }
 
 // Overrides the directory every CLI-constructed FileLibrary points at — mirrors
@@ -987,7 +999,8 @@ async function handlePackExport(positional: string[], flags: Record<string, stri
     }
     const { writeBundle } = await import('./pack/pack-bundle.js')
     const client = new N8nApiClient(n8nBaseUrl, n8nApiKey, CLI_LOGGER)
-    const manifest = await writeBundle(pack, client, outDir)
+    const telemetry = await createTelemetryCollector()
+    const manifest = await writeBundle(pack, client, outDir, telemetry)
     for (const f of manifest.files) console.error(`Wrote ${f.path}`)
     for (const s of manifest.skipped) console.error(`Skipped ${s.artifact}${s.workflowName ? ` for "${s.workflowName}"` : ''}: ${s.reason}`)
     console.error(`\n${manifest.files.length} file(s) written to ${outDir}, ${manifest.skipped.length} skipped. See bundle-manifest.json for details.`)
@@ -1256,10 +1269,12 @@ async function handlePreflight(positional: string[], flags: Record<string, strin
     client = new N8nApiClient(n8nBaseUrl, n8nApiKey, CLI_LOGGER)
   }
 
+  const telemetry = await createTelemetryCollector()
   const result = await runPreflight(pack, {
     live: flags['live'] === true,
     ...(client ? { client } : {}),
     ...(typeof flags['bundle-dir'] === 'string' ? { bundleDir: flags['bundle-dir'] } : {}),
+    ...(telemetry ? { telemetry } : {}),
   })
 
   if (flags['json'] === true) {
