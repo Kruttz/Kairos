@@ -293,14 +293,21 @@ export async function runPreflight(pack: WorkflowPackResult, options: PreflightO
   const verdict = computeVerdict(checks, isEscalated)
 
   if (options.telemetry) {
-    await options.telemetry.emit('preflight_completed', {
-      packName: pack.packName,
-      verdict,
-      checkCount: checks.length,
-      failCount: checks.filter((c) => c.status === 'fail').length,
-      warnCount: checks.filter((c) => c.status === 'warn').length,
-      live,
-    })
+    // Best-effort -- a telemetry append failure must never throw out of runPreflight() and
+    // prevent the (already fully computed) PreflightResult from being returned. This is a
+    // side-effecting log, not part of preflight's own correctness or verdict.
+    try {
+      await options.telemetry.emit('preflight_completed', {
+        packName: pack.packName,
+        verdict,
+        checkCount: checks.length,
+        failCount: checks.filter((c) => c.status === 'fail').length,
+        warnCount: checks.filter((c) => c.status === 'warn').length,
+        live,
+      })
+    } catch {
+      // Swallowed deliberately -- see comment above.
+    }
   }
 
   return {

@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { runPreflight, formatPreflightChecklist } from '../../../src/pack/preflight.js'
+import type { TelemetryCollector } from '../../../src/telemetry/collector.js'
 import type { WorkflowPackResult } from '../../../src/pack/pack-builder.js'
 import type { N8nApiClient } from '../../../src/providers/n8n/index.js'
 import type { N8nWorkflowResponse } from '../../../src/providers/n8n/types.js'
@@ -470,5 +471,16 @@ describe('runPreflight — provenance stamp', () => {
     expect(result.provenance.promptTemplateVersion).toBe(getPromptTemplateVersion())
     expect(result.provenance.promptProfile).toBe(getPromptProfile())
     expect(result.provenance.nodeCatalogVersion).toEqual(getNodeCatalogVersion())
+  })
+
+  it('a telemetry emit() rejection does not throw out of runPreflight() or change the returned result', async () => {
+    const pack = makePack({ workflows: [cleanWorkflow()] })
+    const failingTelemetry = { emit: vi.fn().mockRejectedValue(new Error('disk full')) } as unknown as TelemetryCollector
+
+    const result = await runPreflight(pack, { telemetry: failingTelemetry })
+
+    expect(failingTelemetry.emit).toHaveBeenCalledOnce()
+    expect(result.packName).toBe(pack.packName)
+    expect(result.verdict).toBeDefined()
   })
 })

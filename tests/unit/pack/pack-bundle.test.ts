@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { mkdtemp, rm, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -8,6 +8,7 @@ import type { N8nWorkflowResponse } from '../../../src/providers/n8n/types.js'
 import type { WorkflowPackResult } from '../../../src/pack/pack-builder.js'
 import { computeWorkflowHash } from '../../../src/utils/workflow-hash.js'
 import { getRuleSetVersion, getPromptTemplateVersion, getPromptProfile, getNodeCatalogVersion, getKairosVersion } from '../../../src/validation/provenance-versions.js'
+import type { TelemetryCollector } from '../../../src/telemetry/collector.js'
 
 function makePack(overrides: Partial<WorkflowPackResult> = {}): WorkflowPackResult {
   return {
@@ -750,5 +751,24 @@ describe('writeBundle', () => {
       expect(withoutProvenance.originalBuildHash).toBeUndefined()
       expect(withoutProvenance.liveExportHash).toMatch(/^w1:[0-9a-f]{64}$/)
     })
+  })
+
+  it('a telemetry emit() rejection does not throw out of writeBundle() or change the returned manifest', async () => {
+    const dir = await makeTmpDir()
+    const pack = makePack({
+      workflows: [{ name: 'Referral Intake', purpose: 'x', workflowId: 'wf-1', deployed: true, generationAttempts: 1, credentialsNeeded: [], finalIssues: [] }],
+    })
+    const { client } = mockBundleClient()
+    const failingTelemetry = { emit: vi.fn().mockRejectedValue(new Error('disk full')) } as unknown as TelemetryCollector
+
+    const manifest = await writeBundle(pack, client, dir, failingTelemetry)
+
+    expect(failingTelemetry.emit).toHaveBeenCalledOnce()
+    expect(manifest.packName).toBe(pack.packName)
+    expect(manifest.files.length).toBeGreaterThan(0)
+    // The manifest file on disk reflects the same successful write -- the telemetry failure
+    // happened strictly after writeJsonAtomic() already completed.
+    const onDisk = JSON.parse(await readFile(join(dir, 'bundle-manifest.json'), 'utf-8'))
+    expect(onDisk.packName).toBe(pack.packName)
   })
 })

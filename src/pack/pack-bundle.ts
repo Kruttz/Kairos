@@ -608,12 +608,20 @@ export async function writeBundle(pack: WorkflowPackResult, client: N8nApiClient
   await writeJsonAtomic(manifestPath, manifest)
 
   if (telemetry) {
-    await telemetry.emit('bundle_exported', {
-      packName: manifest.packName,
-      fileCount: manifest.files.length,
-      skippedCount: manifest.skipped.length,
-      hasProvenance: manifest.provenance !== undefined,
-    })
+    // Best-effort: the bundle is already fully written to disk at this point (manifest
+    // included). A telemetry append failure (full disk, permissions, anything) must never
+    // throw out of writeBundle() and discard an otherwise-successful result -- this is a
+    // side-effecting log, not part of the bundle's own correctness.
+    try {
+      await telemetry.emit('bundle_exported', {
+        packName: manifest.packName,
+        fileCount: manifest.files.length,
+        skippedCount: manifest.skipped.length,
+        hasProvenance: manifest.provenance !== undefined,
+      })
+    } catch {
+      // Swallowed deliberately -- see comment above.
+    }
   }
 
   return manifest

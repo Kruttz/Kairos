@@ -4,6 +4,11 @@ All notable changes to `@kairos-sdk/core` are documented here. Format loosely fo
 
 ## [Unreleased]
 
+### Fixed: Step 6a's ledger emissions could throw out of writeBundle()/runPreflight()
+Both new `emit()` calls (previous entry) were unguarded -- a telemetry append failure (full disk, permissions, anything) would have thrown out of `writeBundle()`/`runPreflight()` and discarded an otherwise-fully-computed, already-written-to-disk result. Wrapped both in try/catch, silently swallowed: telemetry is a side-effecting log, not part of either function's own correctness, and must never change a bundle's manifest, a preflight verdict, or a CLI's exit status.
+
+Tests: 2 new (one per call site) using a fake `TelemetryCollector` whose `emit()` rejects, confirming the real return value is unaffected. Verified empirically for the `writeBundle()` case -- reverted the fix, confirmed the test fails, restored it, confirmed it passes -- same discipline as the earlier key-collision fix in this arc. 1223/1223 passing overall. Typecheck/lint clean.
+
 ### New: Step 6a — minimal operation ledger (bundle_exported, preflight_completed)
 Two new telemetry event types, `bundle_exported` and `preflight_completed`, deliberately the smallest possible slice of an eventual full ledger (Step 6b, deferred) -- the two events most directly useful before a real client engagement: "was this pack bundled, and what did preflight say." `TelemetryEvent['eventType']` widened from three to five variants; `TELEMETRY_SCHEMA_VERSION` bumped 2 -> 3.
 
