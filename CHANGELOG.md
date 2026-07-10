@@ -2,7 +2,7 @@
 
 All notable changes to `@kairos-sdk/core` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); dates are publish dates from npm.
 
-## [Unreleased]
+## [0.11.0] - 2026-07-10
 
 ### New: pack-builder output chaining (Step 7/8)
 A later workflow in a multi-workflow pack can now declare `dependsOn` (by name) on an earlier one and receive its actual built output -- real webhook path/method/URL, node names, credentials used -- instead of only the shared upfront plan. Previously there was no channel at all for one workflow's build to inform another's.
@@ -103,6 +103,15 @@ Added `NodeDefinition.credentialTypes?: string[]` alongside the existing `creden
 Deliberately does **not** attempt to capture `displayOptions` (which auth-mode value selects which credential) — `N8nNodeTypeInfo.credentials` only types `{name, required?}` today, and whether n8n's real node-types API response actually carries that data is unverified (checked only against Kairos's own type, not a live response — see `docs/plans/step3-audit-report-2026-07-08.md` §2). Broadening the capture without that verification would be guessing at a live API shape, not fixing a confirmed gap.
 
 Tests: first-ever test coverage for `NodeSyncer` (previously none existed) — 5 new tests covering single-credential capture, multi-credential capture, zero-credential nodes, the already-known-node merge path leaving `credentialType`/`credentialTypes` untouched, and the catalog text rendering. 1181/1181 passing overall. Typecheck/lint clean.
+
+### Fixed: two real bugs found via a real-model spot-check (Step 9)
+`PackBuilder.plan()`'s `max_tokens` was hardcoded at 4096 -- the first live `plan()` call against a realistic 3-workflow business description truncated mid-JSON-string and threw. Reused `client.ts`'s existing `DEFAULT_MAX_TOKENS`/`KAIROS_MAX_TOKENS` convention instead of a second hardcoded magic number. `derivePackName()` had no length cap -- a realistic full-paragraph business description slugified into a 400+ char filename, crashing the CLI's save step with `ENAMETOOLONG` after a real, billed `plan()` call had already run. Reused `slugifyWorkflowName()`'s existing 60-char cap instead of a second, uncapped slug implementation. Neither gap was ever exercised by existing tests, which only use short synthetic business-context strings. Full checkpoint in `docs/plans/step9-checkpoint-2026-07-09.md`.
+
+### Fixed: `PLAN_PROMPT` ignored an explicit workflow count
+Hardcoded "Generate a list of 4-8 n8n workflows" with no exception -- three separate live attempts asking for "exactly two workflows" during Step 9's checkpoint got 7-8 back every time, independently confirmed by a Codex review of the same conversation. Added an explicit override: when the business context states a specific number or list of workflows, the model must build that scope instead of the default 4-8 range. Verified live against the exact scenario that failed three times before.
+
+### New: `credential-client-binding` preflight check
+Per-client storage isolation (separate databases, separate Google accounts, Postgres RLS) protects the data layer -- it does nothing if Kairos wires the wrong n8n credential into a workflow, since from n8n's point of view the workflow is just using whatever credential it was told to use. New opt-in `kairos preflight <pack> --live --client-id <slug>` check: every real (non-placeholder) credential a pack's workflows reference must be named `client:<slug>:...` in n8n. Parses client identity from the credential's own name (no second mapping file to drift out of sync); requires an explicit `--client-id`, never inferred from `packName`. Omitted by default -- zero behavior change. A confirmed mismatch fails (NO-GO); a name that doesn't follow the convention warns (unverifiable, not confirmed wrong). Reuses the existing live-fetch loop that already powers the `placeholder-credentials` check -- no new n8n API surface needed. 12 new tests plus one live spot-check against a real n8n Cloud account (two real throwaway credentials, one throwaway workflow, confirmed mismatch detection in both directions, confirmed cleanup). Full writeup in `docs/plans/credential-client-binding-plan-2026-07-09.md`.
 
 ## [0.10.0] - 2026-07-07
 
