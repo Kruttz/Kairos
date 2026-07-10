@@ -44,6 +44,40 @@ export interface PreflightOptions {
   /** Optional -- when provided, runPreflight() emits one 'preflight_completed' event at the
    * end; when omitted, behaves exactly as before with no telemetry dependency. */
   telemetry?: TelemetryCollector
+  /**
+   * Optional -- when provided (and --live is also on), enables the credential-client-binding
+   * check: every real (non-placeholder) credential referenced by the pack's workflows must be
+   * named `client:<clientId>:...` in n8n. Catches the case where Kairos wired in -- or n8n
+   * already had -- a credential that actually belongs to a DIFFERENT client, which is a
+   * generation-time/wiring mistake that per-client storage isolation (separate databases,
+   * separate Sheets, RLS) cannot catch on its own, since from n8n's point of view the workflow
+   * is just using whatever credential it was told to use.
+   *
+   * Omitted entirely by default -- zero behavior change for every existing single-client /
+   * non-multi-tenant use of Kairos. Never inferred from packName (a slugified business-context
+   * string, not a reliable client identity) -- must be passed explicitly, same discipline as
+   * never fabricating webhookUrl without a known base URL.
+   *
+   * This is a naming-convention CONSISTENCY check, not access control or proof of ownership --
+   * a credential that's deliberately mis-named would fool it. It raises the bar against the
+   * "wrong credential picked by mistake / registry-sync bug" class of error; it does not
+   * replace hard isolation (separate n8n instances/projects, database-level RLS) for
+   * PHI-adjacent or otherwise high-stakes client data.
+   */
+  clientId?: string
+}
+
+/**
+ * Parses a credential name against the `client:<slug>:...` naming convention -- returns the
+ * lowercased slug, or null if the name doesn't follow the convention at all. Case-insensitive;
+ * the service/purpose segments after the slug are free-form and not parsed or validated here,
+ * only the client slug matters to the credential-client-binding check. A null result means
+ * "ownership unverifiable," never "confirmed wrong" -- a pre-existing credential named e.g.
+ * "Empire Slack" simply predates the convention, and this function must not guess at it.
+ */
+export function parseCredentialClientSlug(name: string): string | null {
+  const match = /^client:([a-z0-9][a-z0-9-]*):/i.exec(name)
+  return match ? match[1]!.toLowerCase() : null
 }
 
 const STATUS_ICON: Record<CheckStatus, string> = {
@@ -167,9 +201,11 @@ export async function runPreflight(pack: WorkflowPackResult, options: PreflightO
   if (isEscalated) {
     checks.push({ id: 'placeholder-credentials', label: 'No placeholder/unwired credential IDs', status: 'skip', detail: 'N/A -- pack never built' })
     checks.push({ id: 'sheets-ids', label: 'Google Sheets IDs set', status: 'skip', detail: 'N/A -- pack never built' })
+    checks.push({ id: 'credential-client-binding', label: 'Credentials belong to the preflighted client', status: 'skip', detail: 'N/A -- pack never built' })
   } else if (!live) {
     checks.push({ id: 'placeholder-credentials', label: 'No placeholder/unwired credential IDs', status: 'skip', detail: 'N/A -- needs --live' })
     checks.push({ id: 'sheets-ids', label: 'Google Sheets IDs set', status: 'skip', detail: 'N/A -- needs --live' })
+    checks.push({ id: 'credential-client-binding', label: 'Credentials belong to the preflighted client', status: 'skip', detail: 'N/A -- needs --live' })
   } else {
     const liveData = await fetchLiveWorkflowData(pack, options.client!)
 
@@ -179,6 +215,10 @@ export async function runPreflight(pack: WorkflowPackResult, options: PreflightO
     const unverifiedSheetIds: string[] = []
     const sheetFetchFailures: string[] = []
     const webhookShaped: string[] = []
+    // Only populated when options.clientId is set -- see the credential-client-binding check
+    // pushed below, which is itself skipped entirely when clientId is absent.
+    const credentialMismatches: string[] = []
+    const unverifiableCredentialNames: string[] = []
 
     for (const [name, data] of liveData) {
       if (data.fetchError) {
@@ -193,6 +233,15 @@ export async function runPreflight(pack: WorkflowPackResult, options: PreflightO
         for (const [credType, ref] of Object.entries(node.credentials)) {
           if (!ref.id || ref.id === 'placeholder-id') {
             unwiredCreds.push(`${name} → "${node.name}" (${credType})`)
+            continue // no meaningful name to check ownership of on an unwired credential
+          }
+          if (options.clientId !== undefined) {
+            const slug = parseCredentialClientSlug(ref.name)
+            if (slug === null) {
+              unverifiableCredentialNames.push(`${name} → "${node.name}" (${credType}) named "${ref.name}"`)
+            } else if (slug !== options.clientId.toLowerCase()) {
+              credentialMismatches.push(`${name} → "${node.name}" (${credType}) named "${ref.name}" (client "${slug}") but this pack was preflighted for client "${options.clientId}"`)
+            }
           }
         }
       }
@@ -212,6 +261,22 @@ export async function runPreflight(pack: WorkflowPackResult, options: PreflightO
       checks.push({ id: 'placeholder-credentials', label: 'No placeholder/unwired credential IDs', status: 'warn', detail: `Could not verify: ${credFetchFailures.join('; ')}` })
     } else {
       checks.push({ id: 'placeholder-credentials', label: 'No placeholder/unwired credential IDs', status: 'pass' })
+    }
+
+    // credential-client-binding: a confirmed mismatch is a real, severe finding (a workflow
+    // wired to a credential belonging to a different client) and fails outright, same severity
+    // model as every other "confirmed real problem" in this checklist. A name that doesn't
+    // follow the client:<slug>: convention is NOT proof of anything wrong -- it may simply
+    // predate the convention -- so it only warns, mirroring the sheets-ids check's own
+    // "present but unverified" distinction just below.
+    if (options.clientId === undefined) {
+      checks.push({ id: 'credential-client-binding', label: 'Credentials belong to the preflighted client', status: 'skip', detail: 'N/A -- --client-id not provided' })
+    } else if (credentialMismatches.length > 0) {
+      checks.push({ id: 'credential-client-binding', label: 'Credentials belong to the preflighted client', status: 'fail', detail: `Mismatched: ${credentialMismatches.join('; ')}` })
+    } else if (unverifiableCredentialNames.length > 0) {
+      checks.push({ id: 'credential-client-binding', label: 'Credentials belong to the preflighted client', status: 'warn', detail: `Naming convention (client:<slug>:...) not followed -- ownership unverifiable, confirm manually: ${unverifiableCredentialNames.join('; ')}` })
+    } else {
+      checks.push({ id: 'credential-client-binding', label: 'Credentials belong to the preflighted client', status: 'pass' })
     }
 
     // The Sheets check must never render a bare pass when it found real values to (not fully)

@@ -20,7 +20,7 @@ Usage:
   kairos pack export <name> [--handoff]
   kairos pack wire <name> [--sheet-ids <json-or-path>] [--dry-run]
   kairos validate-pack <name>
-  kairos preflight <name> [--live] [--bundle-dir <dir>] [--json]
+  kairos preflight <name> [--live] [--bundle-dir <dir>] [--client-id <slug>] [--json]
   kairos trace record <n8n-workflow-id>
   kairos replace <n8n-id> <description>
   kairos memory add|list|search|forget|rebuild-index <client-id> [...]
@@ -58,6 +58,7 @@ Pack options:
   preflight <name>            Go/no-go launch checklist -- offline by default (saved pack only)
   preflight <name> --live     Also checks live n8n state: placeholder credentials, Sheet IDs, webhook artifacts
   preflight <name> --bundle-dir <dir>  Cross-check against a previously generated --bundle output
+  preflight <name> --live --client-id <slug>  Also verifies every real credential is named client:<slug>:... in n8n (naming-convention check, not access control -- see docs/plans/credential-client-binding-plan-2026-07-09.md)
 
 Patterns options:
   --days <days>   Analysis window (default: 30)
@@ -1236,7 +1237,7 @@ async function handleValidatePack(positional: string[]): Promise<void> {
 async function handlePreflight(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const packName = positional[0]
   if (!packName) {
-    console.error('Usage: kairos preflight <pack-name> [--live] [--bundle-dir <dir>] [--json]')
+    console.error('Usage: kairos preflight <pack-name> [--live] [--bundle-dir <dir>] [--client-id <slug>] [--json]')
     process.exit(1)
   }
 
@@ -1274,6 +1275,7 @@ async function handlePreflight(positional: string[], flags: Record<string, strin
     live: flags['live'] === true,
     ...(client ? { client } : {}),
     ...(typeof flags['bundle-dir'] === 'string' ? { bundleDir: flags['bundle-dir'] } : {}),
+    ...(typeof flags['client-id'] === 'string' ? { clientId: flags['client-id'] } : {}),
     ...(telemetry ? { telemetry } : {}),
   })
 

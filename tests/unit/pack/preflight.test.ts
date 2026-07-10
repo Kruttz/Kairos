@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { runPreflight, formatPreflightChecklist } from '../../../src/pack/preflight.js'
+import { runPreflight, formatPreflightChecklist, parseCredentialClientSlug } from '../../../src/pack/preflight.js'
 import type { TelemetryCollector } from '../../../src/telemetry/collector.js'
 import type { WorkflowPackResult } from '../../../src/pack/pack-builder.js'
 import type { N8nApiClient } from '../../../src/providers/n8n/index.js'
@@ -236,6 +236,115 @@ describe('runPreflight — with --live: placeholder credentials', () => {
     const result = await runPreflight(pack, { live: true, client })
     expect(checkFor(result, 'placeholder-credentials')?.status).toBe('warn')
     expect(checkFor(result, 'placeholder-credentials')?.detail).toContain('Broken')
+  })
+})
+
+describe('parseCredentialClientSlug', () => {
+  it('parses the client slug from a conforming name, lowercased', () => {
+    expect(parseCredentialClientSlug('client:empire:slack:referrals')).toBe('empire')
+  })
+
+  it('is case-insensitive on both the "client:" literal and the slug itself', () => {
+    expect(parseCredentialClientSlug('Client:Empire:Slack:referrals')).toBe('empire')
+    expect(parseCredentialClientSlug('CLIENT:EMPIRE:slack')).toBe('empire')
+  })
+
+  it('returns null for a name that does not follow the convention at all', () => {
+    expect(parseCredentialClientSlug('Empire Slack')).toBeNull()
+    expect(parseCredentialClientSlug('Team Slack')).toBeNull()
+    expect(parseCredentialClientSlug('')).toBeNull()
+  })
+
+  it('returns null for a name that only superficially resembles the convention', () => {
+    expect(parseCredentialClientSlug('client-empire-slack')).toBeNull() // wrong separator
+    expect(parseCredentialClientSlug('client:')).toBeNull() // empty slug
+    expect(parseCredentialClientSlug('not-client:empire:slack')).toBeNull() // "client:" must lead
+  })
+})
+
+describe('runPreflight — with --live: credential-client-binding (needs --client-id)', () => {
+  it('skips entirely when --client-id is not provided, even with --live -- opt-in, zero behavior change by default', async () => {
+    const pack = makePack({ workflows: [cleanWorkflow()] })
+    const client = mockClient(async (id) => makeResponse({
+      id,
+      nodes: [{ id: 'n1', name: 'Post to Slack', type: 'n8n-nodes-base.slack', typeVersion: 2.2, position: [0, 0], parameters: {}, credentials: { slackApi: { id: 'real-cred-1', name: 'client:acme:slack:referrals' } } }],
+    }))
+    const result = await runPreflight(pack, { live: true, client })
+    expect(checkFor(result, 'credential-client-binding')?.status).toBe('skip')
+    expect(checkFor(result, 'credential-client-binding')?.detail).toContain('--client-id not provided')
+  })
+
+  it('skips with "needs --live" when --client-id is provided but --live is not', async () => {
+    const pack = makePack({ workflows: [cleanWorkflow()] })
+    const result = await runPreflight(pack, { clientId: 'empire' })
+    expect(checkFor(result, 'credential-client-binding')?.status).toBe('skip')
+    expect(checkFor(result, 'credential-client-binding')?.detail).toContain('needs --live')
+  })
+
+  it('passes when every real credential is named for the preflighted client', async () => {
+    const pack = makePack({ workflows: [cleanWorkflow()] })
+    const client = mockClient(async (id) => makeResponse({
+      id,
+      nodes: [{ id: 'n1', name: 'Post to Slack', type: 'n8n-nodes-base.slack', typeVersion: 2.2, position: [0, 0], parameters: {}, credentials: { slackApi: { id: 'real-cred-1', name: 'client:empire:slack:referrals' } } }],
+    }))
+    const result = await runPreflight(pack, { live: true, client, clientId: 'empire' })
+    expect(checkFor(result, 'credential-client-binding')?.status).toBe('pass')
+  })
+
+  it('matches case-insensitively -- clientId "Empire" matches a credential named "client:empire:..."', async () => {
+    const pack = makePack({ workflows: [cleanWorkflow()] })
+    const client = mockClient(async (id) => makeResponse({
+      id,
+      nodes: [{ id: 'n1', name: 'Post to Slack', type: 'n8n-nodes-base.slack', typeVersion: 2.2, position: [0, 0], parameters: {}, credentials: { slackApi: { id: 'real-cred-1', name: 'client:empire:slack:referrals' } } }],
+    }))
+    const result = await runPreflight(pack, { live: true, client, clientId: 'Empire' })
+    expect(checkFor(result, 'credential-client-binding')?.status).toBe('pass')
+  })
+
+  it('FAILS (NO-GO) on a confirmed mismatch -- a credential named for a different client', async () => {
+    const pack = makePack({ workflows: [cleanWorkflow()] })
+    const client = mockClient(async (id) => makeResponse({
+      id,
+      nodes: [{ id: 'n1', name: 'Post to Slack', type: 'n8n-nodes-base.slack', typeVersion: 2.2, position: [0, 0], parameters: {}, credentials: { slackApi: { id: 'real-cred-1', name: 'client:acme:slack:referrals' } } }],
+    }))
+    const result = await runPreflight(pack, { live: true, client, clientId: 'empire' })
+    expect(result.verdict).toBe('NO-GO')
+    expect(checkFor(result, 'credential-client-binding')?.status).toBe('fail')
+    expect(checkFor(result, 'credential-client-binding')?.detail).toContain('Post to Slack')
+    expect(checkFor(result, 'credential-client-binding')?.detail).toContain('client "acme"')
+    expect(checkFor(result, 'credential-client-binding')?.detail).toContain('client "empire"')
+  })
+
+  it('WARNS (not fails) on a credential name that does not follow the convention -- unverifiable, not confirmed wrong', async () => {
+    const pack = makePack({ workflows: [cleanWorkflow()] })
+    const client = mockClient(async (id) => makeResponse({
+      id,
+      nodes: [{ id: 'n1', name: 'Post to Slack', type: 'n8n-nodes-base.slack', typeVersion: 2.2, position: [0, 0], parameters: {}, credentials: { slackApi: { id: 'real-cred-1', name: 'Empire Slack' } } }],
+    }))
+    const result = await runPreflight(pack, { live: true, client, clientId: 'empire' })
+    expect(result.verdict).toBe('GO WITH WARNINGS')
+    expect(checkFor(result, 'credential-client-binding')?.status).toBe('warn')
+    expect(checkFor(result, 'credential-client-binding')?.detail).toContain('Empire Slack')
+    expect(checkFor(result, 'credential-client-binding')?.detail).toContain('Naming convention')
+  })
+
+  it('does not double-flag an unwired/placeholder credential as a mismatch -- placeholder-credentials already covers that case', async () => {
+    const pack = makePack({ workflows: [cleanWorkflow()] })
+    const client = mockClient(async (id) => makeResponse({
+      id,
+      nodes: [{ id: 'n1', name: 'Post to Slack', type: 'n8n-nodes-base.slack', typeVersion: 2.2, position: [0, 0], parameters: {}, credentials: { slackApi: { id: 'placeholder-id', name: 'Slack' } } }],
+    }))
+    const result = await runPreflight(pack, { live: true, client, clientId: 'empire' })
+    expect(checkFor(result, 'placeholder-credentials')?.status).toBe('fail')
+    // The binding check has nothing to say about a credential that isn't wired at all yet.
+    expect(checkFor(result, 'credential-client-binding')?.status).toBe('pass')
+  })
+
+  it('passes when a pack has no credentials at all', async () => {
+    const pack = makePack({ workflows: [cleanWorkflow()] })
+    const client = mockClient(async (id) => makeResponse({ id }))
+    const result = await runPreflight(pack, { live: true, client, clientId: 'empire' })
+    expect(checkFor(result, 'credential-client-binding')?.status).toBe('pass')
   })
 })
 
