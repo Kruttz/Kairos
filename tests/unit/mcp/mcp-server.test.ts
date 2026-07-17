@@ -434,6 +434,7 @@ describe('Kairos MCP Server — role modes', () => {
 describe('Kairos MCP Server — H6 missing-session warning wording', () => {
   let mockN8n: Server
   let mockN8nUrl: string
+  let telemetrySandboxDir: string
   let telemetryDir: string
 
   const VALID_WORKFLOW = JSON.stringify({
@@ -451,7 +452,11 @@ describe('Kairos MCP Server — H6 missing-session warning wording', () => {
   })
 
   beforeAll(async () => {
-    telemetryDir = await mkdtemp(join(tmpdir(), 'kairos-mcp-h6-'))
+    // Nested under /telemetry: PatternAnalyzer's outputDir is telemetryDir's *parent*, so
+    // pointing KAIROS_TELEMETRY directly at the mkdtemp root would make outputDir resolve to
+    // the shared OS tmp dir instead of staying inside this test's own sandbox.
+    telemetrySandboxDir = await mkdtemp(join(tmpdir(), 'kairos-mcp-h6-'))
+    telemetryDir = join(telemetrySandboxDir, 'telemetry')
     mockN8n = createServer((req, res) => {
       if (req.method === 'GET' && req.url === '/api/v1/node-types') {
         res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -474,7 +479,7 @@ describe('Kairos MCP Server — H6 missing-session warning wording', () => {
 
   afterAll(async () => {
     await new Promise<void>((r) => mockN8n.close(() => r()))
-    await rm(telemetryDir, { recursive: true, force: true })
+    await rm(telemetrySandboxDir, { recursive: true, force: true })
   })
 
   function startServerWithMockN8n(): McpClient {

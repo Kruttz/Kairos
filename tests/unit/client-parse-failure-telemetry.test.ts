@@ -26,7 +26,12 @@ describe('Kairos.build() — parse/truncation failures get the same telemetry vi
   })
 
   it('emits generation_attempt (with parseFailure) and build_complete(success:false) for a ResponseParseError carrying attemptMetadata', async () => {
-    const telemetryDir = await mkdtemp(join(tmpdir(), 'kairos-parse-failure-'))
+    // Nested one level below the mkdtemp sandbox root, not the root itself: PatternAnalyzer's
+    // outputDir is telemetryDir's *parent*, so a telemetryDir passed directly as the sandbox
+    // root makes outputDir resolve to the shared OS tmp dir (updatePatterns() runs automatically
+    // on build failure and writes session-history.json there) rather than staying isolated.
+    const sandboxDir = await mkdtemp(join(tmpdir(), 'kairos-parse-failure-'))
+    const telemetryDir = join(sandboxDir, 'telemetry')
     try {
       const err = new ResponseParseError(
         'generate_workflow tool call returned workflow as a JSON string that could not be parsed as an object',
@@ -38,6 +43,9 @@ describe('Kairos.build() — parse/truncation failures get the same telemetry vi
       const kairos = new Kairos({ anthropicApiKey: 'sk-ant-test', telemetry: telemetryDir })
 
       await expect(kairos.build('Test description', { dryRun: true })).rejects.toBe(err)
+      // updatePatterns() saves patterns/session-history in the background (this.saveQueue) --
+      // drain() before the finally block's rm() so cleanup doesn't race an in-flight write.
+      await kairos.drain()
 
       const events = await readTelemetryEvents(telemetryDir)
       const attemptEvent = events.find((e) => e.eventType === 'generation_attempt')
@@ -50,12 +58,13 @@ describe('Kairos.build() — parse/truncation failures get the same telemetry vi
       expect(completeEvent!.data['success']).toBe(false)
       expect(completeEvent!.data['totalAttempts']).toBe(1)
     } finally {
-      await rm(telemetryDir, { recursive: true, force: true })
+      await rm(sandboxDir, { recursive: true, force: true })
     }
   })
 
   it('emits telemetry for a ResponseTruncationError the same way (subclass of GenerationError)', async () => {
-    const telemetryDir = await mkdtemp(join(tmpdir(), 'kairos-truncation-'))
+    const sandboxDir = await mkdtemp(join(tmpdir(), 'kairos-truncation-'))
+    const telemetryDir = join(sandboxDir, 'telemetry')
     try {
       const err = new ResponseTruncationError(
         'Claude response was truncated (max_tokens reached)',
@@ -67,18 +76,20 @@ describe('Kairos.build() — parse/truncation failures get the same telemetry vi
       const kairos = new Kairos({ anthropicApiKey: 'sk-ant-test', telemetry: telemetryDir })
 
       await expect(kairos.build('Test description', { dryRun: true })).rejects.toBe(err)
+      await kairos.drain()
 
       const events = await readTelemetryEvents(telemetryDir)
       const completeEvent = events.find((e) => e.eventType === 'build_complete')
       expect(completeEvent).toBeDefined()
       expect(completeEvent!.data['success']).toBe(false)
     } finally {
-      await rm(telemetryDir, { recursive: true, force: true })
+      await rm(sandboxDir, { recursive: true, force: true })
     }
   })
 
   it('does NOT emit failure telemetry for errors with no attemptMetadata (e.g. a plain GuardError)', async () => {
-    const telemetryDir = await mkdtemp(join(tmpdir(), 'kairos-no-metadata-'))
+    const sandboxDir = await mkdtemp(join(tmpdir(), 'kairos-no-metadata-'))
+    const telemetryDir = join(sandboxDir, 'telemetry')
     try {
       vi.spyOn(WorkflowDesigner.prototype, 'design').mockRejectedValue(new Error('unrelated failure, not a Kairos error class'))
 
@@ -89,7 +100,7 @@ describe('Kairos.build() — parse/truncation failures get the same telemetry vi
       const events = await readTelemetryEvents(telemetryDir)
       expect(events.some((e) => e.eventType === 'build_complete')).toBe(false)
     } finally {
-      await rm(telemetryDir, { recursive: true, force: true })
+      await rm(sandboxDir, { recursive: true, force: true })
     }
   })
 })

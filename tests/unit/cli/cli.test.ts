@@ -172,10 +172,13 @@ describe('CLI — parseArgs / routing', () => {
 
   describe('patterns --json flag', () => {
     it('outputs JSON when --json flag is passed with no telemetry dir', () => {
-      // KAIROS_TELEMETRY set to a non-existent path → PatternAnalyzer reads 0 events
+      // KAIROS_TELEMETRY set to a non-existent path → PatternAnalyzer reads 0 events.
+      // Nested under /telemetry deliberately: PatternAnalyzer's outputDir is telemetryDir's
+      // *parent*, so pointing KAIROS_TELEMETRY directly at this bare path would make outputDir
+      // resolve to the shared /tmp itself, not something scoped to this fixture.
       const r = run(['patterns', '--json'], {
         ANTHROPIC_API_KEY: 'sk-test',
-        KAIROS_TELEMETRY: '/tmp/kairos-nonexistent-test-dir-xyz',
+        KAIROS_TELEMETRY: '/tmp/kairos-nonexistent-test-dir-xyz/telemetry',
       })
       expect(r.status).toBe(0)
       const parsed = JSON.parse(r.stdout)
@@ -187,7 +190,7 @@ describe('CLI — parseArgs / routing', () => {
     it('outputs human-readable text by default for patterns', () => {
       const r = run(['patterns'], {
         ANTHROPIC_API_KEY: 'sk-test',
-        KAIROS_TELEMETRY: '/tmp/kairos-nonexistent-test-dir-xyz',
+        KAIROS_TELEMETRY: '/tmp/kairos-nonexistent-test-dir-xyz/telemetry',
       })
       expect(r.status).toBe(0)
       expect(r.stdout).toContain('Kairos Pattern Analysis')
@@ -295,7 +298,7 @@ describe('CLI — parseArgs / routing', () => {
     it('outputs JSON when --json flag is passed with no telemetry dir', () => {
       const r = run(['sessions', '--json'], {
         ANTHROPIC_API_KEY: 'sk-test',
-        KAIROS_TELEMETRY: '/tmp/kairos-nonexistent-test-dir-xyz',
+        KAIROS_TELEMETRY: '/tmp/kairos-nonexistent-test-dir-xyz/telemetry',
       })
       expect(r.status).toBe(0)
       const parsed = JSON.parse(r.stdout)
@@ -305,7 +308,7 @@ describe('CLI — parseArgs / routing', () => {
     it('outputs "No session history found" when no telemetry data', () => {
       const r = run(['sessions'], {
         ANTHROPIC_API_KEY: 'sk-test',
-        KAIROS_TELEMETRY: '/tmp/kairos-nonexistent-test-dir-xyz',
+        KAIROS_TELEMETRY: '/tmp/kairos-nonexistent-test-dir-xyz/telemetry',
       })
       expect(r.status).toBe(0)
       expect(r.stdout).toContain('No session history found')
@@ -352,7 +355,7 @@ describe('CLI — parseArgs / routing', () => {
         }
         await writeFile(join(sourceDir, 'wf.json'), JSON.stringify(workflow), 'utf-8')
 
-        const importResult = run(['sync-templates', '--from-dir', sourceDir], { KAIROS_LIBRARY_DIR: libDir, KAIROS_TELEMETRY: '/tmp/kairos-nonexistent-test-dir-xyz' })
+        const importResult = run(['sync-templates', '--from-dir', sourceDir], { KAIROS_LIBRARY_DIR: libDir, KAIROS_TELEMETRY: '/tmp/kairos-nonexistent-test-dir-xyz/telemetry' })
         expect(importResult.status).toBe(0)
         expect(importResult.stderr).toContain('Saved:          1')
 
@@ -373,7 +376,7 @@ describe('CLI — parseArgs / routing', () => {
   })
 
   describe('sync-templates --from-dir', () => {
-    const NO_TELEMETRY = { KAIROS_TELEMETRY: '/tmp/kairos-nonexistent-test-dir-xyz' }
+    const NO_TELEMETRY = { KAIROS_TELEMETRY: '/tmp/kairos-nonexistent-test-dir-xyz/telemetry' }
     let sourceDir: string
 
     async function makeWorkflowFixture(name: string): Promise<void> {
@@ -484,7 +487,11 @@ describe('CLI — parseArgs / routing', () => {
         if (addr === null || typeof addr === 'string') throw new Error('mock server failed to bind')
         mockN8nUrl = `http://127.0.0.1:${addr.port}`
 
-        const telemetryDir = await mkdtemp(join(tmpdir(), 'kairos-cli-sync-nodes-'))
+        // Nested under /telemetry: PatternAnalyzer's outputDir (where node-catalog-cache.json
+        // lands) is telemetryDir's *parent* -- pointing KAIROS_TELEMETRY directly at the mkdtemp
+        // root would make that cache file land in the shared OS tmp dir instead of this sandbox.
+        const sandboxDir = await mkdtemp(join(tmpdir(), 'kairos-cli-sync-nodes-'))
+        const telemetryDir = join(sandboxDir, 'telemetry')
         try {
           // spawnSync (the run() helper) blocks this process's event loop while the
           // child runs — which would prevent the mock server above (living in this
@@ -506,7 +513,7 @@ describe('CLI — parseArgs / routing', () => {
           const cached = JSON.parse(await readFile(cachePath, 'utf-8')) as { nodeDefinitions: Array<{ type: string }> }
           expect(cached.nodeDefinitions.some((d) => d.type === 'n8n-nodes-base.kairosTestFixtureNode')).toBe(true)
         } finally {
-          await rm(telemetryDir, { recursive: true, force: true })
+          await rm(sandboxDir, { recursive: true, force: true })
         }
       }, 15_000)
     })
