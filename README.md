@@ -936,6 +936,16 @@ kairos replay purge <n8n-workflow-id> --client-id acme
 kairos chaos audit <n8n-workflow-id>
 kairos chaos audit <n8n-workflow-id> --json  # exact structured findings, not rendered text
 
+# Confirm Tier A's predictions live: imports this workflow into the sandbox, replays the
+# adversarial payload set generated the same way `chaos audit` derives it, and reports
+# HANDLED / CRASHED / SILENT_MISBEHAVIOR / BLOCKED_AT_CREDENTIAL per variant against a
+# valid-baseline reference execution. A node reached only through a stripped credential is
+# reported as unverifiable, never asserted as a false HANDLED (same no-fake-equivalence
+# discipline as `replay run`). Exits 1 only for a confirmed crash or an incomplete run --
+# never for blocked-at-credential or silent misbehavior, which need a human judgment call.
+kairos chaos run <n8n-workflow-id>
+kairos chaos run <n8n-workflow-id> --json  # exact structured report, not rendered text
+
 # Seed library with n8n community templates
 kairos sync-templates --max 200
 

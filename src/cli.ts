@@ -31,6 +31,7 @@ Usage:
   kairos replay run <n8n-workflow-id> --candidate <file> --client-id <slug> [--live] [--verbose] [--json]
   kairos replay purge <n8n-workflow-id> --client-id <slug> [--json]
   kairos chaos audit <n8n-workflow-id> [--json]
+  kairos chaos run <n8n-workflow-id> [--json]
   kairos replace <n8n-id> <description>
   kairos memory add|list|search|forget|rebuild-index <client-id> [...]
   kairos patterns [options]
@@ -1523,24 +1524,75 @@ async function handleChaos(positional: string[], flags: Record<string, string | 
   const subcommand = positional[0]
   const n8nWorkflowId = positional[1]
 
-  if (subcommand !== 'audit' || !n8nWorkflowId) {
+  if ((subcommand !== 'audit' && subcommand !== 'run') || !n8nWorkflowId) {
     console.error('Usage: kairos chaos audit <n8n-workflow-id> [--json]')
+    console.error('       kairos chaos run <n8n-workflow-id> [--json]')
     console.error('')
     console.error('audit statically predicts how this workflow would handle adversarial webhook')
     console.error('payloads (missing/null/wrong-type/oversized fields, injection-shaped strings,')
     console.error('unprotected external calls) -- no sandbox required, no execution happens.')
     console.error('Findings are heuristic predictions, not confirmed failures; exit code is always 0.')
+    console.error('')
+    console.error('run confirms audit\'s predictions live: replays every adversarial payload variant')
+    console.error('against this workflow in an isolated sandbox and reports HANDLED/CRASHED/')
+    console.error('SILENT_MISBEHAVIOR/BLOCKED_AT_CREDENTIAL per variant. Exits 1 for any confirmed')
+    console.error('crash or incomplete result -- never for blocked-at-credential or silent')
+    console.error('misbehavior, which require human judgment.')
     process.exit(1)
   }
 
   const { workflow } = await loadWorkflowByN8nId(n8nWorkflowId)
-  const { runStaticChaosAudit, formatStaticChaosAuditResult } = await import('./reliability/chaos/static-audit.js')
-  const result = runStaticChaosAudit(workflow)
+
+  if (subcommand === 'audit') {
+    const { runStaticChaosAudit, formatStaticChaosAuditResult } = await import('./reliability/chaos/static-audit.js')
+    const result = runStaticChaosAudit(workflow)
+
+    if (flags['json'] === true) {
+      console.log(JSON.stringify(result, null, 2))
+    } else {
+      console.log(formatStaticChaosAuditResult(result, n8nWorkflowId))
+    }
+    return
+  }
+
+  // subcommand === 'run'
+  const { bootSandbox } = await import('./reliability/sandbox/manager.js')
+  const { runChaosSandbox, formatChaosSandboxRunResult } = await import('./reliability/chaos/sandbox-run.js')
+
+  console.error('Booting sandbox (reuses an already-running instance if present)...')
+  const sandboxConfig = await bootSandbox()
+
+  const result = await runChaosSandbox(sandboxConfig, workflow)
 
   if (flags['json'] === true) {
     console.log(JSON.stringify(result, null, 2))
   } else {
-    console.log(formatStaticChaosAuditResult(result, n8nWorkflowId))
+    console.log(formatChaosSandboxRunResult(result, n8nWorkflowId))
+  }
+
+  const telemetry = await createTelemetryCollector()
+  if (telemetry) {
+    try {
+      await telemetry.emit('chaos_completed', {
+        workflowId: n8nWorkflowId,
+        status: result.status,
+        handledCount: result.summary.handled,
+        crashedCount: result.summary.crashed,
+        silentMisbehaviorCount: result.summary.silentMisbehavior,
+        blockedAtCredentialCount: result.summary.blockedAtCredential,
+        incompleteCount: result.summary.incomplete,
+      })
+    } catch {
+      // Swallowed deliberately -- telemetry must never change this command's outcome.
+    }
+  }
+
+  // Exit 1 only for confirmed, unambiguous problems -- a real crash, or a payload that
+  // couldn't be run at all. Never for blocked-at-credential (expected sandbox limitation, not
+  // a finding) or silent misbehavior (may be an intentional difference -- needs a human to
+  // judge, not an automatic failure).
+  if (result.status !== 'completed' || result.summary.crashed > 0 || result.summary.incomplete > 0) {
+    process.exit(1)
   }
 }
 

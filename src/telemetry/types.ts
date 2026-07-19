@@ -5,11 +5,11 @@ export interface TelemetryEvent {
   timestamp: string
   sessionId: string
   runId?: string
-  eventType: 'build_start' | 'generation_attempt' | 'build_complete' | 'bundle_exported' | 'preflight_completed' | 'drift_check_completed' | 'replay_completed'
+  eventType: 'build_start' | 'generation_attempt' | 'build_complete' | 'bundle_exported' | 'preflight_completed' | 'drift_check_completed' | 'replay_completed' | 'chaos_completed'
   data: Record<string, unknown>
 }
 
-export const TELEMETRY_SCHEMA_VERSION = 5
+export const TELEMETRY_SCHEMA_VERSION = 6
 
 export interface AttemptMetadata {
   attempt: number
@@ -98,4 +98,16 @@ export interface ReplayCompletedData {
   payloadCount: number
   incompleteCount: number
   partialVerification: boolean
+}
+
+export interface ChaosCompletedData {
+  workflowId: string
+  /** Plain string, not ChaosSandboxRunResult['status'] -- same import-boundary discipline as
+   * DriftCheckCompletedData.verdict above. */
+  status: string
+  handledCount: number
+  crashedCount: number
+  silentMisbehaviorCount: number
+  blockedAtCredentialCount: number
+  incompleteCount: number
 }
