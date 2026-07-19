@@ -43,7 +43,8 @@
     "benchmark": "tsx scripts/benchmark.ts",
     "benchmark:baseline": "tsx scripts/benchmark.ts --no-library --output benchmark-results.json",
     "benchmark:search": "tsx scripts/search-bench.ts",
-    "generate:node-catalog": "tsx scripts/generate-node-catalog.ts"
+    "generate:node-catalog": "tsx scripts/generate-node-catalog.ts",
+    "demo:reliability-loop": "tsx scripts/demo/reliability-loop-demo.ts"
   },
   "keywords": [
     "n8n",

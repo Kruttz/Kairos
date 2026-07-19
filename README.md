@@ -4,11 +4,31 @@
 [![npm version](https://img.shields.io/npm/v/@kairos-sdk/core)](https://www.npmjs.com/package/@kairos-sdk/core)
 [![npm downloads](https://img.shields.io/npm/dw/@kairos-sdk/core)](https://www.npmjs.com/package/@kairos-sdk/core)
 
-**Kairos is an AI workflow delivery engine for n8n. Give it a business context and it generates, validates, deploys, and documents a complete workflow pack — then learns from real executions and repairs over time.**
+**Kairos is a reliability engine for n8n workflows. It generates and deploys automations from a business description — and then keeps working after deploy: stress-testing them against hostile input before they ship, watching them for drift once they're live, and verifying that any change behaves like the version it replaces before that change goes out.**
 
 ![Kairos SDK Demo](demo.gif)
 
-Describe your business and Kairos builds a full suite of n8n automations: it plans the workflows, generates each one via Claude, validates every node and connection against **129 structural rules**, deploys to your n8n instance, and hands back a structured document covering credentials needed, data sources, assumptions made, open questions, and a test checklist. Use it as an **MCP server** (connect to Claude Code, Claude Desktop, or any MCP host — no Anthropic API key needed), a **TypeScript SDK**, or a **CLI**. With a seeded template library, Kairos achieves **100% first-try structural validation pass rate** across 20 benchmark prompts.
+Generation is the entry point, not the whole product. A workflow going live is the *start* of what Kairos does with it, not the end:
+
+```
+   BUILD ──── generate + validate (129 rules) + deploy
+     │
+   CHAOS TEST ─ pre-deploy: attack it with adversarial payloads in an
+     │           isolated sandbox (kairos chaos audit / chaos run)
+     │
+   DEPLOY ──── activate, verify the webhook actually registered
+     │
+   WATCH ───── post-deploy: baseline → detect drift → diagnose with a
+     │          confidence-tiered cause (kairos watch, kairos drift check)
+     │
+   REPLAY ──── prove a candidate change behaves like the version it
+                replaces, against real recorded traffic, in a sandbox
+                that never touches production (kairos replay run)
+```
+
+Self-healing (proposing and applying fixes automatically) and a cross-install pattern library are on the roadmap, not shipped yet — this README only claims what's built and checkpointed against real n8n instances, nothing ahead of that. `npm run demo:reliability-loop` runs the whole shipped chaos → deploy → watch → diagnose → notify sequence end to end against a real disposable local sandbox (no Docker, no production credentials, cleans up after itself) — the loop above isn't a diagram of intent, it's what that command actually does.
+
+Use Kairos as an **MCP server** (connect to Claude Code, Claude Desktop, or any MCP host — no Anthropic API key needed), a **TypeScript SDK**, or a **CLI**. With a seeded template library, generation achieves **100% first-try structural validation pass rate** across 20 benchmark prompts.
 
 ```ts
 import { Kairos, PackBuilder } from '@kairos-sdk/core'
@@ -42,9 +62,12 @@ console.log(pack.testChecklist)               // how to verify each workflow
 | Generates valid n8n workflow JSON | Perfect business logic |
 | Builds complete workflow packs from business context | Correct credentials or API configs |
 | Validates structure before deploy (129 rules) | Runtime success for every API |
-| Documents assumptions, open questions, and test steps | That every workflow matches intent perfectly |
-| Syncs node types from your live instance | Full replacement for human review |
-| Learns from prior builds and failures | Monitoring after deployment (coming soon) |
+| Chaos-tests a workflow against adversarial payloads pre-deploy (`kairos chaos audit`/`chaos run`) | Automated self-healing / auto-repair (roadmap, not built) |
+| Watches deployed workflows for drift and diagnoses it (`kairos watch`, `kairos drift check`) | A cross-install shared pattern library (roadmap, not built) |
+| Verifies a candidate change behaves like the version it replaces before deploy (`kairos replay run`) | That every workflow matches intent perfectly |
+| Documents assumptions, open questions, and test steps | Full replacement for human review |
+| Syncs node types from your live instance | — |
+| Learns from prior builds and failures | — |
 | Works through MCP, SDK, or CLI | — |
 
 ---
@@ -306,7 +329,9 @@ The original benchmark — 55% (11/20) baseline vs. 100% (20/20) with a 105-work
 
 ---
 
-## How It Works
+## How Generation Works
+
+*(This section covers the generation step specifically — the "BUILD" box in the reliability loop above. See the CLI section below for chaos testing, watch, and replay — the parts of the loop that run before and after this one.)*
 
 ### SDK flow (calls Claude internally)
 
