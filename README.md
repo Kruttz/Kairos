@@ -946,6 +946,17 @@ kairos chaos audit <n8n-workflow-id> --json  # exact structured findings, not re
 kairos chaos run <n8n-workflow-id>
 kairos chaos run <n8n-workflow-id> --json  # exact structured report, not rendered text
 
+# Continuously (or once, for cron/launchd) run drift check + diagnosis against deployed
+# workflows -- detect -> diagnose -> notify -> audit only, no propose/apply/rollback (that's
+# a separate, not-yet-built phase). Every tick appends to ~/.kairos/reliability-audit.jsonl
+# regardless of verdict; insufficient_data/not_applicable are never treated as alerts, only a
+# real DRIFTING verdict is. --on-drift lets you delegate the actual alert delivery (Slack,
+# email, PagerDuty, anything) to your own command -- Kairos builds no integration itself.
+kairos watch --workflows all --once                                   # single tick, for cron/launchd
+kairos watch --workflows wf-1,wf-2 --interval 300                     # foreground loop, Ctrl-C to stop
+kairos watch --workflows all --on-drift './notify-slack.sh' --once    # delegate alert delivery
+kairos watch --workflows all --once --json                            # exact structured tick result
+
 # Seed library with n8n community templates
 kairos sync-templates --max 200
 

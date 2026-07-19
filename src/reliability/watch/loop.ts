@@ -128,3 +128,28 @@ export async function runWatchTick(
 
   return results
 }
+
+/** Rendered-text formatter for a full tick -- every result, including healthy and
+ * fetch_failed ones (distinct from notify.ts's `formatDriftAlert`, which covers only the
+ * drifting subset worth alerting on). The structured `WatchTickResult[]` above is the source
+ * of truth (available via `--json`); this is a separate, later step. */
+export function formatWatchTickForHumans(results: WatchTickResult[]): string {
+  if (results.length === 0) return 'No workflows matched -- nothing checked this tick.'
+
+  const drifting = results.filter(r => r.status === 'checked' && r.report?.verdict === 'DRIFTING')
+  const healthy = results.filter(r => r.status === 'checked' && r.report?.verdict === 'HEALTHY')
+  const noData = results.filter(r => r.status === 'fetch_failed')
+
+  const lines: string[] = []
+  lines.push(`Watch tick — ${results.length} workflow(s) checked at ${results[0]!.checkedAt}`)
+  lines.push(`${healthy.length} healthy, ${drifting.length} drifting, ${noData.length} nothing to evaluate yet`)
+  lines.push('')
+
+  for (const r of results) {
+    const label = r.status === 'fetch_failed' ? 'NO DATA' : r.report!.verdict
+    const symbol = r.status === 'fetch_failed' ? '·' : r.report!.verdict === 'DRIFTING' ? '⚠' : '✓'
+    lines.push(`${symbol} ${r.workflowName ?? r.workflowId} (${r.workflowId}) — ${label}`)
+  }
+
+  return lines.join('\n')
+}

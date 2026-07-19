@@ -32,6 +32,7 @@ Usage:
   kairos replay purge <n8n-workflow-id> --client-id <slug> [--json]
   kairos chaos audit <n8n-workflow-id> [--json]
   kairos chaos run <n8n-workflow-id> [--json]
+  kairos watch --workflows <ids|all> [--interval <s>] [--on-drift <cmd>] [--once] [--json]
   kairos replace <n8n-id> <description>
   kairos memory add|list|search|forget|rebuild-index <client-id> [...]
   kairos patterns [options]
@@ -1596,6 +1597,92 @@ async function handleChaos(positional: string[], flags: Record<string, string | 
   }
 }
 
+// Conservative by design (Phase 6 design-verification pass, docs/plans/reliability-suite-plan.md
+// 11): fetchLatestTrace is cheap (2 API calls/workflow/tick) and N8nApiClient already retries
+// 429s with backoff, but no live rate-limit ceiling was empirically probed against production-
+// adjacent infrastructure to find a tighter "safe" number -- erring long is the safer default,
+// tightened later from real usage data, not guessed tighter now.
+const DEFAULT_WATCH_INTERVAL_SECONDS = 300
+
+async function handleWatch(_positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const workflowsFlag = typeof flags['workflows'] === 'string' ? flags['workflows'] : undefined
+  if (!workflowsFlag) {
+    console.error('Usage: kairos watch --workflows <ids|all> [--interval <s>] [--on-drift <cmd>] [--once] [--json]')
+    console.error('')
+    console.error('Detect -> diagnose -> notify -> audit only -- no propose/apply/rollback (Phase 3,')
+    console.error('not built yet). Runs a foreground loop by default (Ctrl-C to stop); --once runs a')
+    console.error('single tick and exits, for cron/launchd. --workflows all watches every deployed')
+    console.error('library entry; a comma-separated list of n8n workflow IDs watches only those.')
+    console.error('Every tick is appended to ~/.kairos/reliability-audit.jsonl regardless of verdict.')
+    process.exit(1)
+  }
+
+  const n8nBaseUrlEnv = process.env['N8N_BASE_URL']
+  const n8nApiKeyEnv = process.env['N8N_API_KEY']
+  if (!n8nBaseUrlEnv || !n8nApiKeyEnv) {
+    console.error('N8N_BASE_URL and N8N_API_KEY are required for kairos watch.')
+    process.exit(1)
+  }
+  // Hoisted function declarations below don't retain the above narrowing, so capture typed
+  // locals explicitly rather than relying on TS to carry it through the closure.
+  const n8nBaseUrl: string = n8nBaseUrlEnv
+  const n8nApiKey: string = n8nApiKeyEnv
+
+  const intervalSeconds = typeof flags['interval'] === 'string' ? parseInt(flags['interval'], 10) : DEFAULT_WATCH_INTERVAL_SECONDS
+  const onDriftCommand = typeof flags['on-drift'] === 'string' ? flags['on-drift'] : undefined
+  const once = flags['once'] === true
+  const asJson = flags['json'] === true
+
+  const { runWatchTick, formatWatchTickForHumans } = await import('./reliability/watch/loop.js')
+  const { notifyTick } = await import('./reliability/watch/notify.js')
+
+  const lib = createLibrary()
+  await lib.initialize()
+
+  const requestedIds = workflowsFlag === 'all' ? null : workflowsFlag.split(',').map(s => s.trim())
+
+  async function resolveTargets(): Promise<Array<{ libraryId: string; n8nWorkflowId: string; workflowName?: string; existingTraces: import('./library/types.js').ExecutionTrace[] }>> {
+    const all = await lib.list()
+    const deployed = all.filter((w): w is typeof w & { n8nWorkflowId: string } => Boolean(w.n8nWorkflowId))
+    const matched = requestedIds === null ? deployed : deployed.filter(w => requestedIds.includes(w.n8nWorkflowId))
+    return matched.map(w => ({
+      libraryId: w.id,
+      n8nWorkflowId: w.n8nWorkflowId,
+      ...(w.description ? { workflowName: w.description } : {}),
+      existingTraces: w.executionTraces ?? [],
+    }))
+  }
+
+  async function runOnce(): Promise<void> {
+    const targets = await resolveTargets()
+    if (targets.length === 0) {
+      console.error('No deployed workflows match --workflows. Nothing to check this tick.')
+      return
+    }
+
+    const results = await runWatchTick(lib, targets, n8nBaseUrl, n8nApiKey)
+
+    if (asJson) {
+      console.log(JSON.stringify(results, null, 2))
+    } else {
+      console.log(formatWatchTickForHumans(results))
+    }
+
+    await notifyTick(results, onDriftCommand ? { onDriftCommand } : {})
+  }
+
+  if (once) {
+    await runOnce()
+    return
+  }
+
+  console.error(`Watching (interval ${intervalSeconds}s). Press Ctrl-C to stop.`)
+  for (;;) {
+    await runOnce()
+    await new Promise(resolve => setTimeout(resolve, intervalSeconds * 1000))
+  }
+}
+
 async function handlePreflight(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const packName = positional[0]
   if (!packName) {
@@ -1876,6 +1963,9 @@ async function main(): Promise<void> {
       break
     case 'chaos':
       await handleChaos(positional, flags)
+      break
+    case 'watch':
+      await handleWatch(positional, flags)
       break
     case 'library': {
       const subcommand = positional[0]

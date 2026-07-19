@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildTickResult, runWatchTick, type WatchTarget, type WatchTraceRecorder } from '../../../../src/reliability/watch/loop.js'
+import { buildTickResult, runWatchTick, formatWatchTickForHumans, type WatchTarget, type WatchTraceRecorder } from '../../../../src/reliability/watch/loop.js'
 import { getReliabilityAuditTrail } from '../../../../src/reliability/watch/audit.js'
 import type { ExecutionTrace } from '../../../../src/library/types.js'
 
@@ -179,5 +179,34 @@ describe('runWatchTick', () => {
     ]
     const results = await runWatchTick(lib, targets, 'https://n8n.example.com', 'fake-key', auditPath, fetchTrace)
     expect(results.map(r => r.workflowId)).toEqual(['wf-a', 'wf-b'])
+  })
+})
+
+describe('formatWatchTickForHumans', () => {
+  it('reports zero workflows checked distinctly, not a blank/generic message', () => {
+    expect(formatWatchTickForHumans([])).toContain('nothing checked')
+  })
+
+  it('summarizes counts and lists each workflow with its verdict', () => {
+    const healthy = buildTickResult(makeTarget({ n8nWorkflowId: 'wf-healthy', existingTraces: [makeTrace(), makeTrace()] }), null, '2026-01-01T00:00:00.000Z')
+    const drifting = buildTickResult(
+      makeTarget({
+        n8nWorkflowId: 'wf-drifting',
+        existingTraces: [
+          makeTrace({ erroredNodes: [{ name: 'HTTP Request', errorType: 'NodeApiError', httpCode: '500' }] }),
+          makeTrace({ erroredNodes: [] }),
+        ],
+      }),
+      null,
+      '2026-01-01T00:00:00.000Z',
+    )
+    const empty = buildTickResult(makeTarget({ n8nWorkflowId: 'wf-empty', existingTraces: [] }), null, '2026-01-01T00:00:00.000Z')
+
+    const text = formatWatchTickForHumans([healthy, drifting, empty])
+    expect(text).toContain('1 healthy, 1 drifting, 1 nothing to evaluate yet')
+    expect(text).toContain('wf-healthy')
+    expect(text).toContain('wf-drifting')
+    expect(text).toContain('wf-empty')
+    expect(text).toContain('NO DATA')
   })
 })
