@@ -17,8 +17,11 @@ interface EmbeddingSidecarEntry {
 }
 
 // Fail-closed boundary: every on-disk path derives from a validated clientId, so a rejected
-// id can never traverse outside its own directory or collide with another client's.
-const CLIENT_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/
+// id can never traverse outside its own directory or collide with another client's. Exported
+// -- reliability/replay/capture.ts reuses this exact pattern for the same reason (payload
+// captures are also stored under a per-client directory), rather than duplicating a
+// security-relevant regex in two places where they could silently drift apart.
+export const CLIENT_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/
 const DEFAULT_CAP = 500
 const MEMORY_TYPES: MemoryType[] = ['preference', 'history', 'incident', 'reference']
 // Eviction order when over cap — oldest history first, then incident. preference/reference
@@ -28,7 +31,10 @@ const EVICTION_ORDER: MemoryType[] = ['history', 'incident']
 // Deliberately conservative shapes — a false positive (rejecting safe text) is far cheaper
 // than a false negative (storing a real secret). Note the 40+ hex pattern also catches git
 // SHAs; that's an accepted tradeoff, not an oversight — rephrase or truncate if you hit it.
-const SECRET_PATTERNS: Array<[string, RegExp]> = [
+// Exported -- reliability/replay/capture.ts's --scrub option redacts using this same list
+// rather than duplicating it, so the two "what counts as a secret" definitions can never
+// diverge.
+export const SECRET_PATTERNS: Array<[string, RegExp]> = [
   ['an Anthropic API key', /sk-ant-[a-zA-Z0-9_-]{10,}/],
   ['an OpenAI-shaped API key', /sk-[a-zA-Z0-9]{20,}/],
   ['a Bearer token', /Bearer\s+[a-zA-Z0-9._-]{15,}/i],
