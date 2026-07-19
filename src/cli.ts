@@ -1398,6 +1398,12 @@ async function handleDrift(positional: string[], flags: Record<string, string | 
     console.error('diagnosis (confidence-tiered cause, recommended action, repair class) for any')
     console.error('drifting finding. Exits 1 only when something is actually drifting -- never for')
     console.error('insufficient_data or not_applicable, which are not failures.')
+    console.error('')
+    console.error('D9 (build-vs-live structural drift): with --live and no --original-build-hash,')
+    console.error('check automatically compares the library\'s stored workflow against a fresh live')
+    console.error('fetch (the same computation kairos repair propose uses) -- an explicit')
+    console.error('--original-build-hash always overrides this. Without --live, D9 stays')
+    console.error('not_applicable (no fresh live workflow to compare against).')
     process.exit(1)
   }
 
@@ -1414,6 +1420,7 @@ async function handleDrift(positional: string[], flags: Record<string, string | 
   }
 
   let traces = match.executionTraces ?? []
+  let liveBuildHashes: { originalBuildHash: string; liveExportHash: string } | undefined
 
   if (flags['live'] === true) {
     const n8nBaseUrl = process.env['N8N_BASE_URL']
@@ -1430,12 +1437,35 @@ async function handleDrift(positional: string[], flags: Record<string, string | 
     } else {
       console.error('--live: no executions found, or could not reach n8n. Proceeding with stored traces only.')
     }
+
+    // D9 fallback (fixes a real gap found in the 2026-07-19 closeout checkpoint): without
+    // --original-build-hash, `drift check` used to always report D9 as not_applicable, even
+    // for a workflow that had genuinely drifted -- `kairos repair propose` already computed
+    // this same signal correctly, from the library's own stored workflow JSON (propose.ts),
+    // so a user running drift check alone would see "not_applicable" and reasonably conclude
+    // nothing structural changed, while repair propose would have caught it. Mirrors
+    // propose.ts's own computation exactly: hash the library's stored copy (the last state
+    // Kairos itself is known to have deployed) against a fresh live fetch. An explicit
+    // --original-build-hash always wins over this fallback, unchanged.
+    if (subcommand === 'check' && typeof flags['original-build-hash'] !== 'string') {
+      const { N8nProvider } = await import('./providers/n8n/provider.js')
+      const { N8nFieldStripper } = await import('./providers/n8n/stripper.js')
+      const { computeWorkflowHash } = await import('./utils/workflow-hash.js')
+      try {
+        const provider = new N8nProvider(new N8nApiClient(n8nBaseUrl, n8nApiKey, CLI_LOGGER), new N8nFieldStripper())
+        const liveWorkflow = await provider.get(n8nWorkflowId)
+        liveBuildHashes = { originalBuildHash: computeWorkflowHash(match.workflow), liveExportHash: computeWorkflowHash(liveWorkflow) }
+      } catch (err) {
+        console.error(`--live: could not fetch the live workflow for D9 comparison: ${String(err)}`)
+      }
+    }
   }
 
   const { buildDriftBaselineReport, buildDriftCheckReport, formatDriftBaselineReport, formatDriftCheckReport } = await import('./reliability/drift/report.js')
   const context = { workflowId: n8nWorkflowId, workflowName: match.description }
   const inputs = {
     traces,
+    ...(liveBuildHashes ?? {}),
     ...(typeof flags['original-build-hash'] === 'string' ? { originalBuildHash: flags['original-build-hash'] } : {}),
   }
 

@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url'
 import { mkdtemp, writeFile, rm, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { createServer, type Server } from 'node:http'
+import { FileLibrary } from '../../../src/library/file-library.js'
+import type { N8nWorkflow } from '../../../src/types/workflow.js'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 const TSX = join(__dirname, '../../../node_modules/.bin/tsx')
@@ -517,6 +519,153 @@ describe('CLI — parseArgs / routing', () => {
         }
       }, 15_000)
     })
+  })
+
+  describe('drift check --live -- D9 stored-library fallback (2026-07-19 closeout fix)', () => {
+    // Real finding from the reliability-suite closeout checkpoint: without --original-build-hash,
+    // `drift check` always reported D9 as not_applicable, even for a workflow that had genuinely
+    // drifted -- `kairos repair propose` already computed this correctly from the library's own
+    // stored workflow JSON. These tests prove `drift check --live` now does the same, an explicit
+    // --original-build-hash still overrides it, and no --live means D9 stays not_applicable
+    // (unchanged, no fresh live workflow to compare against).
+    function baseWorkflow(): N8nWorkflow {
+      return {
+        name: 'Drift D9 Fallback Test',
+        nodes: [{ id: 'n1', name: 'Manual Trigger', type: 'n8n-nodes-base.manualTrigger', typeVersion: 1, position: [0, 0], parameters: {} }],
+        connections: {},
+        settings: {},
+      }
+    }
+
+    function driftedWorkflow(): N8nWorkflow {
+      return {
+        ...baseWorkflow(),
+        nodes: [...baseWorkflow().nodes, { id: 'n2', name: 'Unexpected Node', type: 'n8n-nodes-base.noOp', typeVersion: 1, position: [200, 0], parameters: {} }],
+      }
+    }
+
+    async function seedLibrary(libraryDir: string, n8nWorkflowId: string, workflow: N8nWorkflow): Promise<void> {
+      const lib = new FileLibrary(libraryDir)
+      await lib.initialize()
+      const libId = await lib.save(workflow, { description: 'Drift D9 fallback test workflow' })
+      await lib.recordDeployment(libId, n8nWorkflowId)
+    }
+
+    // spawnSync (the run() helper) blocks this process's event loop while the child runs,
+    // which would prevent a same-process mock server from ever answering the child's request
+    // (same real gotcha the sync-nodes test above already documents) -- needs a real async
+    // spawn so the mock server's event loop keeps running concurrently.
+    function runAsync(args: string[], env: Record<string, string>): Promise<{ stdout: string; status: number | null }> {
+      return new Promise((resolve) => {
+        const child = spawn(TSX, [CLI, ...args], { encoding: 'utf-8', env: { ...process.env, ...env } })
+        let stdout = ''
+        child.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
+        child.on('close', (status) => resolve({ stdout, status }))
+      })
+    }
+
+    function startMockN8n(liveWorkflowId: string, liveWorkflow: N8nWorkflow): Promise<{ server: Server; url: string }> {
+      return new Promise((resolve) => {
+        const server = createServer((req, res) => {
+          if (req.method === 'GET' && req.url === `/api/v1/workflows/${liveWorkflowId}`) {
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({
+              id: liveWorkflowId, active: false, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+              ...liveWorkflow,
+            }))
+            return
+          }
+          res.writeHead(404)
+          res.end()
+        })
+        server.listen(0, '127.0.0.1', () => {
+          const addr = server.address()
+          if (addr === null || typeof addr === 'string') throw new Error('mock server failed to bind')
+          resolve({ server, url: `http://127.0.0.1:${addr.port}` })
+        })
+      })
+    }
+
+    it('reports DRIFTING via D9 when the live workflow differs from the library-stored one, no flag needed', async () => {
+      const libraryDir = await mkdtemp(join(tmpdir(), 'kairos-cli-drift-d9-'))
+      const workflowId = 'drift-d9-drifted'
+      let mock: { server: Server; url: string } | undefined
+      try {
+        await seedLibrary(libraryDir, workflowId, baseWorkflow())
+        mock = await startMockN8n(workflowId, driftedWorkflow())
+
+        const r = await runAsync(['drift', 'check', workflowId, '--live'], {
+          N8N_BASE_URL: mock.url, N8N_API_KEY: 'test-key', KAIROS_LIBRARY_DIR: libraryDir, KAIROS_TELEMETRY: 'false',
+        })
+
+        expect(r.stdout).toContain('DRIFTING')
+        expect(r.stdout).toContain('D9')
+        expect(r.status).toBe(1) // check exits 1 only when something is actually drifting
+      } finally {
+        await new Promise<void>((resolve) => (mock ? mock.server.close(() => resolve()) : resolve()))
+        await rm(libraryDir, { recursive: true, force: true })
+      }
+    }, 15_000)
+
+    it('reports HEALTHY (D9 not drifting) when the live workflow matches the library-stored one -- no false positive', async () => {
+      const libraryDir = await mkdtemp(join(tmpdir(), 'kairos-cli-drift-d9-'))
+      const workflowId = 'drift-d9-healthy'
+      let mock: { server: Server; url: string } | undefined
+      try {
+        await seedLibrary(libraryDir, workflowId, baseWorkflow())
+        mock = await startMockN8n(workflowId, baseWorkflow())
+
+        const r = await runAsync(['drift', 'check', workflowId, '--live'], {
+          N8N_BASE_URL: mock.url, N8N_API_KEY: 'test-key', KAIROS_LIBRARY_DIR: libraryDir, KAIROS_TELEMETRY: 'false',
+        })
+
+        expect(r.stdout).toContain('HEALTHY')
+        expect(r.status).toBe(0)
+      } finally {
+        await new Promise<void>((resolve) => (mock ? mock.server.close(() => resolve()) : resolve()))
+        await rm(libraryDir, { recursive: true, force: true })
+      }
+    }, 15_000)
+
+    it('an explicit --original-build-hash still overrides the fallback', async () => {
+      const libraryDir = await mkdtemp(join(tmpdir(), 'kairos-cli-drift-d9-'))
+      const workflowId = 'drift-d9-explicit-flag'
+      let mock: { server: Server; url: string } | undefined
+      try {
+        await seedLibrary(libraryDir, workflowId, baseWorkflow())
+        mock = await startMockN8n(workflowId, driftedWorkflow())
+
+        // Deliberately wrong/distinctive hash, unrelated to the library's real stored hash --
+        // --json's evidence.originalBuildHash directly proves whether the flag or the fallback
+        // won. (Rendered text output never prints the raw hash value, only the verdict --
+        // confirmed by running this once against the flag and reading the actual output.)
+        const r = await runAsync(['drift', 'check', workflowId, '--live', '--original-build-hash', 'w2:deadbeef', '--json'], {
+          N8N_BASE_URL: mock.url, N8N_API_KEY: 'test-key', KAIROS_LIBRARY_DIR: libraryDir, KAIROS_TELEMETRY: 'false',
+        })
+
+        const report = JSON.parse(r.stdout) as { findings: Array<{ id: string; evidence?: { originalBuildHash?: string } }> }
+        const d9 = report.findings.find(f => f.id === 'D9')
+        expect(d9?.evidence?.originalBuildHash).toBe('w2:deadbeef')
+      } finally {
+        await new Promise<void>((resolve) => (mock ? mock.server.close(() => resolve()) : resolve()))
+        await rm(libraryDir, { recursive: true, force: true })
+      }
+    }, 15_000)
+
+    it('without --live, D9 stays not_applicable -- unchanged, no fresh live workflow to compare against', async () => {
+      const libraryDir = await mkdtemp(join(tmpdir(), 'kairos-cli-drift-d9-'))
+      const workflowId = 'drift-d9-no-live'
+      try {
+        await seedLibrary(libraryDir, workflowId, baseWorkflow())
+
+        const r = run(['drift', 'check', workflowId], { KAIROS_LIBRARY_DIR: libraryDir, KAIROS_TELEMETRY: 'false' })
+
+        expect(r.stdout).toContain('NOT_APPLICABLE')
+        expect(r.status).toBe(0)
+      } finally {
+        await rm(libraryDir, { recursive: true, force: true })
+      }
+    }, 15_000)
   })
 
   describe('pack export --credentials', () => {

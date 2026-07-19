@@ -924,6 +924,12 @@ kairos drift baseline <n8n-workflow-id>
 # HEALTHY or DRIFTING with a full diagnosis (confidence-tiered cause, recommended action,
 # repair class) for anything drifting. Exits 1 only for real drifting -- never for
 # insufficient_data or not_applicable, which are not failures.
+#
+# D9 (build-vs-live structural drift): with --live and no --original-build-hash, this
+# automatically compares the library's stored workflow against a fresh live fetch -- the same
+# computation `kairos repair propose` uses -- so a hand-edit outside Kairos is caught here too,
+# not only by repair propose. An explicit --original-build-hash always overrides this. Without
+# --live, D9 stays not_applicable (no fresh live workflow to compare against).
 kairos drift check <n8n-workflow-id>
 kairos drift check <n8n-workflow-id> --live  # fetch and record the latest execution first
 kairos drift check <n8n-workflow-id> --json  # exact structured findings/diagnoses, not rendered text
