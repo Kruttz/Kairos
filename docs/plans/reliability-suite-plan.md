@@ -426,6 +426,7 @@ export interface RepairProposal {
   currentWorkflow: N8nWorkflow           // live, drifting version (fetched fresh, not from cached library state)
   proposedWorkflow: N8nWorkflow          // FileLibrary's stored JSON for this n8nWorkflowId (Finding 2)
   diff: string                           // diffWorkflows() + formatDiff(), reused unmodified
+  hashes: RepairHashComparison           // see 8.2a -- Codex's extra guardrail, 2026-07-19
   riskLevel: 'low' | 'medium' | 'high'   // see below
   verificationAvailability: 'available' | 'no_webhook_trigger' | 'no_captures' | 'sandbox_unavailable'
   nextAction: string                     // exact command to run next, always concrete, never generic
@@ -437,6 +438,33 @@ export interface RepairProposal {
 Per drift class (re-stated from §8.1, now precisely, cross-referencing the corrected D3/D4 tiering from Phase 6's pass): **mechanical, proposable in v1** = D9 only. **Diagnostic-only, escalate, permanently** = D2, D3, D4, D5, D6, D7 (external causes or missing infrastructure — proposing an edit would be theater). **Diagnosed but not yet proposable, pending its own design pass** = D1, D8 (Finding 1).
 
 `kairos repair propose <n8n-workflow-id> --client-id <slug> [--json]` — offline-safe by design: does **not** boot a sandbox or check captures itself (that's `apply`'s job, immediately before it gates on the result) — propose is pure analysis, reusable as often as a human wants without any live-write-adjacent cost. `verificationAvailability` is still computed (webhook-trigger presence is a cheap structural check; capture presence is a cheap directory-listing check), just not *acted on* here.
+
+### 8.2a Three-hash comparison (Codex's extra guardrail, added on approval, 2026-07-19)
+
+On approving the plan, Codex added one explicit requirement: before applying a restore, compare three hashes explicitly and say so in the operator output, not just assert correctness. Reuses `computeWorkflowHash()` (`src/utils/workflow-hash.ts`) — the exact function that already produces `originalBuildHash`/`liveExportHash` for D9's own check, so these three hashes are directly comparable to what D9 already computed, not a parallel/different notion of "hash."
+
+```typescript
+export interface RepairHashComparison {
+  storedHash: string      // computeWorkflowHash(match.workflow) -- the FileLibrary's known-good copy (Finding 2)
+  liveHash: string        // computeWorkflowHash(currentWorkflow) -- the live, drifting workflow, fetched fresh
+  proposedHash: string    // computeWorkflowHash(proposedWorkflow) -- what apply would actually write
+  liveDiffersFromStored: boolean   // liveHash !== storedHash -- should always be true when D9 fired at all;
+                                    // computed explicitly anyway rather than assumed, so a future bug in D9's
+                                    // own drifting-status logic can never silently propagate into a repair
+  proposedMatchesStored: boolean   // proposedHash === storedHash -- true by construction in v1 (proposedWorkflow
+                                    // IS match.workflow, nothing else), but asserted explicitly, not assumed:
+                                    // if this is ever false, propose() has a real bug and must refuse to
+                                    // produce a proposal at all rather than let a mismatched restore reach apply
+}
+```
+
+`propose()` computes this and refuses to emit a proposal (returns `null`, logs the inconsistency) if `proposedMatchesStored` is false — an internal-consistency failure, not a drift finding, and never something `apply` should ever see. Operator output (rendered text, both in `repair propose` and again in `repair apply`'s pre-write confirmation) states all four Codex-required facts explicitly, every time, never conditionally omitted:
+- **"Live differs from the known Kairos-stored version"** (from `liveDiffersFromStored`)
+- **"The restore target equals the known Kairos-stored version"** (from `proposedMatchesStored`)
+- **"Applying this will overwrite whatever is currently live, including any manual edits made outside Kairos"** — a plain warning, always shown, not gated on any condition
+- **"Post-apply verification is structural only — it does not fire any webhook or trigger any request against the live workflow"** — a plain disclosure of Finding 3's decision, always shown, so an operator never assumes a behavioral guarantee this phase deliberately does not make
+
+All three raw hash strings are also shown (truncated for readability in rendered text, full in `--json`) — not just the two booleans — so a technically-inclined operator can verify the claim themselves rather than trusting the rendering.
 
 ---
 
@@ -453,8 +481,10 @@ Before **any** live write this phase makes (repair-apply's write, or a standalon
 ### 8.4 The apply ladder (`src/reliability/repair/apply.ts`)
 
 ```
-propose (fresh, never a cached/stale proposal)
-  → confirm: interactive y/N prompt, OR --yes (explicit human, non-interactive), OR --auto
+propose (fresh, never a cached/stale proposal) -- includes the three-hash comparison (§8.2a);
+      refuses to proceed at all if proposedMatchesStored is false (internal-consistency failure)
+  → confirm: print the three hashes + all four Codex-required statements (§8.2a) unconditionally,
+      then interactive y/N prompt, OR --yes (explicit human, non-interactive), OR --auto
       (explicit human, non-interactive, PLUS the auto-mode gate below)
   → [--auto only] auto-mode gate: checkId is whitelisted (D9 only, v1) AND verificationAvailability
       === 'available' AND no auto-attempt for this workflow+checkId in the last cooldown window
@@ -497,6 +527,7 @@ New `src/reliability/repair/` directory: `propose.ts`, `snapshot.ts`, `apply.ts`
 - *"Auto mode... opt-in, whitelist-only, cooldown-limited, one attempt per cause, replay-verified, and snapshot-backed"* → the auto-mode gate (§8.4) checks all five in one place, refuses (not degrades) on any failure.
 - *"If replay cannot verify... apply should require human confirmation and clearly say verification is incomplete"* → `verificationAvailability` is a first-class field on the proposal (§8.2), never silently absent; `--auto` refuses when it isn't `'available'`; the interactive/`--yes` path still requires an explicit human acknowledgement of the incomplete-verification state in its own confirmation prompt text, not just a generic "proceed?"
 - *"Never repair latency/cadence/error-rate drifts with speculative workflow edits"* → D2/D5/D6/D7 (and D3/D4) simply never produce a `RepairProposal` at all — not gated at runtime, structurally absent from `propose.ts`'s switch (§8.1/§8.2).
+- *"Compare three hashes explicitly... operator output should clearly say [the four facts]"* (added on approval) → `RepairHashComparison` (§8.2a) is a typed field on every proposal, computed via the same `computeWorkflowHash()` D9 itself uses; all four required statements are printed unconditionally in both `repair propose`'s and `repair apply`'s confirmation output, never gated on a flag or omitted when "obviously true."
 - *"Mechanical repairs only for clearly safe classes, especially build-vs-live structural drift and targeted schema/field mapping cases"* → v1 ships the build-vs-live case (D9) with the safety properties Codex asked for; the schema/field-mapping case (D8) is named explicitly as *not* safely buildable today (Finding 1) rather than shipped half-safely to hit the letter of the guardrail — see §8.1 for the reasoning this call rests on.
 - *"Every proposal must include rationale, workflow diff, verification status, risk level, and exact next action"* → all five are named, typed fields on `RepairProposal` (§8.2), not assembled ad hoc in a formatter.
 - *"Keep tests/live checkpoint separate and clear"* → same discipline as every prior phase: pure logic (proposal risk/verification-availability derivation, snapshot cap/prune, audit-entry construction) gets unit tests; the apply ladder's network/sandbox/write-path pieces get a real live checkpoint against a disposable workflow before being considered done, exactly like replay/chaos/watch were.
