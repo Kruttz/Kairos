@@ -987,10 +987,29 @@ kairos watch --workflows all --once --json                            # exact st
 # proposed restore target), verification availability, risk level, and the exact next command.
 # Read-only: never boots a sandbox, never writes to n8n. D1/D8 (schema/error-class drift) are
 # still diagnosed by `drift check`/`watch` but don't produce a repair proposal yet -- that needs
-# its own design pass (see the plan doc). `kairos repair apply` (not yet built) will be the
-# command that actually applies a proposal, snapshot-backed and replay-verified first.
+# its own design pass (see the plan doc).
 kairos repair propose <n8n-workflow-id> --client-id acme
 kairos repair propose <n8n-workflow-id> --client-id acme --json  # exact structured proposal
+
+# Apply a D9 restore: snapshots the live workflow first, attempts a replay verification (when a
+# webhook trigger and captured payloads exist -- BROKEN blocks, everything else including
+# BEHAVIORAL_CHANGE is an accepted outcome, since reverting a hand-edit often changes behavior
+# on purpose), writes the proposed restore, then structurally re-verifies and auto-rolls-back on
+# failure. No LLM regeneration anywhere in this path, and post-apply verification never fires a
+# webhook or triggers any request against the live workflow. Requires interactive confirmation
+# by default.
+kairos repair apply <n8n-workflow-id> --client-id acme
+kairos repair apply <n8n-workflow-id> --client-id acme --yes   # human-confirmed, non-interactive
+# --auto additionally requires: D9 only (v1 whitelist), a clean replay verification, and no
+# prior auto-repair for this exact workflow+check, ever (one attempt per distinct cause) --
+# refuses outright and exits non-zero if any condition isn't met, never falls back to prompting.
+kairos repair apply <n8n-workflow-id> --client-id acme --auto
+
+# Restore the most recent (or a named, via --to) snapshot for a workflow -- written automatically
+# before every `repair apply` write. Works even if you never ran `repair propose`, as long as a
+# snapshot exists (e.g. after a manual `repair apply`, or to undo any prior Kairos-driven write).
+kairos rollback <n8n-workflow-id>
+kairos rollback <n8n-workflow-id> --to 2026-07-19T00-00-00.000Z --yes
 
 # Seed library with n8n community templates
 kairos sync-templates --max 200

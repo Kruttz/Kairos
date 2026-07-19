@@ -34,6 +34,8 @@ Usage:
   kairos chaos run <n8n-workflow-id> [--json]
   kairos watch --workflows <ids|all> [--interval <s>] [--on-drift <cmd>] [--once] [--json]
   kairos repair propose <n8n-workflow-id> --client-id <slug> [--json]
+  kairos repair apply <n8n-workflow-id> --client-id <slug> [--yes] [--auto] [--json]
+  kairos rollback <n8n-workflow-id> [--to <iso-timestamp>] [--yes] [--json]
   kairos replace <n8n-id> <description>
   kairos memory add|list|search|forget|rebuild-index <client-id> [...]
   kairos patterns [options]
@@ -1684,25 +1686,39 @@ async function handleWatch(_positional: string[], flags: Record<string, string |
   }
 }
 
+// Large enough that the auto-mode eligibility check (§8.4: "one attempt per distinct cause,
+// ever") never misses an old repair_write entry just because it fell outside a small recent-N
+// window -- reliability-audit.jsonl is a small, local, append-only file; reading it in full for
+// a safety-critical check is the correct trade, not a real cost.
+const REPAIR_AUDIT_FULL_SCAN_LIMIT = 1_000_000
+
 async function handleRepair(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const subcommand = positional[0]
   const n8nWorkflowId = positional[1]
   const clientId = typeof flags['client-id'] === 'string' ? flags['client-id'] : undefined
 
-  if (subcommand !== 'propose' || !n8nWorkflowId || !clientId) {
+  if ((subcommand !== 'propose' && subcommand !== 'apply') || !n8nWorkflowId || !clientId) {
     console.error('Usage: kairos repair propose <n8n-workflow-id> --client-id <slug> [--json]')
+    console.error('       kairos repair apply <n8n-workflow-id> --client-id <slug> [--yes] [--auto] [--json]')
     console.error('')
     console.error('propose checks this workflow for D9 (build-vs-live structural) drift and, if')
     console.error('found, produces a proposed restore -- rationale, diff, an explicit three-hash')
     console.error('comparison, verification availability, risk level, and the exact next command.')
     console.error('Read-only: never boots a sandbox, never writes to n8n.')
+    console.error('')
+    console.error('apply snapshots the live workflow, attempts a replay verification (when a')
+    console.error('webhook trigger and captured payloads exist), writes the proposed restore, then')
+    console.error('structurally re-verifies and auto-rolls-back on failure. Requires interactive')
+    console.error('confirmation, OR --yes (human, non-interactive), OR --auto (whitelist-only,')
+    console.error('one attempt per cause ever, requires a clean replay verification -- refuses')
+    console.error('outright, never falls back to prompting, if any condition is not met).')
     process.exit(1)
   }
 
   const n8nBaseUrlEnv = process.env['N8N_BASE_URL']
   const n8nApiKeyEnv = process.env['N8N_API_KEY']
   if (!n8nBaseUrlEnv || !n8nApiKeyEnv) {
-    console.error('N8N_BASE_URL and N8N_API_KEY are required for kairos repair propose.')
+    console.error(`N8N_BASE_URL and N8N_API_KEY are required for kairos repair ${subcommand}.`)
     process.exit(1)
   }
 
@@ -1740,7 +1756,7 @@ async function handleRepair(positional: string[], flags: Record<string, string |
     traces: match.executionTraces ?? [],
   })
 
-  const { appendReliabilityAudit } = await import('./reliability/watch/audit.js')
+  const { appendReliabilityAudit, getReliabilityAuditTrail } = await import('./reliability/watch/audit.js')
   const auditTs = new Date().toISOString()
   try {
     if (result.status === 'proposed') {
@@ -1773,14 +1789,167 @@ async function handleRepair(positional: string[], flags: Record<string, string |
   }
 
   if (result.status === 'internal_error') {
-    console.error(`kairos repair propose refused: ${result.detail}`)
+    console.error(`kairos repair ${subcommand} refused: ${result.detail}`)
     process.exit(1)
   }
 
-  if (flags['json'] === true) {
-    console.log(JSON.stringify(result.proposal, null, 2))
+  const proposal = result.proposal
+
+  if (subcommand === 'propose') {
+    if (flags['json'] === true) {
+      console.log(JSON.stringify(proposal, null, 2))
+    } else {
+      console.log(formatRepairProposal(proposal))
+    }
+    return
+  }
+
+  // subcommand === 'apply'
+  console.log(formatRepairProposal(proposal))
+  console.log('')
+
+  const autoRequested = flags['auto'] === true
+  const yesRequested = flags['yes'] === true
+  let confirmedBy: 'human_prompt' | 'yes_flag' | 'auto_flag'
+
+  if (autoRequested) {
+    const { checkAutoModeEligibility } = await import('./reliability/repair/apply.js')
+    const fullTrail = await getReliabilityAuditTrail(REPAIR_AUDIT_FULL_SCAN_LIMIT)
+    const priorAutoWrites = fullTrail.filter((e): e is import('./reliability/watch/audit.js').RepairWriteAuditEntry => e.kind === 'repair_write')
+    const eligibility = checkAutoModeEligibility(proposal, priorAutoWrites)
+    if (!eligibility.eligible) {
+      console.error(`--auto refuses: ${eligibility.reason}`)
+      process.exit(1)
+    }
+    confirmedBy = 'auto_flag'
+  } else if (yesRequested) {
+    confirmedBy = 'yes_flag'
   } else {
-    console.log(formatRepairProposal(result.proposal))
+    const readline = await import('node:readline')
+    const rl = readline.createInterface({ input: process.stdin, output: process.stderr })
+    const answer = await new Promise<string>(resolve => rl.question('Apply this restore? [y/N] ', resolve))
+    rl.close()
+    if (answer.trim().toLowerCase() !== 'y') {
+      console.log('Not applied.')
+      return
+    }
+    confirmedBy = 'human_prompt'
+  }
+
+  let sandboxConfig: import('./reliability/sandbox/manager.js').SandboxConfig | undefined
+  if (proposal.verificationAvailability === 'available') {
+    const { bootSandbox } = await import('./reliability/sandbox/manager.js')
+    console.error('Booting sandbox for replay verification (reuses an already-running instance if present)...')
+    sandboxConfig = await bootSandbox()
+  }
+
+  const { applyRepair } = await import('./reliability/repair/apply.js')
+  const applyResult = await applyRepair(proposal, provider, clientId, { confirmedBy, auto: autoRequested }, sandboxConfig)
+
+  if (flags['json'] === true) {
+    console.log(JSON.stringify(applyResult, null, 2))
+  } else {
+    console.log('')
+    console.log(`Status: ${applyResult.status.toUpperCase()}`)
+    if (applyResult.replayVerdict) console.log(`Replay verdict: ${applyResult.replayVerdict} (partial verification: ${applyResult.replayPartialVerification})`)
+    if (applyResult.snapshotPath) console.log(`Snapshot: ${applyResult.snapshotPath}`)
+    console.log(applyResult.detail)
+  }
+
+  const telemetry = await createTelemetryCollector()
+  if (telemetry) {
+    try {
+      await telemetry.emit('repair_completed', {
+        workflowId: n8nWorkflowId,
+        checkId: proposal.checkId,
+        status: applyResult.status,
+        auto: autoRequested,
+        ...(applyResult.replayVerdict ? { replayVerdict: applyResult.replayVerdict } : {}),
+        postVerifyPassed: applyResult.postVerifyPassed ?? null,
+      })
+    } catch {
+      // Swallowed deliberately -- telemetry must never change this command's outcome.
+    }
+  }
+
+  if (applyResult.status !== 'applied') {
+    process.exit(1)
+  }
+}
+
+async function handleRollback(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const n8nWorkflowId = positional[0]
+  if (!n8nWorkflowId) {
+    console.error('Usage: kairos rollback <n8n-workflow-id> [--to <iso-timestamp>] [--yes]')
+    console.error('')
+    console.error('Restores the most recent (or a named, via --to) snapshot for this workflow.')
+    console.error('Snapshots are written automatically before every kairos repair apply write --')
+    console.error('this command works even if you never ran repair propose, as long as a snapshot')
+    console.error('exists. Requires interactive confirmation, or --yes for non-interactive use.')
+    process.exit(1)
+  }
+
+  const n8nBaseUrlEnv = process.env['N8N_BASE_URL']
+  const n8nApiKeyEnv = process.env['N8N_API_KEY']
+  if (!n8nBaseUrlEnv || !n8nApiKeyEnv) {
+    console.error('N8N_BASE_URL and N8N_API_KEY are required for kairos rollback.')
+    process.exit(1)
+  }
+
+  const { listSnapshots, loadSnapshot } = await import('./reliability/repair/snapshot.js')
+  const requestedTs = typeof flags['to'] === 'string' ? flags['to'] : undefined
+
+  const snapshots = await listSnapshots(n8nWorkflowId)
+  const target = requestedTs ? snapshots.find(s => s.ts === requestedTs) : snapshots[0]
+  if (!target) {
+    console.error(`No snapshot found for workflow "${n8nWorkflowId}"${requestedTs ? ` at timestamp ${requestedTs}` : ''}.`)
+    if (snapshots.length === 0) console.error('No snapshots exist for this workflow at all -- nothing to roll back to.')
+    process.exit(1)
+  }
+  const snapshotWorkflow = await loadSnapshot(n8nWorkflowId, target.ts)
+  if (!snapshotWorkflow) {
+    console.error(`Snapshot at ${target.ts} could not be read.`)
+    process.exit(1)
+  }
+
+  if (flags['yes'] !== true) {
+    const readline = await import('node:readline')
+    const rl = readline.createInterface({ input: process.stdin, output: process.stderr })
+    const answer = await new Promise<string>(resolve => rl.question(`Restore workflow ${n8nWorkflowId} from the snapshot at ${target.ts}? [y/N] `, resolve))
+    rl.close()
+    if (answer.trim().toLowerCase() !== 'y') {
+      console.log('Not restored.')
+      return
+    }
+  }
+
+  const { N8nProvider } = await import('./providers/n8n/provider.js')
+  const { N8nFieldStripper } = await import('./providers/n8n/stripper.js')
+  const client = new N8nApiClient(n8nBaseUrlEnv, n8nApiKeyEnv, CLI_LOGGER)
+  const provider = new N8nProvider(client, new N8nFieldStripper())
+
+  try {
+    await provider.update(n8nWorkflowId, snapshotWorkflow)
+  } catch (err) {
+    console.error(`Could not write the restored workflow to n8n: ${String(err)}`)
+    process.exit(1)
+  }
+
+  const { appendReliabilityAudit } = await import('./reliability/watch/audit.js')
+  try {
+    await appendReliabilityAudit([{
+      kind: 'repair_rollback', ts: new Date().toISOString(), workflowId: n8nWorkflowId,
+      snapshotPath: target.path, reason: 'Standalone kairos rollback invocation.',
+      detail: `Restored workflow ${n8nWorkflowId} from the snapshot taken at ${target.ts}.`,
+    }])
+  } catch {
+    // Best-effort, matching every other audit-writing call site in this codebase.
+  }
+
+  if (flags['json'] === true) {
+    console.log(JSON.stringify({ workflowId: n8nWorkflowId, restoredFrom: target.ts, snapshotPath: target.path }, null, 2))
+  } else {
+    console.log(`Restored workflow ${n8nWorkflowId} from the snapshot taken at ${target.ts}.`)
   }
 }
 
@@ -2070,6 +2239,9 @@ async function main(): Promise<void> {
       break
     case 'repair':
       await handleRepair(positional, flags)
+      break
+    case 'rollback':
+      await handleRollback(positional, flags)
       break
     case 'library': {
       const subcommand = positional[0]

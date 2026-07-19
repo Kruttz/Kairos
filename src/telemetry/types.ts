@@ -5,11 +5,11 @@ export interface TelemetryEvent {
   timestamp: string
   sessionId: string
   runId?: string
-  eventType: 'build_start' | 'generation_attempt' | 'build_complete' | 'bundle_exported' | 'preflight_completed' | 'drift_check_completed' | 'replay_completed' | 'chaos_completed'
+  eventType: 'build_start' | 'generation_attempt' | 'build_complete' | 'bundle_exported' | 'preflight_completed' | 'drift_check_completed' | 'replay_completed' | 'chaos_completed' | 'repair_completed'
   data: Record<string, unknown>
 }
 
-export const TELEMETRY_SCHEMA_VERSION = 6
+export const TELEMETRY_SCHEMA_VERSION = 7
 
 export interface AttemptMetadata {
   attempt: number
@@ -110,4 +110,15 @@ export interface ChaosCompletedData {
   silentMisbehaviorCount: number
   blockedAtCredentialCount: number
   incompleteCount: number
+}
+
+export interface RepairCompletedData {
+  workflowId: string
+  /** Plain string, not DriftCheckId -- same import-boundary discipline as the fields above. */
+  checkId: string
+  /** Plain string, not ApplyRepairStatus -- same import-boundary discipline as the fields above. */
+  status: string
+  auto: boolean
+  replayVerdict?: string
+  postVerifyPassed: boolean | null
 }
