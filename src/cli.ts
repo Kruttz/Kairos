@@ -22,6 +22,8 @@ Usage:
   kairos validate-pack <name>
   kairos preflight <name> [--live] [--bundle-dir <dir>] [--client-id <slug>] [--json]
   kairos trace record <n8n-workflow-id>
+  kairos drift baseline <n8n-workflow-id> [--json]
+  kairos drift check <n8n-workflow-id> [--live] [--original-build-hash <hash>] [--json]
   kairos replace <n8n-id> <description>
   kairos memory add|list|search|forget|rebuild-index <client-id> [...]
   kairos patterns [options]
@@ -1234,6 +1236,103 @@ async function handleValidatePack(positional: string[]): Promise<void> {
   if (errors.length > 0) process.exit(1)
 }
 
+async function handleDrift(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const subcommand = positional[0]
+  const n8nWorkflowId = positional[1]
+
+  if ((subcommand !== 'baseline' && subcommand !== 'check') || !n8nWorkflowId) {
+    console.error('Usage: kairos drift baseline <n8n-workflow-id> [--json]')
+    console.error('       kairos drift check <n8n-workflow-id> [--live] [--original-build-hash <hash>] [--json]')
+    console.error('')
+    console.error('baseline reports what Kairos currently knows for this workflow -- which of the')
+    console.error('9 named drift checks have real data to evaluate (captured) vs. which do not yet')
+    console.error('or structurally cannot (skipped), and why. It does not compute a drift verdict.')
+    console.error('')
+    console.error('check runs all 9 checks now and reports HEALTHY or DRIFTING, with a full')
+    console.error('diagnosis (confidence-tiered cause, recommended action, repair class) for any')
+    console.error('drifting finding. Exits 1 only when something is actually drifting -- never for')
+    console.error('insufficient_data or not_applicable, which are not failures.')
+    process.exit(1)
+  }
+
+  const lib = createLibrary()
+  await lib.initialize()
+  const all = await lib.list()
+  const match = all.find(w => w.n8nWorkflowId === n8nWorkflowId)
+
+  if (!match) {
+    console.error(`No library entry found with n8nWorkflowId="${n8nWorkflowId}".`)
+    console.error('Build and deploy a workflow with kairos first to create a library entry, or')
+    console.error('run "kairos trace record <n8n-workflow-id>" to link an existing n8n workflow.')
+    process.exit(1)
+  }
+
+  let traces = match.executionTraces ?? []
+
+  if (flags['live'] === true) {
+    const n8nBaseUrl = process.env['N8N_BASE_URL']
+    const n8nApiKey = process.env['N8N_API_KEY']
+    if (!n8nBaseUrl || !n8nApiKey) {
+      console.error('N8N_BASE_URL and N8N_API_KEY are required for --live.')
+      process.exit(1)
+    }
+    const { fetchLatestTrace, mergeTraces } = await import('./telemetry/execution-tracer.js')
+    const latest = await fetchLatestTrace(n8nWorkflowId, n8nBaseUrl, n8nApiKey)
+    if (latest) {
+      await lib.recordTrace(match.id, latest)
+      traces = mergeTraces(traces, latest)
+    } else {
+      console.error('--live: no executions found, or could not reach n8n. Proceeding with stored traces only.')
+    }
+  }
+
+  const { buildDriftBaselineReport, buildDriftCheckReport, formatDriftBaselineReport, formatDriftCheckReport } = await import('./reliability/drift/report.js')
+  const context = { workflowId: n8nWorkflowId, workflowName: match.description }
+  const inputs = {
+    traces,
+    ...(typeof flags['original-build-hash'] === 'string' ? { originalBuildHash: flags['original-build-hash'] } : {}),
+  }
+
+  if (subcommand === 'baseline') {
+    const report = buildDriftBaselineReport(context, inputs)
+    if (flags['json'] === true) {
+      console.log(JSON.stringify(report, null, 2))
+    } else {
+      console.log(formatDriftBaselineReport(report))
+    }
+    return
+  }
+
+  // subcommand === 'check'
+  const report = buildDriftCheckReport(context, inputs)
+  if (flags['json'] === true) {
+    console.log(JSON.stringify(report, null, 2))
+  } else {
+    console.log(formatDriftCheckReport(report))
+  }
+
+  const telemetry = await createTelemetryCollector()
+  if (telemetry) {
+    // Best-effort -- see preflight/bundle-export precedent: telemetry is a side-effecting
+    // log, never allowed to throw out of or change the command's own result/exit behavior.
+    try {
+      await telemetry.emit('drift_check_completed', {
+        workflowId: n8nWorkflowId,
+        verdict: report.verdict,
+        traceCount: report.traceCount,
+        driftingCount: report.findings.filter(f => f.status === 'drifting').length,
+        live: flags['live'] === true,
+      })
+    } catch {
+      // Swallowed deliberately -- see comment above.
+    }
+  }
+
+  // Exit 1 only for real drifting -- insufficient_data and not_applicable are not failures
+  // and must never trip an alert (Jordan/Codex, 2026-07-19).
+  if (report.verdict === 'DRIFTING') process.exit(1)
+}
+
 async function handlePreflight(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const packName = positional[0]
   if (!packName) {
@@ -1502,6 +1601,9 @@ async function main(): Promise<void> {
       break
     case 'trace':
       await handleTrace(positional)
+      break
+    case 'drift':
+      await handleDrift(positional, flags)
       break
     case 'library': {
       const subcommand = positional[0]

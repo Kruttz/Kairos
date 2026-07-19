@@ -5,11 +5,11 @@ export interface TelemetryEvent {
   timestamp: string
   sessionId: string
   runId?: string
-  eventType: 'build_start' | 'generation_attempt' | 'build_complete' | 'bundle_exported' | 'preflight_completed'
+  eventType: 'build_start' | 'generation_attempt' | 'build_complete' | 'bundle_exported' | 'preflight_completed' | 'drift_check_completed'
   data: Record<string, unknown>
 }
 
-export const TELEMETRY_SCHEMA_VERSION = 3
+export const TELEMETRY_SCHEMA_VERSION = 4
 
 export interface AttemptMetadata {
   attempt: number
@@ -76,5 +76,15 @@ export interface PreflightCompletedData {
   checkCount: number
   failCount: number
   warnCount: number
+  live: boolean
+}
+
+export interface DriftCheckCompletedData {
+  workflowId: string
+  /** Plain string, not DriftCheckReport['verdict'] -- same import-boundary discipline as
+   * PreflightCompletedData.verdict above. */
+  verdict: string
+  traceCount: number
+  driftingCount: number
   live: boolean
 }

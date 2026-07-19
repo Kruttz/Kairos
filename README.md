@@ -881,6 +881,21 @@ kairos pack export my-pack --impact-notes
 # Record a deployed workflow's latest n8n execution into the library (improves retrieval)
 kairos trace record <n8n-workflow-id>
 
+# Report what Kairos currently knows for this workflow -- which of the 9 named drift checks
+# have real data to evaluate ("captured") vs. which don't yet or structurally can't
+# ("skipped"), and why. Does not compute a verdict -- see "drift check" for that.
+kairos drift baseline <n8n-workflow-id>
+
+# Run all 9 named drift checks now: newly-erroring nodes, duration anomalies (workflow- and
+# node-level), missing/new nodes, windowed error-rate drift, cadence/silent-stop detection,
+# payload-schema drift (once capture is enabled), and build-vs-live structural drift. Reports
+# HEALTHY or DRIFTING with a full diagnosis (confidence-tiered cause, recommended action,
+# repair class) for anything drifting. Exits 1 only for real drifting -- never for
+# insufficient_data or not_applicable, which are not failures.
+kairos drift check <n8n-workflow-id>
+kairos drift check <n8n-workflow-id> --live  # fetch and record the latest execution first
+kairos drift check <n8n-workflow-id> --json  # exact structured findings/diagnoses, not rendered text
+
 # Seed library with n8n community templates
 kairos sync-templates --max 200
 
@@ -1122,7 +1137,7 @@ const library = new FileLibrary(undefined, {
 })
 ```
 
-**Execution trace learning:** After a deployed workflow runs in n8n, record its latest execution with `kairos trace record <n8n-workflow-id>` (CLI) or `kairos_record_trace` (MCP). Kairos stores a privacy-safe trace (status, executed node names, error *types*, per-node execution time, item counts — never data values, up to 10 per workflow) and computes a `runtimeReliabilityScore` that blends into the outcome signal (70% generation outcome, 30% runtime reliability). Workflows that actually run reliably in production rank higher in future retrieval.
+**Execution trace learning:** After a deployed workflow runs in n8n, record its latest execution with `kairos trace record <n8n-workflow-id>` (CLI) or `kairos_record_trace` (MCP). Kairos stores a privacy-safe trace (status, executed node names, error *types* and *httpCode* when the error carries one, per-node execution time, item counts — never data values, up to `KAIROS_MAX_TRACES_PER_WORKFLOW` per workflow, default 50) and computes a `runtimeReliabilityScore` that blends into the outcome signal (70% generation outcome, 30% runtime reliability). Workflows that actually run reliably in production rank higher in future retrieval. The same trace history feeds `kairos drift baseline`/`kairos drift check` (see below) — nine named checks for detecting when a deployed workflow's behavior has drifted from its own history.
 
 Each `trace record` call also compares the new run against that workflow's own trace history and reports: a node erroring that never errored before, a run more than 2x slower than the historical average, a node that always ran before but is now missing, any brand-new node in the executed path, and the single slowest node in the latest run. This is runtime *execution* drift — distinct from the validator-rule-coverage drift surfaced by `kairos patterns`.
 
