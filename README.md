@@ -1195,6 +1195,18 @@ kairos patterns approve <rule-number>  # confirm -- starts influencing generatio
 kairos patterns reject <rule-number> [reason]  # marks resolved -- excluded, same as any resolved pattern
 ```
 
+### Community Pattern Sharing
+
+`kairos patterns share` builds a report of your **confirmed** local patterns and, with your explicit consent, opens it as a GitHub issue so other Kairos users benefit from what your install has learned. This is export-only (v1) — there is no ingestion into your own install's scoring yet.
+
+The report is whitelist-only **by construction**, not by scrubbing: the type it's built from only has fields for rule number, pipeline stage, failure count, and confidence. Free text, node names, workflow names, URLs, parameter values, and expressions are never representable in it — nothing to leak because nothing else can exist in the type.
+
+```bash
+kairos patterns share
+```
+
+Every run prints the exact JSON that would leave your machine, then asks a single explicit question naming the real consequence (*"This will create a public GitHub issue at github.com/Kruttz/Kairos containing the JSON above. Continue? [y/N]"*) before anything is written or transmitted. Declining does nothing further. Confirming writes `pattern-report.json` locally and, if the `gh` CLI is installed, opens the issue directly — otherwise it prints the URL to open manually. There is no background or automatic transmission path in this codebase.
+
 ---
 
 ## Workflow Library & Feedback Loop

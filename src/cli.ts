@@ -41,6 +41,7 @@ Usage:
   kairos patterns [options]
   kairos patterns approve <rule-number>
   kairos patterns reject <rule-number> [reason]
+  kairos patterns share
   kairos sessions [options]
   kairos list
   kairos get <id>
@@ -82,6 +83,15 @@ Patterns options:
 Patterns review-gate (opt-in via KAIROS_PATTERN_REVIEW=true):
   patterns approve <rule>          Confirm a pending_review pattern -- it starts influencing generation
   patterns reject <rule> [reason]  Mark a pending_review pattern resolved -- it's excluded, same as any resolved pattern
+
+Patterns share (community pattern library, export-only -- see docs/plans/reliability-suite-plan.md §10):
+  patterns share   Build a report of your CONFIRMED local patterns (rule number, pipeline stage,
+                   failure count, confidence only -- no free text, node names, workflow names,
+                   URLs, parameter values, or expressions are ever representable in the report).
+                   Prints the exact bytes that would leave this machine, then requires an
+                   explicit y/N confirmation naming the real consequence (a public GitHub issue)
+                   before anything is written or transmitted. Uses the gh CLI if present, else
+                   prints the issue URL to open manually. No background transmission path exists.
 
 Sessions options:
   --limit <n>     Number of recent sessions to show (default: 20)
@@ -746,6 +756,49 @@ async function handlePatternReject(positional: string[]): Promise<void> {
     process.exit(1)
   }
   console.log(`Rule ${rule} rejected${reason ? ` (${reason})` : ''} — marked resolved, will not influence generation.`)
+}
+
+async function handlePatternShare(): Promise<void> {
+  const { buildPatternShareReport } = await import('./reliability/community/whitelist.js')
+  const { formatReportPreview, writePatternReportFile, attemptGhIssueCreate, manualIssueUrl, COMMUNITY_REPO } =
+    await import('./reliability/community/share.js')
+
+  const analyzer = PatternAnalyzer.fromEnv()
+  const patterns = await analyzer.loadCurrentPatterns()
+  const report = buildPatternShareReport(patterns)
+
+  if (report.patterns.length === 0) {
+    console.log("No confirmed patterns to share yet. Run 'kairos patterns approve <rule-number>' on a pattern you trust first.")
+    return
+  }
+
+  console.log('The following data would leave this machine:\n')
+  console.log(formatReportPreview(report))
+  console.log('')
+
+  const readline = await import('node:readline')
+  const rl = readline.createInterface({ input: process.stdin, output: process.stderr })
+  const answer = await new Promise<string>(resolve =>
+    rl.question(`This will create a public GitHub issue at github.com/${COMMUNITY_REPO} containing the JSON above. Continue? [y/N] `, resolve)
+  )
+  rl.close()
+  if (answer.trim().toLowerCase() !== 'y') {
+    console.log('Not shared.')
+    return
+  }
+
+  const path = await writePatternReportFile(report)
+  console.log(`Wrote ${path}.`)
+
+  const ghResult = await attemptGhIssueCreate(path, report.kairosVersion)
+  if (ghResult.opened) {
+    console.log('Opened a GitHub issue via gh.')
+  } else if (ghResult.attempted) {
+    console.error(`gh issue create did not succeed (exit ${String(ghResult.exitCode)}${ghResult.error ? `: ${ghResult.error}` : ''}).`)
+    console.log(`Open manually: ${manualIssueUrl()} and attach or paste the contents of ${path}.`)
+  } else {
+    console.log(`gh CLI not found. Open manually: ${manualIssueUrl()} and attach or paste the contents of ${path}.`)
+  }
 }
 
 async function handleSessions(flags: Record<string, string | boolean>): Promise<void> {
@@ -2150,6 +2203,8 @@ async function main(): Promise<void> {
         await handlePatternApprove(positional.slice(1))
       } else if (subcommand === 'reject') {
         await handlePatternReject(positional.slice(1))
+      } else if (subcommand === 'share') {
+        await handlePatternShare()
       } else {
         await handlePatterns(flags)
       }
