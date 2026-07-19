@@ -75,3 +75,19 @@ describe('module boundary: community/ must never reach replay/capture or per-cli
     expect(/from\s+['"].*reliability\/community/.test(storeSrc)).toBe(false)
   })
 })
+
+/**
+ * The reverse-direction firewall, added 2026-07-19 for Phase 5b (ingestion): the mechanical
+ * proof underneath Jordan's "community patterns cannot outrank local confirmed patterns"
+ * requirement. It is not enough that community/ing­est.ts never writes into local pattern
+ * scoring -- pattern-analyzer.ts itself must have no way to *read* community data even if a
+ * future change tried to wire it in, since an import is the only channel through which
+ * community-sourced numbers could ever reach computeCompositeScore(). Asserted as a fact about
+ * the import graph, not a promise about current behavior.
+ */
+describe('module boundary: pattern-analyzer.ts must never import reliability/community/', () => {
+  it('src/telemetry/pattern-analyzer.ts has no import from reliability/community/', () => {
+    const analyzerSrc = readFileSync(join(REPO_ROOT, 'src/telemetry/pattern-analyzer.ts'), 'utf-8')
+    expect(/from\s+['"].*reliability\/community/.test(analyzerSrc)).toBe(false)
+  })
+})
