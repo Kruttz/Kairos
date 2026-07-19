@@ -1,7 +1,7 @@
 # Kairos Reliability Suite — Implementation Plan
 
 **Date:** 2026-07-18 (revised same day after a Codex second opinion — 3 points folded in: chaos-as-replay-mutation architecture, Phase 0/1 resequencing, structured verification-boundary reporting. One point flagged, not folded in: moving intake interview earlier — that overrides Jordan's own explicit sequencing decision from the same conversation, left to him.)
-**Status:** APPROVED to begin. Phase 0, spike S2 (sandbox), starting now.
+**Status:** Phase 0 (spikes + sandbox/capture plumbing), Phase 1 (drift detection), Phase 2 (replay engine), and Phase 4 (chaos testing, both tiers) are SHIPPED as of 2026-07-19 — see each section below for exact commit-level detail and live-checkpoint findings. **Build order resequenced 2026-07-19 (Jordan's explicit call):** Phase 6 (`kairos watch` + repositioning) now builds **before** Phase 3 (self-healing), reversing the original P3→P4→P5→P6 order for the remaining work. Reasoning, verbatim: *"We need Kairos to clearly operate as a reliability system before allowing it to take automated repair actions."* This is sound — everything shipped through Phase 4 is read-only diagnosis; Phase 3 is the first phase that writes to a live workflow autonomously (even gated), a materially higher-risk category that deserves to follow a track record, not precede one. Section numbers below are kept as originally assigned (historical/thematic identifiers, cross-referenced throughout this doc) — §15 states the actual build sequence explicitly; do not infer build order from section number.
 **Scope:** The four committed items from the 2026-07-18 direction reset, in priority order:
 1. Self-healing / drift detection (automation SRE)
 2. Network-effect pattern library (community failure corpus)
@@ -9,6 +9,8 @@
 4. Replay/shadow testing (safe-change verification)
 
 Explicitly out of scope (deferred until these ship): intake interview, automation P&L, self-tuning flywheel, platform-agnostic (Zapier/Make) layer.
+
+**Remaining work, full detail below:** Phase 6 (§11, build next), Phase 3 (§8, after Phase 6), Phase 5 (§10, after Phase 3, unchanged position). Every remaining phase's section was re-verified and expanded 2026-07-19 against the actual current codebase (post-Phase-4) rather than left as the original pre-Phase-0 sketch — each now carries When/What/Why/How/Where/Methodology/Guardrails/Reasoning/Outcomes. **This is a planning update only — no code has been written for any of these three phases.** Awaiting go-ahead before implementation begins, per standing instruction.
 
 ---
 
@@ -358,18 +360,25 @@ Real sandbox, disposable workflow, 3 captured payloads: (a) no-op candidate → 
 
 ---
 
-## 8. Phase 3 — Self-healing loop (#1, part B)
+## 8. Phase 3 — Self-healing loop (#1, part B) (BUILDS AFTER Phase 6)
 
-**What:** close detect→diagnose into propose→verify→apply→rollback. **Escalation remains the default posture; auto-repair is narrow, opt-in, and verified-by-replay.**
+**When:** After Phase 6 (`kairos watch` + repositioning) ships and has run against real workflows for a while — resequenced 2026-07-19, see the doc header. Re-verify this whole section against current code (including whatever Phase 6 actually shipped as `runWatchTick`'s shape) before writing any Phase 3 code — this section, expanded below, is still a pre-build plan, not a build log, unlike §6/§7/§9 above.
+
+**What:** close detect→diagnose into propose→verify→apply→rollback. **Escalation remains the default posture; auto-repair is narrow, opt-in, and verified-by-replay.** This is the only phase in the whole arc that writes to a live workflow autonomously (even when gated) — every other shipped or planned phase is read-only diagnosis.
+
+**Why:** drift detection (Phase 1) and diagnosis already tell a human *what's* wrong and *why*, with a confidence-tiered cause. The gap this phase closes is the last mile from "Kairos told me what's broken" to "Kairos can fix the narrow, mechanical cases itself, safely, and hands everything else to a human with a head start." The asymmetry is the point, not a limitation: some drift classes (D9 build-vs-live, D8 schema, some D1 error-class matches) have a mechanical fix a workflow edit can express; others (D2/D5/D6/D7 — latency, error-rate, cadence) have external causes no workflow edit touches, and proposing an edit there would be theater, actively eroding trust rather than building it.
+
+**How / Methodology:**
 
 ### 8.1 Snapshots (the honest slice of "rollback")
 Before *any* Kairos-driven `replace()` (existing command included): store prior live JSON in `~/.kairos/snapshots/<wf>/<ts>.json` (cap default 10). `kairos rollback <wf> [--to <ts>]` = replace-from-snapshot, reusing all existing replace machinery (diff summary, webhook-verify). *Not* building: full git-for-workflows versioning product — stays on the held-off list.
 
 ### 8.2 Proposal generation (`drift/repair.ts`)
-Per drift class, honestly tiered:
-- **Mechanical (proposable):** D9 build-vs-live → propose re-sync (restore Kairos's built version or re-export live as new baseline — human picks direction); D8 schema drift → propose a regenerated field-mapping via existing `replace()` + targeted feedback prompt (generation machinery already supports targeted retry feedback); D1 where the error class maps to a known pattern (e.g. missing onError on an external call — existing rules 56/128 knowledge) → propose the specific config addition.
+Per drift class, honestly tiered (re-verify this tiering against the actual current check set — §6.2 now has D1-D9, and this section's D3/D4 classification below is an open question, not a decided one):
+- **Mechanical (proposable):** D9 build-vs-live → propose re-sync (restore Kairos's built version or re-export live as new baseline — human picks direction); D8 schema drift → propose a regenerated field-mapping via existing `replace()` + targeted feedback prompt (generation machinery already supports targeted retry feedback); D1 where the error class maps to a known pattern (e.g. missing onError on an external call — existing rules 56/128 knowledge, and now also chaos's own external-call-posture finding from §9.1 as a second independent signal for the same class) → propose the specific config addition.
 - **Diagnostic-only (escalate, v1):** D2/D5/D6/D7 — latency, error-rate, cadence drifts have external causes (API slowness, credential expiry, upstream volume) no workflow edit fixes. Proposing edits here would be theater. The escalation report says what to check instead. **This asymmetry is correct behavior, documented as such.**
-- Every proposal = workflow diff + rationale + attached replay report (when sandbox exists).
+- **Open, not yet decided (flagged honestly rather than guessed):** D3 (missing core nodes) and D4 (new nodes) weren't classified in the original sketch. Both are structural, and both could plausibly go either way depending on cause (a missing node from a botched manual edit is mechanically re-addable from the build hash, similar to D9; a missing node from a deliberate manual simplification is not something Kairos should silently "fix"). Resolve this during Phase 3's own design-verification pass with real evidence (what actually causes D3/D4 findings in practice), not by guessing now.
+- Every proposal = workflow diff + rationale + attached replay report (when sandbox exists) — this is where Phase 2's replay engine and Phase 4's chaos engine both pay off directly: a repair proposal isn't just "here's a diff," it's "here's a diff, and replay confirms it behaves identically to the current version except for the targeted fix."
 
 ### 8.3 The ladder (enforced order, audited at every rung)
 ```
@@ -380,8 +389,17 @@ detect → diagnose → propose → [human approves | KAIROS_AUTO_REPAIR for whi
 ```
 Guardrails hard-coded: cooldown per workflow (default 1h), max 1 auto-attempt per distinct cause (second occurrence always escalates), flap detection (rollback ↔ repair cycling halts the loop and escalates), every rung appends to `reliability-audit.jsonl`. Without a sandbox, auto-repair is **disabled entirely** — propose-only (no unverified automated writes to a live workflow, ever).
 
+**Where:** New `src/reliability/repair.ts` (or `drift/repair.ts`, matching the existing `drift/` module grouping), `src/reliability/snapshots/` for the snapshot store, CLI wiring for `kairos repair propose/apply` and `kairos rollback`, and — the integration point Phase 6 exists partly to create — a propose call added to `runWatchTick()`'s DRIFTING branch once this phase ships, so watch's continuous loop and repair's proposal generation compose rather than duplicate.
+
+**Guardrails (beyond the ladder's own, and beyond cross-cutting G1-G8):**
+- **G2 escalation-first is the whole shape of this phase**, not a bolt-on: every automated path defaults to reporting, auto-repair requires an explicit opt-in env var (`KAIROS_AUTO_REPAIR`) plus whitelisted mechanical classes plus a clean replay verification plus a snapshot, and even then is cooldown-limited and flap-detected.
+- No sandbox, no auto-repair — propose-only, full stop. This mirrors Phase 4's own "no sandbox, Tier A only" fallback discipline (§13).
+- `kairos repair apply` stays CLI-only, never exposed via MCP — a deliberate human-friction choice on the one command in this entire arc that can write to a live workflow autonomously.
+
 ### 8.4 Surface + checkpoint
 `kairos repair propose <wf>` / `kairos repair apply <wf> [--auto]`; MCP mirror for propose only (apply stays CLI — a deliberate human-friction choice). Checkpoint: induce D9 on a disposable workflow → propose → approve → watch snapshot/replay/apply/post-verify chain run; then induce a post-verify failure (candidate that breaks webhook-verify) → confirm auto-rollback restores the snapshot and escalates.
+
+**Outcomes / Definition of done:** `kairos repair propose` produces a real, replay-verified diff for every mechanical drift class with an honest escalation-only report for every diagnostic-only class; `kairos repair apply` never writes without a snapshot first and never leaves a workflow in a worse state than it found it (post-verify + auto-rollback proven live); the cooldown/flap/max-one-attempt guardrails are enforced in code, not just documented; auto-repair is provably inert without `KAIROS_AUTO_REPAIR` set and without a sandbox present; full test suite green, live-checkpointed against disposable workflows for both the happy path and the induced-failure/rollback path, one commit per step, plan doc updated with real findings.
 
 ---
 
@@ -414,14 +432,20 @@ Disposable webhook workflow with one deliberately unguarded field ref and one gu
 
 ---
 
-## 10. Phase 5 — Community pattern library (#2)
+## 10. Phase 5 — Community pattern library (#2) (BUILDS AFTER Phase 3; position unchanged)
+
+**When:** After Phase 3 (self-healing), per the original ordering — this is the one remaining phase whose sequencing position Jordan did *not* ask to change 2026-07-19. Re-verify against current code before building, same as every other phase (G7) — in particular, re-confirm the whitelist serializer's field list (§10.1) against whatever Phase 3's `repair.ts` actually ends up naming its outcome/classification types, since a repair outcome is a plausible future whitelisted signal this phase's serializer should be able to represent cleanly, not retrofitted awkwardly.
+
+**Why this phase, and why last:** every other phase in this arc makes a single Kairos install smarter about its own workflows. This is the one phase whose value is explicitly cross-install — it only compounds once multiple people are running Kairos, diagnosing real drift, and opting in to share what they found. That's also why it's sequenced last: it depends on the other phases (drift, chaos, and eventually repair) existing and producing real classified findings worth aggregating in the first place. Sharing an empty or synthetic corpus would be worse than not building this at all — it would look like real signal and not be.
 
 **The no-server design:** GitHub is the aggregation point; the maintainer review *is* the quality gate; the npm package *is* the distribution channel. Zero hosted infrastructure (C5), full public transparency, human-gated by construction — consistent with Phase D's philosophy.
 
-**Split into two sub-phases (Codex second opinion, folded in).** Export and ingestion are different commitments — export is "make my own local patterns safely shareable," ingestion is "become an ongoing curator of a shared corpus for everyone." Bundling them risked treating a much bigger commitment (5b) as a same-size step as a much smaller one (5a). They now ship separately, with 5b explicitly gated:
+**How / Methodology — split into two sub-phases (Codex second opinion, folded in).** Export and ingestion are different commitments — export is "make my own local patterns safely shareable," ingestion is "become an ongoing curator of a shared corpus for everyone." Bundling them risked treating a much bigger commitment (5b) as a same-size step as a much smaller one (5a). They now ship separately, with 5b explicitly gated:
 
 - **Phase 5a — export only (§10.1-10.2).** Local pattern hygiene already exists (Phase D). Ships: the whitelist serializer and the share flow. This has real standalone value even with zero ingestion ever built — an anonymized, reviewable pattern report is useful on its own, and it's the smaller, lower-commitment half.
 - **Phase 5b — ingestion (§10.3).** Explicitly gated: only start this after **several real 5a export cycles have happened and been reviewed** — a real precondition, not just "whenever we get to it." Ingestion is where the ongoing-curation commitment actually begins, and it shouldn't be scoped before there's evidence the export side works and produces something worth ingesting.
+
+**Where:** New `src/reliability/community/` directory (`whitelist.ts`, `share.ts`, `ingest.ts`) — this exact path is already load-bearing: `tests/unit/reliability/module-boundaries.test.ts` (shipped in Phase 2, currently vacuous by design) scans `src/reliability/community/` specifically and starts actually enforcing the G4 firewall the instant the first file lands there, so this phase must use that path, not a different one. CLI wiring for `kairos patterns share`/`kairos patterns sync`, repo-side additions (issue template, CONTRIBUTING section) that are Jordan's one-time task, not code.
 
 ### 10.1 Whitelist serializer (`community/whitelist.ts`) — the load-bearing privacy wall
 1. **Whitelist-only, by construction:** the serializer's input type only *has* fields for: rule IDs, drift-check IDs, chaos verdict enums, node **type** names (`n8n-nodes-base.httpRequest` — never instance names), error-class enums, occurrence counts, kairos/n8n version strings. Free text, workflow names, URLs, parameter values, expressions, and payloads are not representable in the type — nothing to scrub because nothing else can exist. (Blacklist-scrubbing is the approach that fails; this is the approach that can't.)
@@ -439,14 +463,55 @@ Disposable webhook workflow with one deliberately unguarded field ref and one gu
 ### 10.4 Checkpoint
 Round-trip: generate a share report from real local patterns → verify by eye nothing non-whitelisted appears → simulate maintainer merge → `sync` → verify ingestion at draft/community provenance → verify a local corroborating event promotes it and a non-corroborated one never promotes.
 
+**Guardrails (in addition to cross-cutting G1-G8, especially G4 — the sharing firewall):**
+- The whitelist serializer's input type is the enforcement mechanism, not a convention layered on top — a field that isn't representable in the type cannot leak, by construction, not by discipline.
+- No import path from `captures/` (real payload data, Phase 2) or `memory/` (per-client data) into `community/` — enforced by a module-boundary test (`tests/unit/reliability/module-boundaries.test.ts` already exists for this purpose, per the earlier phases' G4 setup, and gets a real assertion here once `community/` exists — it's currently "honestly vacuous until Phase 5 exists," per that file's own docstring).
+- Ingestion never auto-promotes a community pattern past draft tier without local corroboration — a community-sourced hint is a hypothesis this install still has to independently confirm, never an instant trust transfer.
+- Sharing is always per-invocation, explicit-consent, and shows the exact bytes before they leave the machine — no background or automatic transmission path exists in the codebase, ever.
+
+**Reasoning:** the no-server design and the whitelist-by-construction approach both come from the same place — this is the one phase whose value proposition (a compounding cross-install corpus) requires trusting Kairos with more data leaving a user's machine than any other phase in this arc, so it deliberately has the strictest, most mechanically-enforced (not just documented) privacy guardrail of anything built here.
+
+**Outcomes / Definition of done:** `kairos patterns share` produces a human-reviewable, provably whitelisted report and requires explicit confirmation before anything leaves the machine; `kairos patterns sync` correctly ingests a real merged community file at draft/community provenance with correct promotion-only-on-local-corroboration behavior; the module-boundary test actually asserts something (not vacuous) once this phase ships; full test suite green, live/round-trip-checkpointed as described in §10.4, one commit per sub-phase step, plan doc updated with real findings — and 5b specifically not started until 5a has had several real export cycles.
+
 ---
 
-## 11. Phase 6 — `kairos watch` + repositioning polish
+## 11. Phase 6 — `kairos watch` + repositioning polish (BUILDS NEXT — before Phase 3)
 
-1. **`kairos watch [--interval <s>] [--workflows <ids|all>]`** — a foreground loop: drift check per workflow per tick; on DRIFTING → diagnose, propose (if mechanical), notify (stdout + audit log; optional shell-hook for user-supplied notification commands). Documented cron/launchd recipes for background use. Explicitly not a daemon/service (C5).
-2. **README repositioning:** restructure around the reliability loop (§1 diagram); generation demoted to one section. The honest benchmark discipline applies — no claims without a measured artifact behind them.
-3. **Scripted demo = acceptance test:** one script that builds a disposable workflow, chaos-audits it, deploys, baselines, induces drift, watches Kairos catch/diagnose/propose/verify/repair/rollback. Doubles as the arc's end-to-end regression and the marketing demo. If the demo script can't run truthfully, the arc isn't done.
-4. Version/CHANGELOG: this arc is the v1.0 story candidate (Jordan's call at the end, not before).
+**When:** Immediately following Phase 4 (chaos testing, shipped 2026-07-19). Before Phase 3 (self-healing) — resequenced 2026-07-19, see the doc header for the full reasoning. This section was re-verified and substantially expanded on that date against the actual shipped code (Phases 0/1/2/4), not left as the original pre-Phase-0 sketch.
+
+**What:** Turn the diagnostic modules that already exist (`drift/checks.ts`, `drift/diagnose.ts`, `drift/report.ts`) into something that runs on its own over time, notices drift without a human remembering to ask, and tells someone — plus the README/positioning work that makes the resulting product story true rather than aspirational. Four pieces: the watch loop itself, a notification layer, README repositioning, and a scripted end-to-end demo.
+
+**Why (the case for this phase, and for building it here):**
+- **It's the piece that makes §1's positioning claim real.** Everything shipped so far (drift, replay, chaos) is invoked by a human, on demand. Nothing in the current codebase runs continuously or notices drift unprompted. Without watch, "Kairos operates as a reliability system" is still just a README claim about capability, not something a user can point at running.
+- **It's the natural place to prove out detection before adding autonomous action on top of it (Jordan's sequencing reasoning).** Phase 3's whole premise — that Kairos can be trusted to write to a live workflow, even gated and narrow — is much easier to justify once watch has been running against real workflows (Empire Homecare's, or disposable ones) and its diagnoses have held up. Building watch first turns Phase 3's eventual pitch from "trust the diagnosis because the code looks right" into "trust the diagnosis because it's been correct in continuous real use."
+- **It's lower engineering risk than Phase 3, which matters after a long arc.** Watch composes already-shipped, already-tested modules (`buildDriftCheckReport`, `diagnoseDrift`) into a loop and a notification layer — no new sandbox-write logic, no rollback machinery, no new class of guardrail. That's a deliberate choice, not just a happy accident: it's the right complexity to tackle right after Phase 4's heavier live-checkpoint-per-commit chaos work.
+- **It makes Phase 3 smaller when it comes.** Once `runWatchTick()` exists with a clean per-workflow DRIFTING branch, Phase 3's "propose" step has a natural integration point to slot into, rather than Phase 3 needing to build both a loop AND propose logic simultaneously later.
+
+**A real scope correction this verification pass found:** the original sketch's bullet 1 said watch should "diagnose, propose (if mechanical), notify" on DRIFTING. `propose` means `drift/repair.ts`, which is Phase 3 — and Phase 3 now builds *after* this phase. So Phase 6, as actually buildable today, is **detect → diagnose → notify only**. No propose, no repair, no rollback. The scripted demo (bullet 3 below) is corrected the same way. When Phase 3 ships later, `runWatchTick()`'s DRIFTING branch gets a propose call added to it as a small, additive change — not rebuilt.
+
+**How / Methodology:**
+1. **Design-verification pass, first, before any code.** Re-read `src/reliability/drift/report.ts`, `diagnose.ts`, and `cli.ts`'s current `handleDrift` exactly as they exist today (this document's own "memory ≠ code" discipline, G7) — confirm `buildDriftCheckReport()`'s exact input contract for reuse in a loop context, and specifically resolve two open questions empirically rather than guessing: (a) what `--live`'s `fetchLatestTrace`/`mergeTraces` path actually costs per call against a real n8n instance (matters for picking a safe default polling interval), and (b) whether n8n's execution-list endpoint has any documented or observed rate limit that a tight polling loop could trip. Do this against the real Empire Cloud instance's read-only endpoints (never a write) or a sandbox, not by assumption.
+2. **Core loop — `src/reliability/watch/loop.ts`.** `runWatchTick(workflows: WatchTarget[], options): Promise<WatchTickResult[]>` — one pass over a workflow list. Per workflow: call the same `buildDriftCheckReport` pathway `kairos drift check --live` already uses (deliberately zero new drift-detection logic — pure composition of what Phase 1 shipped), and when `report.verdict === 'DRIFTING'`, call the already-shipped `diagnoseDrift()` for each drifting finding. Produces a structured `WatchTickResult` per workflow: `{ workflowId, verdict, findings, diagnoses, checkedAt }`. Never calls anything from `repair.ts` — that module doesn't exist yet, and even once it does, `runWatchTick` should only *propose*, never auto-apply, without the same opt-in gate Phase 3 defines (G2, escalation-first, inherited here explicitly).
+3. **Notification layer — `src/reliability/watch/notify.ts`.** Two channels, both structured-first: (a) stdout, same two-tier rendered/`--json` discipline as every other command in this arc; (b) an optional user-supplied shell-hook (`--on-drift <cmd>`) invoked once per DRIFTING workflow per tick, with the structured `WatchTickResult` passed as JSON on stdin — this is the extension point for Slack/email/PagerDuty/whatever, and Kairos deliberately never builds a specific integration itself (matches C5's "no hosted infra" and avoids scope creep into becoming a notification vendor). The hook's own failure must never crash the tick loop (wrapped, logged, tick continues) — same "telemetry must never break a real result" discipline already established for telemetry emission elsewhere in this codebase.
+4. **CLI — `kairos watch [--interval <s>] [--workflows <ids|all>] [--on-drift <cmd>] [--once] [--json]`.** `--workflows all` resolves via `FileLibrary.list()` filtered to entries with `n8nWorkflowId` set (only deployed workflows can be watched — nothing to check for a built-but-undeployed library entry). `--once` runs a single tick and exits, cleanly — this is the form documented for cron/launchd, not the foreground loop; the foreground loop is for an interactive terminal a human is actually watching. Default `--interval`: pick a real number from step 1's empirical findings, not a guess (a conservative starting default — err long, document how to tighten it once real usage data exists — is safer than a tight default that turns out to hammer n8n). Document both cron and launchd recipes for `--once` in the README, matching C5's explicit "not a daemon/service Kairos operates" framing.
+5. **README repositioning.** Restructure around §1's reliability-loop diagram; move workflow generation to a later section rather than the lead. Same G5 honesty discipline as everywhere else in this arc — the polling nature of watch must be described accurately (it notices drift within one interval, not instantly/in real time), and no capability is claimed without a measured artifact behind it (the scripted demo, next, is that artifact).
+6. **Scripted demo — `scripts/demo/reliability-loop-demo.ts`.** Build a disposable workflow → `kairos chaos audit` it → deploy → `kairos drift baseline` → induce a real drift condition (e.g., redeploy a subtly different live version, or age/alter recorded execution traces so a check crosses its threshold) → run `kairos watch --once` → show it catches, diagnoses, and notifies (stdout, and a shell-hook example). **Stops at notify for this phase** — the corrected scope from above. This becomes the arc's end-to-end regression as well as the demo artifact the repositioned README can honestly point to. When Phase 3 ships, this same script gets extended with propose/verify/repair/rollback steps rather than replaced.
+7. Each of steps 2-6 lands as its own commit, per the established one-piece-at-a-time discipline (G7). The loop and notify layer are genuinely integration-shaped (timing, live n8n calls, subprocess invocation for the shell-hook) — live-checkpoint both against a real disposable workflow and a real induced-drift scenario before considering this phase done, the same discipline every other integration-heavy module in this arc (sandbox, replay, chaos) already went through.
+8. **Version/CHANGELOG:** whether this arc (once Phase 3/5 also ship) is the v1.0 story candidate is explicitly Jordan's call at the end, not assumed here.
+
+**Where:** New directory `src/reliability/watch/` (`loop.ts`, `notify.ts`); CLI wiring in `cli.ts` following the existing `handleDrift`/`handleReplay`/`handleChaos` pattern (a `handleWatch` function, switch-dispatched); README restructure; new `scripts/demo/` script; this plan doc updated in place with real findings as each step lands, per G7.
+
+**Guardrails (in addition to the cross-cutting G1-G8 in §12, all of which still apply):**
+- **No propose/repair in this phase.** Pure detect → diagnose → notify. Re-stated here because it's the single most important correction this verification pass made to the original sketch, and it's easy to accidentally reintroduce while writing `runWatchTick` if the old plan text is glanced at instead of this section.
+- **C5 (no hosted infra):** watch is a local foreground loop or a `--once` cron/launchd invocation, never a background daemon/service Kairos manages or that requires an always-on host.
+- **Notification is opt-in and delegated**, never a built-in integration to a specific third-party service.
+- **Polling interval must respect n8n's real observed behavior**, verified empirically in step 1, not picked arbitrarily.
+- **G5 honesty carries through:** watch's output (stdout and the shell-hook payload) must preserve the full 4-state model (`insufficient_data`/`not_applicable`/`healthy`/`drifting`) — never flattened into a boolean "ok"/"not ok," which would silently discard exactly the distinction Jordan established as non-negotiable at the start of this whole arc.
+- **A hook's failure never breaks the tick.** One workflow's notification failing must not prevent the rest of that tick's workflows from being checked, and must not crash the loop.
+
+**Reasoning, restated:** this ordering is Jordan's explicit call, and it holds up under scrutiny independent of who made it — proving continuous, unattended diagnosis is trustworthy is a reasonable and lower-risk prerequisite to proving that autonomous *action* on top of that diagnosis is trustworthy. It also has a nice compounding property: every real DRIFTING finding watch correctly surfaces (or, just as importantly, every finding it correctly does NOT surface, i.e., no false alarms) is direct evidence for or against Phase 3's core premise, gathered before Phase 3's higher-stakes code is written rather than after.
+
+**Outcomes / Definition of done:** `kairos watch` runs correctly in both foreground and `--once` modes against real deployed workflows, using the full 4-state model, notifying via stdout and optionally a user shell-hook, and never taking any write action against a live workflow; README repositioned around the reliability loop with every claim backed by the scripted demo or an existing shipped feature; the scripted demo runs truthfully end-to-end through the notify step and is checked into the repo as the arc's regression test; full test suite green, typecheck/lint/docs-drift clean, one commit per step, live-checkpointed against real workflows for the loop/notify pieces, plan doc updated with real findings (not left as this pre-build sketch) before the phase is marked done.
 
 ---
 
@@ -465,7 +530,7 @@ Round-trip: generate a share report from real local patterns → verify by eye n
 
 ## 13. Risks and honest unknowns
 
-- **Sandbox may not materialize (top risk).** S2 may find npx-n8n unworkable and Jordan may not want Docker. **Fallback mode, pre-committed:** Phase 2 deferred; Phase 3 ships propose-only with auto-repair disabled; Phase 4 ships Tier A only. Phases 1, 4A, 5, 6 — the majority of the repositioning value — ship regardless. The arc does not collapse if the sandbox does.
+- **~~Sandbox may not materialize (top risk).~~ Resolved 2026-07-19 — the sandbox materialized and works well.** `npx n8n@2.30.7` (version-pinned, no Docker) boots reliably via scripted REST calls; Phase 2 (replay) and Phase 4 Tier B (chaos sandbox runs) both shipped and were live-checkpointed against it repeatedly. The fallback mode below never had to trigger, but is kept here as a record of what was pre-committed in case a *future* environment (a different machine, a locked-down CI runner) can't boot the sandbox: Phase 2 deferred; Phase 3 ships propose-only with auto-repair disabled; Phase 4 ships Tier A only. Phases 1, 4A, 5, 6 — the majority of the repositioning value — ship regardless. The arc does not collapse if the sandbox does.
 - **n8n's `/workflows/:id/run` (`triggerManual`) may not exist on all versions/instances** — verified in S1/S2 before anything depends on it; webhook-based injection is the primary path anyway.
 - **Baseline false positives during warmup** — mitigated by INSUFFICIENT_DATA gating and conservative defaults; thresholds configurable; expect a tuning pass after real use, and say so in docs.
 - **Payload PII** — even opt-in, captures hold real customer data (Empire's flows carry names/phones). Mitigations in G3; residual risk documented for the user, not hidden.
@@ -479,17 +544,36 @@ Mock-sink fault injection (rate-limit/500 simulation via URL rewriting) — sket
 
 ## 15. Sequencing, sizing, definition of done
 
-**Order:** P0 → P1 → P2 → P3 → P4 → P5 → P6. (P4 Tier A may float earlier if a stall needs a quick win — it has zero dependencies.)
+**Order (revised 2026-07-19 — this supersedes the original P0→P1→P2→P3→P4→P5→P6 order stated when this plan was first written):**
 
-**Sizing against demonstrated velocity** (memory layer ~1 session; Delivery Bundle 6 commits/~2 days; preflight 4 phases/2 days; 0.11 chaining 10 commits):
-- P0: 1-2 sessions (spike uncertainty dominates) — S2 first
-- P1: 1-2 sessions · P2: ~2 sessions (hardest engineering) · P3: 1-2 sessions
-- P4: 1-2 sessions · P5: 1 session · P6: 1 session
-- **Arc total: realistically 8-11 focused sessions**, spread as life allows; every phase boundary is a safe pause.
+```
+P0 → P1 → P2 → P4 → P6 → P3 → P5
+     (shipped 2026-07-19, all four)   ^        ^     ^
+                                       │        │     └─ community pattern library —
+                                       │        │        position unchanged, still last
+                                       │        │        (depends on drift+chaos+repair
+                                       │        │        all producing real findings)
+                                       │        └─ self-healing / repair —
+                                       │           now AFTER watch, not before
+                                       └─ kairos watch + repositioning —
+                                          now BEFORE repair (Jordan's call,
+                                          2026-07-19: prove diagnosis is
+                                          trustworthy in continuous real use
+                                          before adding autonomous action)
+```
+
+P0/P1/P2/P4 are done — see each section above for exact commit history and live-checkpoint findings. **P6 builds next.** (P4 Tier A floated earlier than a strict P0→P1→P2→P3→P4 reading would suggest, per the original plan's own allowance for it — it had zero dependencies and served as a quick, self-contained win; that flexibility is preserved going forward for any future phase that turns out to have zero real dependencies on its notionally-earlier neighbors.)
+
+**Sizing against demonstrated velocity** (memory layer ~1 session; Delivery Bundle 6 commits/~2 days; preflight 4 phases/2 days; 0.11 chaining 10 commits; **this session: P0+P1+P2 recap plus all of P4 — 2 tiers, 5 commits, 3 live sandbox checkpoints — in one session**, which is faster than this section's original estimate assumed and worth recalibrating against for the remaining phases):
+- P0: shipped · P1: shipped · P2: shipped · P4: shipped (5 commits, both tiers, this session)
+- **P6 (next): 1-2 sessions** — mostly composition of already-shipped modules (lower novel-code risk than P4), but the watch loop and notify layer are genuinely integration-shaped (timing, live n8n polling, subprocess shell-hooks) and need real live-checkpointing, which is where P4's sessions actually went
+- **P3: 1-2 sessions** — the hardest remaining engineering (the only phase that writes to a live workflow autonomously; the ladder's guardrails need to be verified live, not just unit-tested)
+- **P5: 1 session** — smaller in code, but 5a/5b's gating means it may span a real calendar gap (5b waits on "several real 5a export cycles," not just a session count)
+- **Arc total remaining: realistically 3-5 focused sessions** for P6+P3+P5 combined, spread as life allows; every phase boundary is a safe pause, and this new order means each remaining pause point leaves Kairos at a *more* conservative (not less) place than the old order would have — P6 without P3 is "watches and tells you," never "watches and acts," which is a safe place to pause for as long as needed.
 
 **Definition of done, per phase:** design step re-verified against current code → build steps landed one commit each → new tests green, full suite green, typecheck/lint/docs-drift clean → real end-to-end checkpoint passed against disposable workflows → CHANGELOG entry written honestly (including anything that didn't survive contact with reality) → plan file updated → pattern-extraction review offered.
 
-**Definition of done, arc:** the §11.3 demo script runs truthfully end-to-end; README tells the reliability-loop story; a skeptic reading the repo for five minutes can no longer say "n8n already does this."
+**Definition of done, arc:** the §11 demo script runs truthfully end-to-end (through notify for P6's own definition of done; extended through repair/rollback once P3 ships); README tells the reliability-loop story; a skeptic reading the repo for five minutes can no longer say "n8n already does this."
 
 ## 16. Outcome
 
