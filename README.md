@@ -21,12 +21,17 @@ Generation is the entry point, not the whole product. A workflow going live is t
    WATCH ───── post-deploy: baseline → detect drift → diagnose with a
      │          confidence-tiered cause (kairos watch, kairos drift check)
      │
+   REPAIR ──── for the one narrow, deterministic drift class (build-vs-
+     │          live structural drift), propose and — gated, snapshot-
+     │          backed, replay-verified, human-confirmed by default —
+     │          apply a restore (kairos repair propose/apply, kairos rollback)
+     │
    REPLAY ──── prove a candidate change behaves like the version it
                 replaces, against real recorded traffic, in a sandbox
                 that never touches production (kairos replay run)
 ```
 
-Self-healing (proposing and applying fixes automatically) and a cross-install pattern library are on the roadmap, not shipped yet — this README only claims what's built and checkpointed against real n8n instances, nothing ahead of that. `npm run demo:reliability-loop` runs the whole shipped chaos → deploy → watch → diagnose → notify sequence end to end against a real disposable local sandbox (no Docker, no production credentials, cleans up after itself) — the loop above isn't a diagram of intent, it's what that command actually does.
+Self-healing today is intentionally narrow, not "AI autonomously fixes production": it covers exactly one deterministic drift class (a live workflow diverging from what Kairos itself last deployed), requires an explicit human confirmation or a whitelisted, replay-verified `--auto`, and never regenerates anything via an LLM call. A separate, experimental (opt-in, off by default) community pattern layer lets installs export anonymized validator-failure patterns and optionally ingest others' — see [Community Pattern Sharing](#community-pattern-sharing) below. This README only claims what's built and checkpointed against real n8n instances or a real CLI run, nothing ahead of that. `npm run demo:reliability-loop` runs the shipped chaos → deploy → watch → diagnose → notify sequence end to end against a real disposable local sandbox (no Docker, no production credentials, cleans up after itself) — the loop above isn't a diagram of intent, it's what that command actually does (repair/replay aren't in the scripted demo yet, but are checkpointed live in `docs/plans/reliability-suite-plan.md` §8/§7).
 
 Use Kairos as an **MCP server** (connect to Claude Code, Claude Desktop, or any MCP host — no Anthropic API key needed), a **TypeScript SDK**, or a **CLI**. With a seeded template library, generation achieves **100% first-try structural validation pass rate** across 20 benchmark prompts.
 
@@ -62,10 +67,12 @@ console.log(pack.testChecklist)               // how to verify each workflow
 | Generates valid n8n workflow JSON | Perfect business logic |
 | Builds complete workflow packs from business context | Correct credentials or API configs |
 | Validates structure before deploy (129 rules) | Runtime success for every API |
-| Chaos-tests a workflow against adversarial payloads pre-deploy (`kairos chaos audit`/`chaos run`) | Automated self-healing / auto-repair (roadmap, not built) |
-| Watches deployed workflows for drift and diagnoses it (`kairos watch`, `kairos drift check`) | A cross-install shared pattern library (roadmap, not built) |
+| Chaos-tests a workflow against adversarial payloads pre-deploy (`kairos chaos audit`/`chaos run`) | Speculative or LLM-regenerated repair for anything beyond the one narrow, deterministic drift class it currently handles |
+| Watches deployed workflows for drift and diagnoses it (`kairos watch`, `kairos drift check`) | A mature, populated cross-install pattern corpus — ingestion (`kairos patterns ingest`/`sync`) is real but experimental, off by default, and only as good as what's actually been shared so far |
 | Verifies a candidate change behaves like the version it replaces before deploy (`kairos replay run`) | That every workflow matches intent perfectly |
-| Documents assumptions, open questions, and test steps | Full replacement for human review |
+| Proposes and, gated + snapshot-backed + replay-verified, applies a restore for build-vs-live structural drift (`kairos repair propose`/`apply`, `kairos rollback`) | Full replacement for human review |
+| Exports your own confirmed patterns for the community, and optionally ingests others' — informational only, never influencing your local scoring (`kairos patterns share`/`ingest`/`sync`) | — |
+| Documents assumptions, open questions, and test steps | — |
 | Syncs node types from your live instance | — |
 | Learns from prior builds and failures | — |
 | Works through MCP, SDK, or CLI | — |

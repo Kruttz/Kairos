@@ -2,6 +2,34 @@
 
 All notable changes to `@kairos-sdk/core` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); dates are publish dates from npm.
 
+## [Unreleased] — The Reliability Suite
+
+Repositions Kairos from a generator into a full pre/post-deploy reliability system, in direct response to n8n shipping its own AI workflow builder (`@n8n/ai-workflow-builder.ee`) — Kairos's moat is now the delivery/validation/learning envelope, not generation itself. Full design rationale and every live-checkpoint finding: `docs/plans/reliability-suite-plan.md`. Version bump and npm publish are separate, deliberate decisions not made here.
+
+### New: Drift detection (`kairos drift baseline`/`check`)
+Nine named checks (D1-D9) against a workflow's own execution history, reported through a strict 4-state model (`insufficient_data`/`not_applicable`/`healthy`/`drifting`) that is never conflated into a simplistic pass/fail — a check that hasn't seen enough data says so, rather than defaulting to "healthy." Confidence-tiered diagnosis names a likely cause and recommends an action rather than a bare alert.
+
+### New: Replay / shadow verification (`kairos sandbox`, `kairos replay capture`/`run`/`purge`)
+A version-pinned local n8n sandbox (`npx n8n@2.30.7`, no Docker) that a candidate workflow change is diffed against real recorded traffic in — sandbox-vs-sandbox only, never against production (`assertNotProduction()` refuses at the code level, not just by convention). Reports a real verdict (`IDENTICAL`/`BENIGN_VARIANCE`/`BEHAVIORAL_CHANGE`/`BROKEN`) plus an explicit verification-boundary flag when a credential-stripped node makes full confidence impossible — never a false "equivalent."
+
+### New: Chaos testing (`kairos chaos audit`/`run`)
+Tier A (`audit`) statically predicts which fields a workflow's expressions reference without a guard, and which external-call nodes have no error-handling posture at all, with no sandbox required. Tier B (`run`) confirms Tier A's predictions live, replaying a matrix of adversarial payloads (missing fields, wrong types, injection-shaped strings, oversized payloads, and more) and classifying each outcome (`HANDLED`/`CRASHED`/`SILENT_MISBEHAVIOR`/`BLOCKED_AT_CREDENTIAL`).
+
+### New: Continuous watch (`kairos watch`)
+The first genuinely unattended process this codebase ships: a polling loop (or `--once` for cron/launchd) that runs drift detection on a schedule, notifies on a real drifting verdict via stdout and an optional user shell-hook (`--on-drift`), and logs every tick — regardless of verdict — to `~/.kairos/reliability-audit.jsonl`, a real forensic trail for a process nothing else in this codebase can produce.
+
+### New: Self-healing repair (`kairos repair propose`/`apply`, `kairos rollback`)
+The first phase in this codebase to write to a live workflow autonomously, deliberately scoped as narrow as the safety case allows: v1 covers exactly one drift class (build-vs-live structural drift, fully deterministic, no LLM regeneration involved), requires an explicit human confirmation or a whitelisted + replay-verified + one-attempt-per-cause-ever `--auto`, snapshots the live workflow before every write, and structurally re-verifies (never a live webhook probe) after. Every rung of the apply ladder — snapshot, replay-verify, write, post-verify, rollback-on-failure — is independently audited. Found and fixed two real, previously-latent bugs along the way: n8n rejects an explicit `tags` field on write, and n8n auto-assigns `webhookId` to webhook nodes server-side, which was silently making the underlying drift check (D9, shipped earlier in this same arc) false-positive on every webhook-triggered workflow, always, until this write path finally exercised the comparison in earnest.
+
+### New: Community pattern sharing and ingestion (`kairos patterns share`/`ingest`/`sync`)
+`kairos patterns share` builds a report of your confirmed local validator-failure patterns and, with explicit per-invocation consent, opens it as a GitHub issue — whitelist-only **by construction**: the report's type only has fields for rule number, pipeline stage, failure count, and confidence, so free text, node names, workflow names, URLs, and parameter values are never representable in it, not merely scrubbed from it. `kairos patterns ingest`/`sync` (experimental, off by default, one env var — `KAIROS_COMMUNITY_PATTERNS=true` — to enable the display) let an install optionally read community-submitted patterns back in; they are stored in a fully separate file and are provably incapable of influencing local pattern scoring, confirmed-pattern promotion, or generation — proven both structurally (an import-graph test asserts `pattern-analyzer.ts` cannot reach the community module at all) and behaviorally (a real scoring round-trip test shows identical output with and without community data present, even against an artificially inflated community record for the same rule).
+
+### Fixed, found along the way (not pre-existing known issues — each was latent until this arc's new code paths exercised it)
+- n8n's PUT/POST `/workflows` endpoints reject an explicit `tags` field outright, even an empty array — `stripForUpdate()` never stripped it, because no prior code path round-tripped a live-fetched workflow back into a write until repair-apply.
+- n8n auto-assigns `webhookId` to webhook-trigger nodes server-side, which `computeWorkflowHash()` was including, making D9 (build-vs-live drift) false-positive on every webhook-triggered workflow, always — a severe latent bug in a check shipped earlier in this same arc.
+- `diffPayloadExecution`'s `partialVerification` flag is whole-payload, not per-branch, discovered while live-checkpointing chaos Tier B.
+- `module-boundaries.test.ts`'s privacy firewall only ever checked the `captures/` half of its own stated guardrail, never the `memory/` half, despite the guardrail text always naming both.
+
 ## [0.11.0] - 2026-07-10
 
 ### New: pack-builder output chaining (Step 7/8)
