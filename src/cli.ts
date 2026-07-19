@@ -30,6 +30,7 @@ Usage:
   kairos replay capture <n8n-workflow-id> --client-id <slug> [--limit <n>] [--scrub] [--json]
   kairos replay run <n8n-workflow-id> --candidate <file> --client-id <slug> [--live] [--verbose] [--json]
   kairos replay purge <n8n-workflow-id> --client-id <slug> [--json]
+  kairos chaos audit <n8n-workflow-id> [--json]
   kairos replace <n8n-id> <description>
   kairos memory add|list|search|forget|rebuild-index <client-id> [...]
   kairos patterns [options]
@@ -1518,6 +1519,31 @@ async function handleReplay(positional: string[], flags: Record<string, string |
   }
 }
 
+async function handleChaos(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const subcommand = positional[0]
+  const n8nWorkflowId = positional[1]
+
+  if (subcommand !== 'audit' || !n8nWorkflowId) {
+    console.error('Usage: kairos chaos audit <n8n-workflow-id> [--json]')
+    console.error('')
+    console.error('audit statically predicts how this workflow would handle adversarial webhook')
+    console.error('payloads (missing/null/wrong-type/oversized fields, injection-shaped strings,')
+    console.error('unprotected external calls) -- no sandbox required, no execution happens.')
+    console.error('Findings are heuristic predictions, not confirmed failures; exit code is always 0.')
+    process.exit(1)
+  }
+
+  const { workflow } = await loadWorkflowByN8nId(n8nWorkflowId)
+  const { runStaticChaosAudit, formatStaticChaosAuditResult } = await import('./reliability/chaos/static-audit.js')
+  const result = runStaticChaosAudit(workflow)
+
+  if (flags['json'] === true) {
+    console.log(JSON.stringify(result, null, 2))
+  } else {
+    console.log(formatStaticChaosAuditResult(result, n8nWorkflowId))
+  }
+}
+
 async function handlePreflight(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const packName = positional[0]
   if (!packName) {
@@ -1795,6 +1821,9 @@ async function main(): Promise<void> {
       break
     case 'replay':
       await handleReplay(positional, flags)
+      break
+    case 'chaos':
+      await handleChaos(positional, flags)
       break
     case 'library': {
       const subcommand = positional[0]

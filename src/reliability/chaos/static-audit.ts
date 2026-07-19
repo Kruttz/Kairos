@@ -138,3 +138,47 @@ export function runStaticChaosAudit(workflow: N8nWorkflow): StaticChaosAuditResu
     ],
   }
 }
+
+/** Rendered-text formatter -- the structured `StaticChaosAuditResult` above is the source of
+ * truth (available via `--json`); this is a separate, later step, not the other way around. */
+export function formatStaticChaosAuditResult(result: StaticChaosAuditResult, workflowId: string): string {
+  const lines: string[] = []
+  const totalFindings = result.unguardedFieldRefs.length + result.externalCallPostureFindings.length
+
+  lines.push(`Chaos static audit — ${workflowId}`)
+  lines.push('─'.repeat(50))
+  lines.push(`${totalFindings} predicted issue(s): ${result.unguardedFieldRefs.length} unguarded field reference(s), ${result.externalCallPostureFindings.length} external-call posture issue(s).`)
+  lines.push('')
+  lines.push(`Note: ${result.disclaimer}`)
+  lines.push('')
+
+  if (result.unguardedFieldRefs.length > 0) {
+    lines.push('Unguarded field references:')
+    for (const f of result.unguardedFieldRefs) {
+      lines.push(`  - ${f.summary}`)
+    }
+    lines.push('')
+  }
+
+  if (result.externalCallPostureFindings.length > 0) {
+    lines.push('External-call posture:')
+    for (const f of result.externalCallPostureFindings) {
+      lines.push(`  - ${f.summary}`)
+    }
+    lines.push('')
+  }
+
+  if (totalFindings === 0) {
+    lines.push('No static findings — no unguarded field references or unprotected external calls detected.')
+    lines.push('')
+  }
+
+  lines.push('Related validator rules (not recomputed here — run `kairos lint` for these):')
+  for (const r of result.crossReferencedRules) {
+    lines.push(`  - Rule ${r.rule}: ${r.note}`)
+  }
+  lines.push('')
+  lines.push('These are static predictions only. Run `kairos chaos run` (Tier B, needs a sandbox) to confirm them live.')
+
+  return lines.join('\n')
+}

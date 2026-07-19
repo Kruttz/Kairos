@@ -926,6 +926,16 @@ kairos replay run <n8n-workflow-id> --candidate ./candidate.json --client-id acm
 # Delete every captured payload for a workflow -- the revocation path for opted-in data.
 kairos replay purge <n8n-workflow-id> --client-id acme
 
+# Statically predict how this workflow would handle adversarial webhook payloads -- no
+# sandbox, no execution. Walks every node expression that references $json.body/query/headers
+# for a fallback operator (|| or ??), flags external-call nodes (httpRequest, or any
+# credentialed node) with no onError/retryOnFail posture at all, and cross-references the
+# validator rules that already cover overlapping cases (56, 78, 128) instead of recomputing
+# them. Findings are heuristic predictions, not confirmed failures -- exit code is always 0.
+# Run `kairos chaos run` (Tier B, sandbox-backed) to confirm a finding live.
+kairos chaos audit <n8n-workflow-id>
+kairos chaos audit <n8n-workflow-id> --json  # exact structured findings, not rendered text
+
 # Seed library with n8n community templates
 kairos sync-templates --max 200
 
