@@ -323,10 +323,49 @@ export function stripCredentialBindings(workflow: N8nWorkflow): N8nWorkflow {
 export interface SandboxImportResult {
   id: string
   name: string
+  /** Present only when the imported workflow had a webhook trigger. Carries the ACTUAL
+   * registered path/method after rewriteWebhookPathForSandbox's uniqueification -- callers
+   * (replay/runner.ts) must inject payloads against this, never the original workflow's own
+   * `parameters.path`, which is no longer what's live in the sandbox. See that function's
+   * own doc comment for why the rewrite exists at all. */
+  webhookTrigger?: { path: string; httpMethod: string }
+}
+
+/**
+ * A candidate is, by definition, meant to replace a workflow at the SAME production webhook
+ * path as its baseline -- that's the normal case, not an edge case. Importing both into the
+ * sandbox and activating them simultaneously (replay's whole point: compare them side by
+ * side) means two active sandbox workflows would claim the identical webhook route at the
+ * same time, which n8n correctly refuses (confirmed live: HTTP 409 "conflict with one of the
+ * webhooks"). So every sandbox import gets its webhook path rewritten to something unique --
+ * a short random suffix appended to the original path -- on a COPY of the workflow, never
+ * mutating the caller's own object. The returned `webhookTrigger` on SandboxImportResult
+ * carries the path actually registered, which is what any later injection must target.
+ */
+export function rewriteWebhookPathForSandbox(workflow: N8nWorkflow): { workflow: N8nWorkflow; webhookTrigger?: { path: string; httpMethod: string } } {
+  const webhookNode = workflow.nodes.find(n => n.type === 'n8n-nodes-base.webhook')
+  if (!webhookNode) return { workflow }
+
+  const params = (webhookNode.parameters ?? {}) as Record<string, unknown>
+  const originalPath = typeof params['path'] === 'string' ? params['path'] : 'webhook'
+  const httpMethod = typeof params['httpMethod'] === 'string' ? params['httpMethod'].toUpperCase() : 'POST'
+  const uniquePath = `${originalPath}-${Math.random().toString(36).slice(2, 10)}`
+
+  const rewrittenNodes = workflow.nodes.map(n =>
+    n.id === webhookNode.id
+      ? { ...n, parameters: { ...params, path: uniquePath } }
+      : n,
+  )
+
+  return {
+    workflow: { ...workflow, nodes: rewrittenNodes },
+    webhookTrigger: { path: uniquePath, httpMethod },
+  }
 }
 
 /**
  * Imports a workflow into the sandbox: prefixes its name, strips credential bindings,
+ * rewrites its webhook path to something collision-free (see rewriteWebhookPathForSandbox),
  * creates it via the real n8n API. Every write path in this module re-runs
  * assertNotProduction rather than trusting that bootSandbox already checked once -- cheap,
  * and it means a stale/hand-edited SandboxConfig can never be used to write to production
@@ -337,8 +376,9 @@ export async function importToSandbox(config: SandboxConfig, workflow: N8nWorkfl
   const prefixedName = applySandboxPrefix(name)
   const client = new N8nApiClient(config.baseUrl, config.apiKey, nullLogger)
   const stripped = stripCredentialBindings(workflow)
-  const created = await client.createWorkflow({ ...stripped, name: prefixedName })
-  return { id: created.id, name: created.name }
+  const { workflow: pathSafeWorkflow, webhookTrigger } = rewriteWebhookPathForSandbox(stripped)
+  const created = await client.createWorkflow({ ...pathSafeWorkflow, name: prefixedName })
+  return { id: created.id, name: created.name, ...(webhookTrigger ? { webhookTrigger } : {}) }
 }
 
 export interface SandboxCleanupResult {

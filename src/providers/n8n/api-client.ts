@@ -256,7 +256,14 @@ export class N8nApiClient {
     }
   }
 
-  async triggerWebhookProduction(path: string, httpMethod: string): Promise<{ statusCode: number; body: string }> {
+  /**
+   * `payload` defaults to `{}` (verifyWebhookReachable's use case -- it only cares whether
+   * the route responds, not what comes back) -- optional and backward-compatible so the one
+   * existing caller (webhook-verify.ts) is unaffected. replay/runner.ts is the first real
+   * caller that passes a genuine captured payload here, reusing this single, already-tested
+   * injection path rather than duplicating it.
+   */
+  async triggerWebhookProduction(path: string, httpMethod: string, payload: unknown = {}): Promise<{ statusCode: number; body: string }> {
     const cleanPath = path.startsWith('/') ? path : `/${path}`
     const url = buildWebhookUrl(this.baseUrl, path)
     const method = httpMethod.toUpperCase()
@@ -267,7 +274,7 @@ export class N8nApiClient {
         {
           method,
           headers: { 'Content-Type': 'application/json' },
-          ...(method === 'GET' ? {} : { body: JSON.stringify({}) }),
+          ...(method === 'GET' ? {} : { body: JSON.stringify(payload) }),
         },
         REQUEST_TIMEOUT_MS,
       )
