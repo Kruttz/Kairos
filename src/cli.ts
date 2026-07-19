@@ -33,6 +33,7 @@ Usage:
   kairos chaos audit <n8n-workflow-id> [--json]
   kairos chaos run <n8n-workflow-id> [--json]
   kairos watch --workflows <ids|all> [--interval <s>] [--on-drift <cmd>] [--once] [--json]
+  kairos repair propose <n8n-workflow-id> --client-id <slug> [--json]
   kairos replace <n8n-id> <description>
   kairos memory add|list|search|forget|rebuild-index <client-id> [...]
   kairos patterns [options]
@@ -1683,6 +1684,106 @@ async function handleWatch(_positional: string[], flags: Record<string, string |
   }
 }
 
+async function handleRepair(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const subcommand = positional[0]
+  const n8nWorkflowId = positional[1]
+  const clientId = typeof flags['client-id'] === 'string' ? flags['client-id'] : undefined
+
+  if (subcommand !== 'propose' || !n8nWorkflowId || !clientId) {
+    console.error('Usage: kairos repair propose <n8n-workflow-id> --client-id <slug> [--json]')
+    console.error('')
+    console.error('propose checks this workflow for D9 (build-vs-live structural) drift and, if')
+    console.error('found, produces a proposed restore -- rationale, diff, an explicit three-hash')
+    console.error('comparison, verification availability, risk level, and the exact next command.')
+    console.error('Read-only: never boots a sandbox, never writes to n8n.')
+    process.exit(1)
+  }
+
+  const n8nBaseUrlEnv = process.env['N8N_BASE_URL']
+  const n8nApiKeyEnv = process.env['N8N_API_KEY']
+  if (!n8nBaseUrlEnv || !n8nApiKeyEnv) {
+    console.error('N8N_BASE_URL and N8N_API_KEY are required for kairos repair propose.')
+    process.exit(1)
+  }
+
+  const lib = createLibrary()
+  await lib.initialize()
+  const all = await lib.list()
+  const match = all.find(w => w.n8nWorkflowId === n8nWorkflowId)
+  if (!match) {
+    console.error(`No library entry found with n8nWorkflowId="${n8nWorkflowId}".`)
+    console.error('Build and deploy a workflow with kairos first to create a library entry, or')
+    console.error('run "kairos trace record <n8n-workflow-id>" to link an existing n8n workflow.')
+    process.exit(1)
+  }
+
+  const { N8nProvider } = await import('./providers/n8n/provider.js')
+  const { N8nFieldStripper } = await import('./providers/n8n/stripper.js')
+  const client = new N8nApiClient(n8nBaseUrlEnv, n8nApiKeyEnv, CLI_LOGGER)
+  const provider = new N8nProvider(client, new N8nFieldStripper())
+
+  let currentWorkflow: import('./types/workflow.js').N8nWorkflow
+  try {
+    currentWorkflow = await provider.get(n8nWorkflowId)
+  } catch (err) {
+    console.error(`Could not fetch the live workflow from n8n: ${String(err)}`)
+    process.exit(1)
+  }
+
+  const { proposeRepair, formatRepairProposal } = await import('./reliability/repair/propose.js')
+  const result = await proposeRepair({
+    workflowId: n8nWorkflowId,
+    ...(match.description ? { workflowName: match.description } : {}),
+    clientId,
+    currentWorkflow,
+    storedWorkflow: match.workflow,
+    traces: match.executionTraces ?? [],
+  })
+
+  const { appendReliabilityAudit } = await import('./reliability/watch/audit.js')
+  const auditTs = new Date().toISOString()
+  try {
+    if (result.status === 'proposed') {
+      await appendReliabilityAudit([{
+        kind: 'repair_propose', ts: auditTs, workflowId: n8nWorkflowId,
+        ...(match.description ? { workflowName: match.description } : {}),
+        checkId: result.proposal.checkId, riskLevel: result.proposal.riskLevel,
+        verificationAvailability: result.proposal.verificationAvailability,
+        produced: true,
+        detail: `Proposed a ${result.proposal.checkId} restore (risk: ${result.proposal.riskLevel}).`,
+      }])
+    } else {
+      await appendReliabilityAudit([{
+        kind: 'repair_propose', ts: auditTs, workflowId: n8nWorkflowId,
+        ...(match.description ? { workflowName: match.description } : {}),
+        checkId: 'D9', produced: false, detail: result.detail,
+      }])
+    }
+  } catch {
+    // Best-effort, matching every other audit-writing call site in this codebase.
+  }
+
+  if (result.status === 'not_drifting') {
+    if (flags['json'] === true) {
+      console.log(JSON.stringify(result, null, 2))
+    } else {
+      console.log(`No proposal for ${match.description} (${n8nWorkflowId}) -- ${result.detail}`)
+    }
+    return
+  }
+
+  if (result.status === 'internal_error') {
+    console.error(`kairos repair propose refused: ${result.detail}`)
+    process.exit(1)
+  }
+
+  if (flags['json'] === true) {
+    console.log(JSON.stringify(result.proposal, null, 2))
+  } else {
+    console.log(formatRepairProposal(result.proposal))
+  }
+}
+
 async function handlePreflight(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const packName = positional[0]
   if (!packName) {
@@ -1966,6 +2067,9 @@ async function main(): Promise<void> {
       break
     case 'watch':
       await handleWatch(positional, flags)
+      break
+    case 'repair':
+      await handleRepair(positional, flags)
       break
     case 'library': {
       const subcommand = positional[0]

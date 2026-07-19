@@ -74,6 +74,58 @@ function deriveRiskLevel(availability: VerificationAvailability): 'low' | 'mediu
   }
 }
 
+/** `diffWorkflows()`/`formatDiff()` (built for `replace()`'s "what changed" summary) are
+ * deliberately structural-only -- node added/removed/type-changed, credential-type added/
+ * removed -- and say nothing about parameter values, connections, or settings, all three of
+ * which `computeWorkflowHash()` DOES include. Found live (2026-07-19, first checkpoint of this
+ * module): the most common real D9 scenario -- a hand-edit to an existing node's parameters
+ * (a Code node's logic, a URL, a Set node's mapping) -- produced a real hash mismatch but a
+ * `formatDiff()` output of "No structural changes," which would have silently misled an
+ * operator into thinking nothing meaningful changed. This function closes that gap without
+ * building a full field-level diff engine: it names which categories actually differ
+ * (parameters/connections/settings), not what the specific new values are -- enough for an
+ * operator to know where to look before applying, honest about what it can't tell them. */
+function describeNonStructuralChanges(before: N8nWorkflow, after: N8nWorkflow): string[] {
+  const notes: string[] = []
+
+  const beforeByName = new Map(before.nodes.map(n => [n.name, n]))
+  const changedParamNodes = after.nodes
+    .filter(afterNode => {
+      const beforeNode = beforeByName.get(afterNode.name)
+      return beforeNode !== undefined && beforeNode.type === afterNode.type
+        && JSON.stringify(beforeNode.parameters) !== JSON.stringify(afterNode.parameters)
+    })
+    .map(n => n.name)
+  if (changedParamNodes.length > 0) {
+    notes.push(`  ~ parameter(s) changed on: ${changedParamNodes.join(', ')} (which nodes differ, not what changed within them -- inspect the full workflow JSON for exact values)`)
+  }
+
+  if (JSON.stringify(before.connections ?? {}) !== JSON.stringify(after.connections ?? {})) {
+    notes.push('  ~ connections changed (wiring between nodes)')
+  }
+  if (JSON.stringify(before.settings ?? {}) !== JSON.stringify(after.settings ?? {})) {
+    notes.push('  ~ settings changed')
+  }
+
+  return notes
+}
+
+/** Combines the structural diff with the non-structural notes above, and -- if the content
+ * hash differs but somehow none of the categories checked explain why (should not be
+ * reachable, since nodes/connections/settings are exactly what the hash covers) -- says so
+ * explicitly rather than silently claiming nothing changed. */
+function buildProposalDiff(currentWorkflow: N8nWorkflow, proposedWorkflow: N8nWorkflow, hashesDiffer: boolean): string {
+  const structural = formatDiff(diffWorkflows(currentWorkflow, proposedWorkflow))
+  const nonStructural = describeNonStructuralChanges(currentWorkflow, proposedWorkflow)
+
+  const lines = [structural, ...nonStructural]
+  const structuralIsEmpty = structural.includes('No structural changes')
+  if (hashesDiffer && structuralIsEmpty && nonStructural.length === 0) {
+    lines.push('  ⚠ The content hash differs but no specific change category above explains why -- inspect the full workflow JSON directly before applying.')
+  }
+  return lines.join('\n')
+}
+
 function nextActionFor(availability: VerificationAvailability, workflowId: string, clientId: string): string {
   switch (availability) {
     case 'available':
@@ -85,13 +137,17 @@ function nextActionFor(availability: VerificationAvailability, workflowId: strin
   }
 }
 
-/**
- * Returns null when there is nothing to propose: D9 is not drifting, or (defensively) the
- * hash-consistency check fails -- proposedWorkflow must always equal storedWorkflow by
- * construction in v1, and if it doesn't, that is a real bug in this function, not a normal
- * "nothing to fix" outcome. Never silently proceeds with a mismatched restore target.
- */
-export async function proposeRepair(input: ProposeRepairInput): Promise<RepairProposal | null> {
+/** Discriminated so a caller (the CLI's audit-entry construction, in particular) can always
+ * tell "nothing to propose, normal" apart from "refused, a real bug" -- collapsing both into a
+ * bare `null` would make the internal-consistency failure indistinguishable from the ordinary,
+ * expected "not drifting" outcome in the audit trail, exactly the kind of silent conflation
+ * this codebase's 4-state honesty discipline exists to prevent elsewhere. */
+export type ProposeRepairResult =
+  | { status: 'proposed'; proposal: RepairProposal }
+  | { status: 'not_drifting'; detail: string }
+  | { status: 'internal_error'; detail: string }
+
+export async function proposeRepair(input: ProposeRepairInput): Promise<ProposeRepairResult> {
   const proposedWorkflow = input.storedWorkflow
 
   const storedHash = computeWorkflowHash(input.storedWorkflow)
@@ -118,25 +174,30 @@ export async function proposeRepair(input: ProposeRepairInput): Promise<RepairPr
   )
 
   const d9Finding = report.findings.find(f => f.id === 'D9')
-  if (d9Finding?.status !== 'drifting') return null
-
-  const d9Diagnosis = report.diagnoses.find(d => d.checkId === 'D9')
-  const rationale = d9Diagnosis
-    ? `${d9Diagnosis.causeStatement} ${d9Diagnosis.recommendedAction}`
-    : d9Finding.summary
+  if (d9Finding?.status !== 'drifting') {
+    return { status: 'not_drifting', detail: d9Finding?.summary ?? 'D9 (build-vs-live structural drift) is not currently drifting.' }
+  }
 
   if (!hashes.proposedMatchesStored) {
     // Internal-consistency failure, not a drift finding -- proposedWorkflow is always
     // input.storedWorkflow in v1, so this can only mean computeWorkflowHash() itself
     // behaved non-deterministically or this function's own logic changed underneath this
     // guard. Refuse rather than let a mismatched restore target reach apply.
-    return null
+    return {
+      status: 'internal_error',
+      detail: `Refusing to propose: proposedHash (${proposedHash}) does not equal storedHash (${storedHash}) even though the restore target is always the stored workflow in v1. This indicates a real bug -- do not apply.`,
+    }
   }
+
+  const d9Diagnosis = report.diagnoses.find(d => d.checkId === 'D9')
+  const rationale = d9Diagnosis
+    ? `${d9Diagnosis.causeStatement} ${d9Diagnosis.recommendedAction}`
+    : d9Finding.summary
 
   const captures = await listCapturedPayloads(input.clientId, input.workflowId)
   const verificationAvailability = deriveVerificationAvailability(input.currentWorkflow, captures.length > 0)
 
-  return {
+  const proposal: RepairProposal = {
     workflowId: input.workflowId,
     ...(input.workflowName ? { workflowName: input.workflowName } : {}),
     checkId: 'D9',
@@ -144,12 +205,13 @@ export async function proposeRepair(input: ProposeRepairInput): Promise<RepairPr
     rationale,
     currentWorkflow: input.currentWorkflow,
     proposedWorkflow,
-    diff: formatDiff(diffWorkflows(input.currentWorkflow, proposedWorkflow)),
+    diff: buildProposalDiff(input.currentWorkflow, proposedWorkflow, hashes.liveDiffersFromStored),
     hashes,
     riskLevel: deriveRiskLevel(verificationAvailability),
     verificationAvailability,
     nextAction: nextActionFor(verificationAvailability, input.workflowId, input.clientId),
   }
+  return { status: 'proposed', proposal }
 }
 
 function truncateHash(hash: string): string {

@@ -973,14 +973,24 @@ kairos chaos run <n8n-workflow-id> --json  # exact structured report, not render
 
 # Continuously (or once, for cron/launchd) run drift check + diagnosis against deployed
 # workflows -- detect -> diagnose -> notify -> audit only, no propose/apply/rollback (that's
-# a separate, not-yet-built phase). Every tick appends to ~/.kairos/reliability-audit.jsonl
-# regardless of verdict; insufficient_data/not_applicable are never treated as alerts, only a
-# real DRIFTING verdict is. --on-drift lets you delegate the actual alert delivery (Slack,
-# email, PagerDuty, anything) to your own command -- Kairos builds no integration itself.
+# kairos repair, below). Every tick appends to ~/.kairos/reliability-audit.jsonl regardless of
+# verdict; insufficient_data/not_applicable are never treated as alerts, only a real DRIFTING
+# verdict is. --on-drift lets you delegate the actual alert delivery (Slack, email, PagerDuty,
+# anything) to your own command -- Kairos builds no integration itself.
 kairos watch --workflows all --once                                   # single tick, for cron/launchd
 kairos watch --workflows wf-1,wf-2 --interval 300                     # foreground loop, Ctrl-C to stop
 kairos watch --workflows all --on-drift './notify-slack.sh' --once    # delegate alert delivery
 kairos watch --workflows all --once --json                            # exact structured tick result
+
+# Check a workflow for D9 (build-vs-live structural) drift and, if found, propose a restore --
+# rationale, diff, an explicit three-way hash comparison (stored Kairos version / live version /
+# proposed restore target), verification availability, risk level, and the exact next command.
+# Read-only: never boots a sandbox, never writes to n8n. D1/D8 (schema/error-class drift) are
+# still diagnosed by `drift check`/`watch` but don't produce a repair proposal yet -- that needs
+# its own design pass (see the plan doc). `kairos repair apply` (not yet built) will be the
+# command that actually applies a proposal, snapshot-backed and replay-verified first.
+kairos repair propose <n8n-workflow-id> --client-id acme
+kairos repair propose <n8n-workflow-id> --client-id acme --json  # exact structured proposal
 
 # Seed library with n8n community templates
 kairos sync-templates --max 200
