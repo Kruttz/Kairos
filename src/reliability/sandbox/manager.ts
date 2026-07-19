@@ -214,18 +214,40 @@ export async function bootSandbox(options?: { port?: number; bootTimeoutMs?: num
 async function provisionSandbox(baseUrl: string): Promise<SandboxConfig> {
   assertNotProduction(baseUrl)
 
-  const setupRes = await fetchWithTimeout(
-    `${baseUrl}/rest/owner/setup`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: SANDBOX_OWNER_EMAIL, firstName: 'Kairos', lastName: 'Sandbox', password: SANDBOX_OWNER_PASSWORD }),
-    },
-    15_000,
-  )
-  const cookie = setupRes.headers.get('set-cookie')
-  if (!setupRes.ok || !cookie) {
-    throw new GuardError(`Sandbox owner setup failed: HTTP ${setupRes.status}`)
+  // Two separate live-checkpoint failures established that different REST routes mount at
+  // different times during n8n's own startup sequence -- waitUntilReady's /rest/login probe
+  // succeeding is not proof /rest/owner/setup is mounted yet (observed: a bare 404 on
+  // owner/setup after login had already stopped 404ing), and even once mounted, the
+  // ownership/session-cookie subsystem can lag a beat behind (observed separately: a 200
+  // response with no Set-Cookie header). Both are narrow startup races, not logic bugs --
+  // confirmed by two direct follow-up calls (fresh instance, and a repeat against an
+  // already-owned one) both behaving correctly and predictably outside the race window. A
+  // 4xx/5xx that ISN'T 404 (e.g. "Instance owner already setup") is a real, non-retryable
+  // failure and throws immediately -- only "not ready yet" (404, or 200-without-cookie) is
+  // retried.
+  let cookie: string | null = null
+  let lastStatus = 0
+  const maxAttempts = 8
+  for (let attempt = 0; attempt < maxAttempts && !cookie; attempt++) {
+    if (attempt > 0) await new Promise(resolve => setTimeout(resolve, 1_500))
+    const setupRes = await fetchWithTimeout(
+      `${baseUrl}/rest/owner/setup`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: SANDBOX_OWNER_EMAIL, firstName: 'Kairos', lastName: 'Sandbox', password: SANDBOX_OWNER_PASSWORD }),
+      },
+      15_000,
+    )
+    lastStatus = setupRes.status
+    if (setupRes.status === 404) continue // route not mounted yet -- retry
+    if (!setupRes.ok) {
+      throw new GuardError(`Sandbox owner setup failed: HTTP ${setupRes.status} (a real rejection, not a "not ready yet" signal -- not retried)`)
+    }
+    cookie = setupRes.headers.get('set-cookie')
+  }
+  if (!cookie) {
+    throw new GuardError(`Sandbox owner setup never produced a usable session cookie after ${maxAttempts} attempts (last HTTP status: ${lastStatus}).`)
   }
 
   const keyRes = await fetchWithTimeout(
