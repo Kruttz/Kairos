@@ -697,6 +697,13 @@ export class PatternAnalyzer {
       : new PatternAnalyzer()
   }
 
+  /** Public read of the currently-saved patterns.json (schema-migrated, cached) -- for
+   * callers that only need to read already-computed pattern state without running a full
+   * analysis, e.g. community/whitelist.ts filtering for confirmed patterns to share. */
+  async loadCurrentPatterns(): Promise<Pattern[]> {
+    return this.loadPreviousPatterns()
+  }
+
   private detectDrift(patterns: Pattern[]): DriftReport {
     const VALIDATOR_RULES = VALIDATOR_RULE_IDS
     const validatorRuleSet = new Set(VALIDATOR_RULES)
