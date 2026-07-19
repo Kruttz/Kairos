@@ -90,7 +90,12 @@ src/reliability/
     checks.ts          # named DriftChecks D1-D8 (validator-rule style)
     baseline.ts        # baseline model build/update/persist
     diagnose.ts        # drift class → likely causes → action class
-    repair.ts          # (Phase 3) proposal generation, ladder, rollback
+  repair/               # (Phase 3, not yet built -- see §8 for the current, corrected design;
+                         # this early sketch predates Phase 0 and is kept only for the original
+                         # top-level shape, not as an accurate file list)
+    propose.ts
+    snapshot.ts
+    apply.ts
   sandbox/
     manager.ts         # sandbox lifecycle: locate, verify-not-production, import, cleanup
     transforms.ts      # workflow prep: name-prefix, cred-strip, trigger-swap
@@ -360,46 +365,157 @@ Real sandbox, disposable workflow, 3 captured payloads: (a) no-op candidate → 
 
 ---
 
-## 8. Phase 3 — Self-healing loop (#1, part B) (BUILDS NEXT — Phase 6 shipped 2026-07-19)
+## 8. Phase 3 — Self-healing loop (#1, part B) (BUILDS NEXT — Phase 6 shipped 2026-07-19; this section rewritten 2026-07-19 after a full ultrathink code-verification pass, per Codex's explicit request before any code is written)
 
-**When:** After Phase 6 (`kairos watch` + repositioning) ships and has run against real workflows for a while — resequenced 2026-07-19, see the doc header. Re-verify this whole section against current code (including whatever Phase 6 actually shipped as `runWatchTick`'s shape) before writing any Phase 3 code — this section, expanded below, is still a pre-build plan, not a build log, unlike §6/§7/§9 above.
+**When:** Now — Phase 6 shipped, Phase 3 is next. Codex's go-ahead (2026-07-19) came with an explicit scope and guardrail list plus an instruction to "ultrathink in the plan first, as this is one of the higher risk implementations." Everything below was re-derived against the actual current code, not the original pre-Phase-0 sketch — several load-bearing assumptions in that sketch turned out wrong (see "Real findings" throughout). **This is still a pre-build plan. No code has been written for Phase 3.**
 
-**What:** close detect→diagnose into propose→verify→apply→rollback. **Escalation remains the default posture; auto-repair is narrow, opt-in, and verified-by-replay.** This is the only phase in the whole arc that writes to a live workflow autonomously (even when gated) — every other shipped or planned phase is read-only diagnosis.
+**What:** close detect→diagnose into propose→apply, with snapshot-before-write, replay-verification-before-apply, post-apply structural verification, and auto-rollback on a failed post-verify. **This is the only phase in the whole arc that writes to a live workflow autonomously (even when gated) — every other shipped or planned phase is read-only diagnosis.** Codex's framing, adopted as the design's north star: *"the first version should feel more like verified repair workflow than 'AI autonomously fixes production.'"*
 
-**Why:** drift detection (Phase 1) and diagnosis already tell a human *what's* wrong and *why*, with a confidence-tiered cause. The gap this phase closes is the last mile from "Kairos told me what's broken" to "Kairos can fix the narrow, mechanical cases itself, safely, and hands everything else to a human with a head start." The asymmetry is the point, not a limitation: some drift classes (D9 build-vs-live, D8 schema, some D1 error-class matches) have a mechanical fix a workflow edit can express; others (D2/D5/D6/D7 — latency, error-rate, cadence) have external causes no workflow edit touches, and proposing an edit there would be theater, actively eroding trust rather than building it.
+**Why:** drift detection (Phase 1) and diagnosis already tell a human *what's* wrong and *why*, with a confidence-tiered cause. The gap this phase closes is the last mile from "Kairos told me what's broken" to "Kairos can fix the narrow, mechanical cases itself, safely, and hands everything else to a human with a head start." The asymmetry is the point, not a limitation: some drift classes have a mechanical fix a direct JSON write can express; others have external causes no workflow edit touches, and proposing an edit there would be theater, actively eroding trust rather than building it. Codex's guardrail states this explicitly: *"Never 'repair' latency/cadence/error-rate drifts with speculative workflow edits. Those should diagnose/escalate only."*
 
-**How / Methodology:**
+---
 
-### 8.1 Snapshots (the honest slice of "rollback")
-Before *any* Kairos-driven `replace()` (existing command included): store prior live JSON in `~/.kairos/snapshots/<wf>/<ts>.json` (cap default 10). `kairos rollback <wf> [--to <ts>]` = replace-from-snapshot, reusing all existing replace machinery (diff summary, webhook-verify). *Not* building: full git-for-workflows versioning product — stays on the held-off list.
+### 8.0 Real findings from this pass (read this before anything else below — it changes the shape of the plan)
 
-### 8.2 Proposal generation (`drift/repair.ts`)
-Per drift class, honestly tiered (re-verify this tiering against the actual current check set — §6.2 now has D1-D9, and this section's D3/D4 classification below is an open question, not a decided one):
-- **Mechanical (proposable):** D9 build-vs-live → propose re-sync (restore Kairos's built version or re-export live as new baseline — human picks direction); D8 schema drift → propose a regenerated field-mapping via existing `replace()` + targeted feedback prompt (generation machinery already supports targeted retry feedback); D1 where the error class maps to a known pattern (e.g. missing onError on an external call — existing rules 56/128 knowledge, and now also chaos's own external-call-posture finding from §9.1 as a second independent signal for the same class) → propose the specific config addition.
-- **Diagnostic-only (escalate, v1):** D2/D5/D6/D7 — latency, error-rate, cadence drifts have external causes (API slowness, credential expiry, upstream volume) no workflow edit fixes. Proposing edits here would be theater. The escalation report says what to check instead. **This asymmetry is correct behavior, documented as such.**
-- **Correction (2026-07-19, found during Phase 6's design-verification pass, not left for Phase 3):** this section previously said D3 (missing core nodes) and D4 (new nodes) were unclassified. They are not — `diagnose.ts`'s shipped `assignCause()` already assigns both `repairClass: 'escalation_only'`, with real reasoning in code comments (D3: "Restoring from a snapshot (Phase 3, once built) is a plausible mechanical fix for a missing node -- but that infrastructure doesn't exist yet, so this stays escalation-only until it does, not claimed early"; D4 similarly). So the actual current tiering is: **mechanical** = D1 (specific-evidence case only), D8, D9; **escalation-only** = D2, D3, D4, D5, D6, D7. Re-confirm this is still the desired tiering when Phase 3 actually starts (D3 in particular could reasonably flip to mechanical once snapshots exist, per its own comment) rather than treating this as permanently fixed — but it is a decided, documented starting point, not an open gap.
-- Every proposal = workflow diff + rationale + attached replay report (when sandbox exists) — this is where Phase 2's replay engine and Phase 4's chaos engine both pay off directly: a repair proposal isn't just "here's a diff," it's "here's a diff, and replay confirms it behaves identically to the current version except for the targeted fix."
+This section exists because the original sketch (written before Phase 0 even started) made several assumptions about existing machinery that turned out false once actually checked against the shipped code. Each one changes what "mechanical repair" can safely mean for v1.
 
-### 8.3 The ladder (enforced order, audited at every rung)
+**Finding 1 — `Kairos.replace(id, description)` cannot be reused for repair-apply.** The original sketch assumed D8 (schema drift) could be repaired "via existing `replace()` + targeted feedback prompt (generation machinery already supports targeted retry feedback)." Checked `src/client.ts:339` and `src/generation/types.ts`'s `DesignRequest` directly: `replace()` calls `this.designer.design({ description }, ...)` — a **full regeneration from a text description**, with no parameter for "here is the current live JSON, patch only this one field." The "targeted retry feedback" that exists in this codebase is the internal validation-failure retry loop *within* a single `design()` call (up to 3 attempts, tighter temperature on the last) — it has nothing to do with preserving an existing workflow's structure while fixing one diagnosed issue. **There is no existing mechanism for "regenerate but only touch what's diagnosed as wrong."** Building one is real, separate, non-trivial prompt-engineering work (a new `DesignRequest` shape carrying the current workflow + a specific patch instruction, new validation that the output didn't touch unrelated nodes) — not a reuse of what's there.
+
+**Finding 2 — `originalBuildHash` is a hash, not a retrievable copy; the actual restore target for D9 is the FileLibrary's stored JSON.** Checked every reference to `originalBuildHash` in `src/`: it's a SHA-derived string (`wf.provenance.workflowHash` in `pack-bundle.ts`), used only for equality comparison in D9's check (`checks.ts:412`, `originalBuildHash !== liveExportHash`). It is never persisted alongside a retrievable JSON blob. The actual "Kairos's built version" to restore *from* has to be `FileLibrary`'s own stored workflow file for that `n8nWorkflowId` (`match.workflow`) — confirmed this is safe: `FileLibrary.save()` only overwrites its stored JSON when *Kairos itself* deploys (`save()`/`replace()`), so a hand-edit made directly in n8n (the scenario D9 exists to catch) never touches the library's copy, meaning `match.workflow` genuinely still reflects "the last state Kairos itself put there" — the correct restore target.
+
+**Finding 3 — `verifyWebhookReachable()` fires a real request at the production webhook URL. Reusing it for post-apply verification would trigger the just-repaired production workflow with a synthetic empty payload.** Checked `src/utils/webhook-verify.ts:48`: `client.triggerWebhookProduction(trigger.path, trigger.httpMethod)` is a **real HTTP call against the live production URL**, currently used once at fresh-build time (a workflow that's never received real traffic yet — low incremental risk). Reusing it for repair's post-apply verification is a different risk category: firing a synthetic hit at an **existing, already-live** business workflow that customers already trigger normally (Empire Homecare's real flows: could send a real text message, write a duplicate database row, etc., depending on what the workflow does with an empty/malformed body). **Decision: post-apply verification for v1 does not fire a synthetic webhook request.** It re-fetches the live workflow and confirms it now structurally matches the applied target (deterministic, zero side effects), plus re-runs the relevant drift check against *existing* trace history (also zero side effects — no new execution is triggered). Real behavioral confirmation comes from the next real execution, observed passively by the next `kairos watch` tick — slower than an active probe, but the only zero-side-effect option available, and side-effect-free is the correct trade for a "strictest safety posture" first version.
+
+**Finding 4 — `runReplay()` (the full orchestrator, not chaos's primitive-reuse pattern) is the natural fit for repair verification.** Unlike chaos (which needed `replayOnePayload`/`diffPayloadExecution` directly because its shape is "one workflow, many payloads"), repair verification has *exactly* replay's original shape: two workflow **versions** (current-live vs. proposed-fix) against the *same* payload set. `runReplay(sandboxConfig, currentWorkflow, proposedWorkflow, productionWorkflowId, clientId, options?)` fits without modification. This also means repair verification inherits every one of replay's existing guardrails for free (sandbox-vs-sandbox only, cleanup always runs, no fake equivalence, bounded polling) rather than needing to reprove them.
+
+**Finding 5 — captures are per-`clientId`, and drift/watch findings carry no `clientId`.** `listCapturedPayloads(clientId, productionWorkflowId)` requires a `clientId` (captures live at `~/.kairos/captures/<clientId>/<workflowId>/`). Neither `WatchTarget` nor a `FileLibrary` entry carries a client association today. **Decision: `kairos repair propose`/`repair apply` require an explicit `--client-id <slug>` flag**, matching the exact convention `kairos replay capture`/`replay run` already established — no new lookup mechanism invented, no silent default.
+
+**Finding 6 — replay verification is structurally unavailable, not just "currently missing," for non-webhook-triggered workflows.** `findWebhookTrigger()` returns `null` for schedule/manual-triggered workflows, and both capture and replay only support webhook triggers today (Phase 0's own S3 spike scope). For these workflows, "verification unavailable" is permanent for v1, not a transient "no captures yet" state — `repair apply` must always require human confirmation for them, and `--auto` must always refuse, regardless of whitelist/cooldown state.
+
+**Finding 7 — `--auto` is a CLI flag per Codex's new instruction, not the original sketch's `KAIROS_AUTO_REPAIR` env var.** The pre-Phase-0 sketch gated auto-repair behind an env var. Codex's message reframes this explicitly as CLI flags (`--auto`/`--yes`) on `repair apply` itself. Adopted: no env var. `--auto` is required, explicit, per-invocation — matching the same "no silent default" discipline `kairos watch --workflows` already established (§11). Nothing in this codebase enables auto-repair on its own; a human has to type `--auto` themselves, every time, or wire up their own external automation (e.g., their own cron entry) that does.
+
+---
+
+### 8.1 Scope decision for v1 (the most important call this pass makes)
+
+**Given findings 1 and 3 above, v1's mechanical repair-*proposal* generation is scoped to D9 (build-vs-live structural drift) only.** D9 is the single class where the fix is fully deterministic (restore a known, retrievable JSON — no LLM call, no freeform pattern-matching), the diff is small and inspectable with existing tooling (`diffWorkflows`/`formatDiff`, already used by `replace()`'s own summary), and it matches Codex's own flagship example verbatim ("especially build-vs-live structural drift").
+
+D8 (schema/field-mapping) and D1 (error-class-specific patches) are **diagnosed and escalated** (already fully working, shipped in Phase 1) but **do not get a `repair propose` output in v1** — proposing a fix for either safely requires real, separate engineering this pass is not going to hand-wave into "reuse existing machinery" now that Finding 1 has shown that machinery doesn't exist:
+- D8 would need new targeted-patch generation prompting (a genuinely new generation mode, its own design pass, its own validation that it didn't touch unrelated nodes) before a fix could be called anything but speculative.
+- D1 would need a library of per-error-class deterministic patch templates (e.g., "add `onError: continueRegularOutput`" is one template; there will be others) — buildable, but its own scoped piece of work, not bolted onto v1 under time pressure.
+
+This directly satisfies Codex's own guardrail — "mechanical repairs only for clearly safe classes" — read strictly: D9 is clearly safe *today*, with the tooling that exists *today*. D8 and D1 repair-proposal generation are named as the natural v1.1/v2 extensions once their own design passes happen, not silently dropped.
+
+D2/D3/D4/D5/D6/D7 stay diagnostic-only permanently (D3/D4's `escalation_only` tiering, already correctly assigned in shipped `diagnose.ts`, was mis-described as "open" in an earlier draft of this section — corrected during Phase 6's own verification pass, see §8.2's cross-reference below).
+
+---
+
+### 8.2 Proposal generation (`src/reliability/repair/propose.ts`)
+
+Reuses `buildDriftCheckReport()` (same pathway `drift check`/`watch` already use — zero new detection logic) to find the current diagnosis. If the workflow's D9 finding has `status: 'drifting'`, builds a `RepairProposal`:
+
+```typescript
+export interface RepairProposal {
+  workflowId: string
+  workflowName?: string
+  checkId: 'D9'                          // v1: always D9, the type stays a literal, not DriftCheckId, so a future
+                                          // wider checkId can't compile silently without this file being touched
+  repairClass: 'mechanical'
+  rationale: string                      // from the diagnosis's causeStatement + recommendedAction, verbatim --
+                                          // never re-worded, so the confidence-tiered language discipline (Jordan/
+                                          // Codex, 2026-07-19) carries through into the proposal unmodified
+  currentWorkflow: N8nWorkflow           // live, drifting version (fetched fresh, not from cached library state)
+  proposedWorkflow: N8nWorkflow          // FileLibrary's stored JSON for this n8nWorkflowId (Finding 2)
+  diff: string                           // diffWorkflows() + formatDiff(), reused unmodified
+  riskLevel: 'low' | 'medium' | 'high'   // see below
+  verificationAvailability: 'available' | 'no_webhook_trigger' | 'no_captures' | 'sandbox_unavailable'
+  nextAction: string                     // exact command to run next, always concrete, never generic
+}
 ```
-detect → diagnose → propose → [human approves | KAIROS_AUTO_REPAIR for whitelisted classes]
-      → snapshot → replay-verify (must be IDENTICAL/BENIGN on non-targeted behavior)
-      → apply via replace() → post-verify (webhook-verify + fresh drift check)
-      → on post-verify failure: AUTO-ROLLBACK from snapshot + escalate loudly
+
+`riskLevel` is derived, not guessed, as a direct function of `verificationAvailability`: `low` only for `'available'` (a clean replay verification is actually possible before any write); `medium` for `'no_captures'` or `'sandbox_unavailable'` (verification is possible *in principle* — a human can run `kairos replay capture` or `kairos sandbox up` and the situation resolves — just not right now); `high` for `'no_webhook_trigger'` (Finding 6 — verification is structurally impossible, permanently, for this workflow, not just temporarily unavailable). This makes `riskLevel` a direct, honest function of "how much can actually be checked before writing," not a vibe.
+
+Per drift class (re-stated from §8.1, now precisely, cross-referencing the corrected D3/D4 tiering from Phase 6's pass): **mechanical, proposable in v1** = D9 only. **Diagnostic-only, escalate, permanently** = D2, D3, D4, D5, D6, D7 (external causes or missing infrastructure — proposing an edit would be theater). **Diagnosed but not yet proposable, pending its own design pass** = D1, D8 (Finding 1).
+
+`kairos repair propose <n8n-workflow-id> --client-id <slug> [--json]` — offline-safe by design: does **not** boot a sandbox or check captures itself (that's `apply`'s job, immediately before it gates on the result) — propose is pure analysis, reusable as often as a human wants without any live-write-adjacent cost. `verificationAvailability` is still computed (webhook-trigger presence is a cheap structural check; capture presence is a cheap directory-listing check), just not *acted on* here.
+
+---
+
+### 8.3 Snapshot store (`src/reliability/repair/snapshot.ts`)
+
+Before **any** live write this phase makes (repair-apply's write, or a standalone `kairos rollback`'s restore): save the CURRENT live workflow JSON to `~/.kairos/snapshots/<n8n-workflow-id>/<iso-timestamp>.json`, capped at the 10 most recent per workflow (oldest deleted beyond the cap, matching `MAX_TRACES_PER_WORKFLOW`'s own cap-and-prune convention already established in `execution-tracer.ts`).
+
+`saveSnapshot(workflowId, workflow): Promise<{ path: string; ts: string }>`, `listSnapshots(workflowId): Promise<Array<{ ts: string; path: string }>>`, `loadSnapshot(workflowId, ts?: string): Promise<N8nWorkflow>` (most recent when `ts` omitted).
+
+**Not building:** full git-for-workflows versioning (diff-across-arbitrary-revisions, branching) — stays on the held-off list, unchanged from the original sketch. This is specifically "one safety net before a Kairos-driven write," not a version control product.
+
+---
+
+### 8.4 The apply ladder (`src/reliability/repair/apply.ts`)
+
 ```
-Guardrails hard-coded: cooldown per workflow (default 1h), max 1 auto-attempt per distinct cause (second occurrence always escalates), flap detection (rollback ↔ repair cycling halts the loop and escalates), every rung appends to `reliability-audit.jsonl`. Without a sandbox, auto-repair is **disabled entirely** — propose-only (no unverified automated writes to a live workflow, ever).
+propose (fresh, never a cached/stale proposal)
+  → confirm: interactive y/N prompt, OR --yes (explicit human, non-interactive), OR --auto
+      (explicit human, non-interactive, PLUS the auto-mode gate below)
+  → [--auto only] auto-mode gate: checkId is whitelisted (D9 only, v1) AND verificationAvailability
+      === 'available' AND no auto-attempt for this workflow+checkId in the last cooldown window
+      (default 1h) AND no successful OR failed auto-attempt for this exact workflow+checkId ever
+      before (one attempt per distinct cause -- a second occurrence always requires a human,
+      never retries automatically) -- ANY of these failing means --auto refuses outright and
+      exits non-zero with a clear reason; it never silently falls back to prompting (a script
+      calling --auto needs a script-detectable failure, not a hung stdin read)
+  → snapshot current live JSON (§8.3)
+  → replay-verify: boot sandbox if not already running, runReplay(sandbox, currentWorkflow,
+      proposedWorkflow, workflowId, clientId) -- must be IDENTICAL or BENIGN_VARIANCE with
+      partialVerification: false to count as a clean pass. Anything else (BEHAVIORAL_CHANGE,
+      BROKEN, INCOMPLETE, partialVerification: true, or verificationAvailability was never
+      'available' to begin with) blocks --auto outright and requires the interactive/--yes path
+      for a human to proceed with an explicit "verification incomplete" acknowledgement
+  → write: provider.update(workflowId, proposedWorkflow) -- a direct, deterministic JSON push,
+      NOT Kairos.replace() (Finding 1) -- no LLM call happens anywhere in this ladder
+  → post-verify: re-fetch the live workflow, confirm it structurally matches proposedWorkflow;
+      re-run D9 against the now-current state (no new execution triggered -- Finding 3)
+  → on post-verify failure: restore the §8.3 snapshot via the same direct write path,
+      escalate loudly (non-zero exit, clear message, audit entry), never silently retry
+```
 
-**Where:** New `src/reliability/repair.ts` (or `drift/repair.ts`, matching the existing `drift/` module grouping), `src/reliability/snapshots/` for the snapshot store, CLI wiring for `kairos repair propose/apply` and `kairos rollback`, and — the integration point Phase 6 exists partly to create — a propose call added to `runWatchTick()`'s DRIFTING branch once this phase ships, so watch's continuous loop and repair's proposal generation compose rather than duplicate.
+Every rung appends its own entry to `reliability-audit.jsonl` (six new `kind`s, extending the union `watch/audit.ts` already left room for: `repair_propose`, `repair_snapshot`, `repair_verify`, `repair_write`, `repair_post_verify`, `repair_rollback`) — literal "audit every step," not one summary entry per apply call. The `--auto` cooldown/one-attempt gate above reads this same log (filtering `repair_write` entries by `workflowId`+`checkId`+`auto: true`) rather than inventing a second, parallel state file — one source of truth for "has this been auto-attempted before."
 
-**Guardrails (beyond the ladder's own, and beyond cross-cutting G1-G8):**
-- **G2 escalation-first is the whole shape of this phase**, not a bolt-on: every automated path defaults to reporting, auto-repair requires an explicit opt-in env var (`KAIROS_AUTO_REPAIR`) plus whitelisted mechanical classes plus a clean replay verification plus a snapshot, and even then is cooldown-limited and flap-detected.
-- No sandbox, no auto-repair — propose-only, full stop. This mirrors Phase 4's own "no sandbox, Tier A only" fallback discipline (§13).
-- `kairos repair apply` stays CLI-only, never exposed via MCP — a deliberate human-friction choice on the one command in this entire arc that can write to a live workflow autonomously.
+`kairos rollback <n8n-workflow-id> [--to <iso-timestamp>] [--yes]` — same confirm-then-write shape as apply's own write step, restoring the most recent (or a named) snapshot via the same direct `provider.update()` path. Usable independently of repair (a human who broke something manually can roll back without ever having run `repair propose`).
 
-### 8.4 Surface + checkpoint
-`kairos repair propose <wf>` / `kairos repair apply <wf> [--auto]`; MCP mirror for propose only (apply stays CLI — a deliberate human-friction choice). Checkpoint: induce D9 on a disposable workflow → propose → approve → watch snapshot/replay/apply/post-verify chain run; then induce a post-verify failure (candidate that breaks webhook-verify) → confirm auto-rollback restores the snapshot and escalates.
+---
 
-**Outcomes / Definition of done:** `kairos repair propose` produces a real, replay-verified diff for every mechanical drift class with an honest escalation-only report for every diagnostic-only class; `kairos repair apply` never writes without a snapshot first and never leaves a workflow in a worse state than it found it (post-verify + auto-rollback proven live); the cooldown/flap/max-one-attempt guardrails are enforced in code, not just documented; auto-repair is provably inert without `KAIROS_AUTO_REPAIR` set and without a sandbox present; full test suite green, live-checkpointed against disposable workflows for both the happy path and the induced-failure/rollback path, one commit per step, plan doc updated with real findings.
+### 8.5 Where
+
+New `src/reliability/repair/` directory: `propose.ts`, `snapshot.ts`, `apply.ts`. Extends `src/reliability/watch/audit.ts`'s `ReliabilityAuditEntry` union with the six `kind`s above (that file's own module comment already flagged this: *"Phase 3 adds propose/apply/rollback kinds to this same file/type when it ships"*). New telemetry event type `repair_completed` (schema bump 6→7), emitted from the CLI handler (matching where every other phase's telemetry is emitted — never from the core module). CLI wiring: `kairos repair propose`, `kairos repair apply`, `kairos rollback`. **Not** wired into `runWatchTick()`'s DRIFTING branch in v1 — Phase 6 shipped without a propose call there specifically so this phase could ship its own guardrails first and prove them under a human's own explicit invocation before anything gets composed into the unattended loop; wiring propose (never apply) into watch is a reasonable v1.1 once apply's own guardrails have a track record, not assumed here.
+
+---
+
+### 8.6 Guardrails — mapped one-to-one against Codex's explicit list (2026-07-19)
+
+- *"No fully autonomous repair by default"* → `repair apply` with no flags at all prompts interactively; nothing runs unattended without a human having typed `--auto` themselves on that exact invocation.
+- *"No live write without explicit CLI confirmation or an explicit --auto/--yes flag"* → enforced at the top of the apply ladder (§8.4); the write step is unreachable without passing through one of the three explicit paths.
+- *"Auto mode... opt-in, whitelist-only, cooldown-limited, one attempt per cause, replay-verified, and snapshot-backed"* → the auto-mode gate (§8.4) checks all five in one place, refuses (not degrades) on any failure.
+- *"If replay cannot verify... apply should require human confirmation and clearly say verification is incomplete"* → `verificationAvailability` is a first-class field on the proposal (§8.2), never silently absent; `--auto` refuses when it isn't `'available'`; the interactive/`--yes` path still requires an explicit human acknowledgement of the incomplete-verification state in its own confirmation prompt text, not just a generic "proceed?"
+- *"Never repair latency/cadence/error-rate drifts with speculative workflow edits"* → D2/D5/D6/D7 (and D3/D4) simply never produce a `RepairProposal` at all — not gated at runtime, structurally absent from `propose.ts`'s switch (§8.1/§8.2).
+- *"Mechanical repairs only for clearly safe classes, especially build-vs-live structural drift and targeted schema/field mapping cases"* → v1 ships the build-vs-live case (D9) with the safety properties Codex asked for; the schema/field-mapping case (D8) is named explicitly as *not* safely buildable today (Finding 1) rather than shipped half-safely to hit the letter of the guardrail — see §8.1 for the reasoning this call rests on.
+- *"Every proposal must include rationale, workflow diff, verification status, risk level, and exact next action"* → all five are named, typed fields on `RepairProposal` (§8.2), not assembled ad hoc in a formatter.
+- *"Keep tests/live checkpoint separate and clear"* → same discipline as every prior phase: pure logic (proposal risk/verification-availability derivation, snapshot cap/prune, audit-entry construction) gets unit tests; the apply ladder's network/sandbox/write-path pieces get a real live checkpoint against a disposable workflow before being considered done, exactly like replay/chaos/watch were.
+- **Beyond Codex's list, carried from the original sketch and still binding:** `kairos repair apply` and `kairos rollback` stay CLI-only, never exposed via MCP — the one deliberate human-friction point in this entire arc, on the only commands that can write to a live workflow autonomously. `kairos repair propose` (read-only) *can* get an MCP mirror, matching `preflight`'s own precedent, once the CLI path is proven.
+
+---
+
+### 8.7 Build sequence (one commit per piece, matching every prior phase's discipline)
+
+1. Snapshot store (`snapshot.ts`) + tests — pure, no network, ships first since apply depends on it.
+2. Audit-entry extension (`watch/audit.ts`'s union widened) + tests — small, mechanical, unblocks every later step's audit calls.
+3. Proposal generation (`propose.ts`) + tests — pure composition of already-shipped `buildDriftCheckReport`, `FileLibrary`, `diffWorkflows`; `riskLevel`/`verificationAvailability` derivation is the one piece of new logic, fully unit-testable without a sandbox.
+4. `kairos repair propose` CLI wiring + a first live checkpoint (induce real D9 drift on a disposable sandbox workflow exactly like Phase 6's own checkpoint did, confirm the proposal's diff/rationale/riskLevel/verificationAvailability are all correct against the real state).
+5. Apply ladder (`apply.ts`) — confirm gate, auto-mode gate, replay-verify integration, write, post-verify, rollback-on-failure — the largest, highest-risk single piece; likely still worth its own sub-commits (confirm+snapshot; replay-verify integration; write+post-verify+rollback) rather than one enormous commit, decided at build time once the actual size is visible.
+6. `kairos repair apply` + `kairos rollback` CLI wiring, `--auto`/`--yes` flags, telemetry emission.
+7. Live checkpoint, full ladder: induce D9 → `repair propose` → confirm proposal is correct → `repair apply` (interactive, confirmed) → confirm snapshot/replay-verify/write/post-verify all ran and audited correctly → separately induce a post-verify failure (e.g., a candidate that structurally diverges from what was actually written, or block the write from taking effect) → confirm auto-rollback restores the snapshot and escalates loudly. Then a **separate** `--auto` checkpoint: confirm cooldown/one-attempt/whitelist/verification-required all correctly refuse when violated, and correctly proceed when every condition is met.
+8. Plan doc updated with real findings after each step, per G7 — this section is written as a plan, not a build log, specifically so the gap between "designed" and "actually happened" stays visible until step 8 closes it out, the same way §6/§7/§9/§11 above were closed out.
+
+**Outcomes / Definition of done:** `kairos repair propose` produces a correct, fully-typed proposal (rationale/diff/riskLevel/verificationAvailability/nextAction, all real, none placeholder) for real D9 drift and nothing for any other class; `kairos repair apply` never writes without a snapshot first, never writes without one of the three explicit confirmation paths, never auto-writes outside the whitelist/cooldown/one-attempt/verified gate, and never leaves a workflow worse off than it found it (post-verify + auto-rollback proven live, not just unit-tested); every rung of the ladder produces its own real audit-log entry; `--auto`'s refusal paths are exercised live, not just asserted in a unit test; full test suite green, typecheck/lint/docs-drift clean, one commit per step, live-checkpointed against disposable sandbox workflows for the happy path, the induced-failure/rollback path, and the auto-mode refusal paths separately.
 
 ---
 
@@ -522,7 +638,7 @@ Round-trip: generate a share report from real local patterns → verify by eye n
 ## 12. Cross-cutting guardrails (consolidated, enforced not aspirational)
 
 - **G1 Production protection:** sandbox modules refuse production-matching base URLs (tested); chaos/replay only ever execute on `[kairos-sandbox]`-prefixed imports; cleanup is prefix-scoped; checkpoints use disposable Kairos-created workflows only — never Empire's (July 6 discipline, now codified).
-- **G2 Escalation-first:** every automated path defaults to reporting, not acting. Auto-repair: opt-in env var + whitelisted mechanical classes + replay-verified + snapshot-backed + cooldown/flap-limited.
+- **G2 Escalation-first:** every automated path defaults to reporting, not acting. Auto-repair: explicit opt-in `--auto` CLI flag (not an env var — corrected 2026-07-19, Finding 7 in §8.0, per Codex's explicit instruction) + whitelisted mechanical classes (D9 only in v1) + replay-verified + snapshot-backed + cooldown/one-attempt-per-cause-limited.
 - **G3 Payload privacy:** capture is opt-in per command; local-only, `chmod 600`, retention-capped; scrub offered and labeled best-effort; documented plainly.
 - **G4 Sharing firewall:** whitelist-only serializer, no import path from captures/memory, pre-share byte-diff, per-invocation consent, no background transmission code path.
 - **G5 Honesty:** heuristic labels on heuristic outputs; INSUFFICIENT_DATA first-class; BLOCKED_AT_CREDENTIAL never reported as a finding; DISCLAIMER pattern inherited; CHANGELOG corrections when claims prove wrong (0.11.0 set the precedent).
