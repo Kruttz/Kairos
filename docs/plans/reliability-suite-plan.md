@@ -493,19 +493,50 @@ propose (fresh, never a cached/stale proposal) -- includes the three-hash compar
       then interactive y/N prompt, OR --yes (explicit human, non-interactive), OR --auto
       (explicit human, non-interactive, PLUS the auto-mode gate below)
   → [--auto only] auto-mode gate: checkId is whitelisted (D9 only, v1) AND verificationAvailability
-      === 'available' AND no auto-attempt for this workflow+checkId in the last cooldown window
-      (default 1h) AND no successful OR failed auto-attempt for this exact workflow+checkId ever
-      before (one attempt per distinct cause -- a second occurrence always requires a human,
-      never retries automatically) -- ANY of these failing means --auto refuses outright and
+      === 'available' AND no prior auto-write exists for this exact workflow+checkId, EVER
+      (reads reliability-audit.jsonl's own repair_write entries, `auto: true`, filtered by
+      workflowId+checkId -- the one source of truth, no second state file). **Simplified from
+      the original two-condition draft (cooldown window + separate "ever" rule) before writing
+      any code:** "ever" is strictly stronger than "within the last hour," so the cooldown
+      condition was redundant as originally phrased. Chose the single strictest reading --
+      any prior auto-write for this workflow+checkId, at any point in the past, permanently
+      requires a human for any future occurrence -- deliberately, as "the safest possible first
+      version" (Codex's own framing for this whole phase). A looser distinct-cause definition
+      (e.g. keyed to the specific live hash, so a genuinely new later hand-edit could still
+      auto-repair) is a reasonable v1.1 loosening once this has a track record, not assumed
+      safe to ship on day one. ANY gate condition failing means --auto refuses outright and
       exits non-zero with a clear reason; it never silently falls back to prompting (a script
       calling --auto needs a script-detectable failure, not a hung stdin read)
   → snapshot current live JSON (§8.3)
   → replay-verify: boot sandbox if not already running, runReplay(sandbox, currentWorkflow,
-      proposedWorkflow, workflowId, clientId) -- must be IDENTICAL or BENIGN_VARIANCE with
-      partialVerification: false to count as a clean pass. Anything else (BEHAVIORAL_CHANGE,
-      BROKEN, INCOMPLETE, partialVerification: true, or verificationAvailability was never
-      'available' to begin with) blocks --auto outright and requires the interactive/--yes path
-      for a human to proceed with an explicit "verification incomplete" acknowledgement
+      proposedWorkflow, workflowId, clientId) -- baseline = currentWorkflow (live, drifted),
+      candidate = proposedWorkflow (the restore target).
+      **Design correction made before writing any code (2026-07-19):** the plan originally
+      required IDENTICAL/BENIGN_VARIANCE to count as a clean pass, reusing replay's own gate
+      verbatim. Wrong for repair specifically -- worked through the three real scenarios a D9
+      hand-edit can represent: (a) a cosmetic-only edit -> IDENTICAL, fine; (b) someone's
+      *legitimate* intentional fix that this repair would wrongly revert -> replay correctly
+      shows BEHAVIORAL_CHANGE, which the original gate would have blocked identically to a
+      real problem, indistinguishable; (c) an accidental/bad edit that broke something --
+      **the single most common real repair scenario** -- restoring FIXES it, so replay
+      classifies this via diff.ts's own "candidate succeeds where baseline errored" path,
+      which is BEHAVIORAL_CHANGE, not IDENTICAL. Requiring IDENTICAL/BENIGN_VARIANCE would
+      have made --auto nearly unusable for the exact case repair exists to handle. The actual
+      safety-relevant question is narrower: does the RESTORE introduce a NEW failure that
+      wasn't there in the current drifted state? That is precisely diff.ts's own `BROKEN`
+      verdict ("candidate errors where baseline succeeded") -- and only `BROKEN`, since
+      `BEHAVIORAL_CHANGE` bundles both good outcomes (baseline errored, candidate now
+      succeeds) and neutral/ambiguous ones (output shape or coverage differs) that diff.ts's
+      own classification already treats as distinct from BROKEN. **Corrected gate:** a clean
+      pass is `status === 'completed' && verdict !== 'BROKEN' && !partialVerification` --
+      IDENTICAL, BENIGN_VARIANCE, and BEHAVIORAL_CHANGE are all acceptable outcomes for
+      `--auto`; only BROKEN, INCOMPLETE, or partial verification block it. The specific
+      verdict is still always surfaced (never flattened into a bare pass/fail) via
+      `RepairVerifyAuditEntry.replayVerdict` and the interactive confirmation prompt, so a
+      human reviewing a BEHAVIORAL_CHANGE result still sees exactly what changed before
+      confirming, even though it doesn't block. A human using the interactive/`--yes` path
+      may still explicitly override even a `BROKEN` result (a maximally cautious human is
+      still a human, allowed to use judgment) -- `--auto` may never override it, full stop.
   → write: provider.update(workflowId, proposedWorkflow) -- a direct, deterministic JSON push,
       NOT Kairos.replace() (Finding 1) -- no LLM call happens anywhere in this ladder
   → post-verify: re-fetch the live workflow, confirm it structurally matches proposedWorkflow;
@@ -518,7 +549,9 @@ Every rung appends its own entry to `reliability-audit.jsonl` (six new `kind`s, 
 
 `kairos rollback <n8n-workflow-id> [--to <iso-timestamp>] [--yes]` — same confirm-then-write shape as apply's own write step, restoring the most recent (or a named) snapshot via the same direct `provider.update()` path. Usable independently of repair (a human who broke something manually can roll back without ever having run `repair propose`).
 
----
+**`apply.ts` shipped (2026-07-19).** `applyRepair()` and `checkAutoModeEligibility()` are both directly unit tested (17 tests) with `runReplay` made injectable specifically so the safety-critical BROKEN-verdict gate could be exercised without a real sandbox — the same reasoning that made `fetchLatestTrace` injectable in `watch/loop.ts`. **Two real bugs found by writing those tests, not shipped:**
+- **Deny-list vs. allow-list.** The first draft's clean-verdict check was `verdict !== 'BROKEN'` — a deny-list that silently treated `INCOMPLETE` and `NOT_RUN` as "clean" simply because neither is literally the string `'BROKEN'`, even though both mean verification never actually reached a real conclusion. Fixed to an explicit allow-list (`{'IDENTICAL', 'BENIGN_VARIANCE', 'BEHAVIORAL_CHANGE'}`) — a general lesson worth stating plainly: a safety gate should almost always enumerate what's *acceptable*, not what's *excluded*, since a deny-list silently admits every value nobody thought to list.
+- **Test fixture, not a code bug, but worth recording:** an early rollback test tried to simulate "the write didn't take effect" by changing only a workflow's `name` field between the pre- and post-write fixture. `computeWorkflowHash()` deliberately excludes `name` (documented in its own file) specifically so a rename isn't conflated with a behavioral change — meaning the fixture accidentally proved nothing, since the hashes matched anyway. Fixed by diverging the fixture's `nodes` instead.
 
 ### 8.5 Where
 
