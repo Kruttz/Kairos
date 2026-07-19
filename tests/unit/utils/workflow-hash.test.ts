@@ -75,11 +75,25 @@ describe('computeWorkflowHash', () => {
 
   it('produces a schema-version-prefixed SHA-256 digest', () => {
     const hash = computeWorkflowHash(makeWorkflow())
-    expect(hash).toMatch(/^w1:[0-9a-f]{64}$/)
+    expect(hash).toMatch(/^w2:[0-9a-f]{64}$/)
   })
 
   it('prefixes the current WORKFLOW_HASH_SCHEMA_VERSION exactly, not a hardcoded literal', () => {
     const hash = computeWorkflowHash(makeWorkflow())
     expect(hash.startsWith(`${WORKFLOW_HASH_SCHEMA_VERSION}:`)).toBe(true)
+  })
+
+  it('does NOT change when only webhookId differs -- n8n auto-assigns this to webhook nodes server-side at deploy/activation time; a workflow round-tripped through a live fetch must hash identically to the pre-deploy object Kairos built, or D9 would false-positive on every single webhook-triggered workflow, always (real bug found live, 2026-07-19, Phase 3 repair-apply checkpoint)', () => {
+    const preDeploy = makeWorkflow()
+    const postDeploy = makeWorkflow()
+    postDeploy.nodes[0] = { ...postDeploy.nodes[0]!, webhookId: 'n8n-assigned-uuid-1234' } as typeof postDeploy.nodes[0]
+    expect(computeWorkflowHash(preDeploy)).toBe(computeWorkflowHash(postDeploy))
+  })
+
+  it('still changes when a REAL parameter differs, even alongside a webhookId difference -- proves the fix only ignores webhookId specifically, not node differences generally', () => {
+    const a = makeWorkflow()
+    const b = makeWorkflow()
+    b.nodes[0] = { ...b.nodes[0]!, webhookId: 'n8n-assigned-uuid-1234', parameters: { ...b.nodes[0]!.parameters, path: 'different-path' } } as typeof b.nodes[0]
+    expect(computeWorkflowHash(a)).not.toBe(computeWorkflowHash(b))
   })
 })

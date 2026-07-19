@@ -580,7 +580,7 @@ describe('writeBundle', () => {
     const manifest = await writeBundle(pack, client, dir)
 
     const workflowJsonEntry = manifest.files.find((f) => f.path.endsWith('referral-intake.workflow.json'))!
-    expect(workflowJsonEntry.liveExportHash).toMatch(/^w1:[0-9a-f]{64}$/)
+    expect(workflowJsonEntry.liveExportHash).toMatch(/^w2:[0-9a-f]{64}$/)
 
     const fetched = JSON.parse(await readFile(workflowJsonEntry.path, 'utf-8'))
     expect(workflowJsonEntry.liveExportHash).toBe(computeWorkflowHash(fetched))
@@ -749,7 +749,7 @@ describe('writeBundle', () => {
 
       expect(withProvenance.originalBuildHash).toBe(originalHash)
       expect(withoutProvenance.originalBuildHash).toBeUndefined()
-      expect(withoutProvenance.liveExportHash).toMatch(/^w1:[0-9a-f]{64}$/)
+      expect(withoutProvenance.liveExportHash).toMatch(/^w2:[0-9a-f]{64}$/)
     })
   })
 

@@ -82,4 +82,12 @@ describe('N8nFieldStripper', () => {
     expect(stripper.stripForCreate(w).settings).toEqual(w.settings)
     expect(stripper.stripForUpdate(w).settings).toEqual(w.settings)
   })
+
+  it('stripForUpdate removes tags -- real bug found live (2026-07-19): N8nProvider.get() legitimately returns a tags field (n8n\'s own GET response always carries one, even []), and n8n\'s PUT endpoint rejects an explicit tags field outright ("request/body/tags is read-only"). Any code path that reads a workflow live and later writes it back (e.g. repair-apply\'s snapshot/restore) must never resubmit it.', () => {
+    const roundTrippedFromLiveFetch: N8nWorkflow = { ...baseWorkflow(), tags: [{ id: 't1', name: 'prod' }] }
+    const strippedEmpty = stripper.stripForUpdate({ ...baseWorkflow(), tags: [] })
+    const strippedNonEmpty = stripper.stripForUpdate(roundTrippedFromLiveFetch)
+    expect(strippedEmpty).not.toHaveProperty('tags')
+    expect(strippedNonEmpty).not.toHaveProperty('tags')
+  })
 })

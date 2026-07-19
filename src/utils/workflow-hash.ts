@@ -32,14 +32,37 @@ function canonicalJson(value: unknown): string {
  * schema versions are immediately recognizable as not comparable, rather than silently
  * compared byte-for-byte as if they meant the same thing.
  */
-export const WORKFLOW_HASH_SCHEMA_VERSION = 'w1'
+export const WORKFLOW_HASH_SCHEMA_VERSION = 'w2'
+
+/**
+ * Node-level fields n8n assigns server-side that never appear on a workflow as originally
+ * built/deployed by Kairos -- confirmed live (2026-07-19, Phase 3 repair-apply's first live
+ * checkpoint): n8n auto-assigns a `webhookId` to webhook-trigger nodes at deploy/activation
+ * time, present on every live GET response thereafter but absent from the pre-deploy object
+ * Kairos itself built and from FileLibrary's stored copy (which is never round-tripped through
+ * a live fetch). Without stripping it, `computeWorkflowHash()` would report drift for every
+ * single webhook-triggered workflow, always, the instant it's compared against a live fetch,
+ * regardless of whether anything real ever changed -- this would have made D9 (build-vs-live
+ * structural drift, the one check Phase 3's `repair propose` depends on) permanently false-
+ * positive for the most common trigger type in this codebase. Not an exhaustive list -- other
+ * node types may have their own n8n-assigned bookkeeping fields not yet identified; add here
+ * as they're found empirically, not guessed at speculatively.
+ */
+const NODE_FIELDS_ASSIGNED_BY_N8N: readonly string[] = ['webhookId']
+
+function stripN8nAssignedNodeFields(node: N8nWorkflow['nodes'][number]): N8nWorkflow['nodes'][number] {
+  const result = { ...node } as unknown as Record<string, unknown>
+  for (const field of NODE_FIELDS_ASSIGNED_BY_N8N) delete result[field]
+  return result as unknown as N8nWorkflow['nodes'][number]
+}
 
 /**
  * Deterministic content hash of a workflow's semantic state: nodes, connections, and
  * settings -- the three fields that define what the workflow actually does. The nodes array
  * is sorted by node id before hashing so array order never affects the result (the same set
  * of nodes always hashes the same regardless of what order n8n or a generator happened to
- * list them in).
+ * list them in), and each node has n8n-assigned bookkeeping fields (see
+ * NODE_FIELDS_ASSIGNED_BY_N8N) stripped before hashing, for the same reason.
  *
  * Deliberately excludes `name` and `tags` -- a rename/retag is a real change but a different
  * kind than "the workflow's behavior changed," and is tracked separately (bundle manifests
@@ -55,7 +78,7 @@ export const WORKFLOW_HASH_SCHEMA_VERSION = 'w1'
  * computeTopologyHash() is designed to ignore.
  */
 export function computeWorkflowHash(workflow: Pick<N8nWorkflow, 'nodes' | 'connections' | 'settings'>): string {
-  const sortedNodes = [...workflow.nodes].sort((a, b) => a.id.localeCompare(b.id))
+  const sortedNodes = [...workflow.nodes].map(stripN8nAssignedNodeFields).sort((a, b) => a.id.localeCompare(b.id))
   const payload = [
     canonicalJson(sortedNodes),
     canonicalJson(workflow.connections ?? {}),
