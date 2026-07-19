@@ -165,7 +165,11 @@ export class N8nProvider implements IProvider {
   private async pollExecution(executionId: string): Promise<ExecutionDetail> {
     const deadline = Date.now() + SMOKE_TEST_TIMEOUT_MS
     for (;;) {
-      const execution = await this.client.getExecution(executionId)
+      // Only .status is ever read from this polling loop's result (see the caller above) --
+      // includeData: false avoids fetching the full execution payload on every poll tick,
+      // now that getExecution() defaults to fetching it (a real bug fix, see that method's
+      // own doc comment) for callers that actually need .data.
+      const execution = await this.client.getExecution(executionId, { includeData: false })
       if (execution.status !== 'running' && execution.status !== 'waiting') {
         return execution
       }

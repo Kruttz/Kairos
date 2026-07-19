@@ -166,8 +166,23 @@ export class N8nApiClient {
     return response.data.map(this.mapExecution)
   }
 
-  async getExecution(id: string): Promise<ExecutionDetail> {
-    const response = await this.request<N8nExecutionResponse>('GET', `/executions/${id}`)
+  /**
+   * Pre-existing bug found and fixed via a live reliability-suite checkpoint
+   * (docs/plans/reliability-suite-plan.md, Phase 2 capture work): n8n's real API omits the
+   * `data` field entirely unless `?includeData=true` is explicitly passed -- confirmed
+   * directly (a raw fetch without it returns 17 fields, none named `data`; the same request
+   * with it returns those 17 plus `data`/`workflowData`/`customData`). Every existing caller
+   * of this method (execution-tracer.ts's fetchLatestTrace, capture.ts, mcp-server.ts,
+   * pack-bundle.ts) reads `.data` and has been silently receiving `undefined` against a real
+   * instance this whole time -- ExecutionDetail's own type already declared `data?: unknown`
+   * as if it would be populated, so this was always a bug in the implementation, not a
+   * deliberately lightweight default. Defaults to true for that reason; the one caller that
+   * genuinely doesn't want the larger payload (provider.ts's pollExecution, which only reads
+   * `.status` in a tight poll loop) opts out explicitly.
+   */
+  async getExecution(id: string, options?: { includeData?: boolean }): Promise<ExecutionDetail> {
+    const includeData = options?.includeData ?? true
+    const response = await this.request<N8nExecutionResponse>('GET', `/executions/${id}${includeData ? '?includeData=true' : ''}`)
     return { ...this.mapExecution(response), data: response.data, workflowData: response.workflowData }
   }
 

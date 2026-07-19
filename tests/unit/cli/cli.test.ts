@@ -920,7 +920,9 @@ describe('CLI — parseArgs / routing', () => {
           res.end(JSON.stringify({ data: [{ id: 'exec-1', workflowId: 'wf-1', status: 'success', startedAt: '2026-01-01T00:00:00.000Z', stoppedAt: '2026-01-01T00:00:01.000Z', mode: 'trigger' }], nextCursor: null }))
           return
         }
-        if (req.method === 'GET' && req.url === '/api/v1/executions/exec-1') {
+        // startsWith, not === -- getExecution() now appends ?includeData=true by default
+        // (a real n8n API requirement, confirmed live: without it n8n omits `data` entirely).
+        if (req.method === 'GET' && req.url?.startsWith('/api/v1/executions/exec-1')) {
           res.writeHead(200, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({
             id: 'exec-1', workflowId: 'wf-1', status: 'success', startedAt: '2026-01-01T00:00:00.000Z', stoppedAt: '2026-01-01T00:00:01.000Z', mode: 'trigger',
