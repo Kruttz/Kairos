@@ -86,6 +86,16 @@ const DEFAULT_POLL_TIMEOUT_MS = 20_000
 const DEFAULT_POLL_INTERVAL_MS = 500
 const DEFAULT_MAX_POLL_INTERVAL_MS = 2_000
 
+/** Exported so other sandbox-execution callers (chaos/sandbox-run.ts) resolve the exact same
+ * defaults `replayOnePayload` expects, rather than re-declaring these three numbers. */
+export function resolveReplayRunOptions(options: ReplayRunOptions = {}): Required<ReplayRunOptions> {
+  return {
+    pollTimeoutMs: options.pollTimeoutMs ?? DEFAULT_POLL_TIMEOUT_MS,
+    pollIntervalMs: options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
+    maxPollIntervalMs: options.maxPollIntervalMs ?? DEFAULT_MAX_POLL_INTERVAL_MS,
+  }
+}
+
 function typeTag(value: unknown): string {
   if (value === null) return 'null'
   if (Array.isArray(value)) return 'array'
@@ -208,11 +218,7 @@ export async function runReplay(
 ): Promise<ReplayRunResult> {
   assertNotProduction(sandboxConfig.baseUrl)
 
-  const resolvedOptions: Required<ReplayRunOptions> = {
-    pollTimeoutMs: options.pollTimeoutMs ?? DEFAULT_POLL_TIMEOUT_MS,
-    pollIntervalMs: options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
-    maxPollIntervalMs: options.maxPollIntervalMs ?? DEFAULT_MAX_POLL_INTERVAL_MS,
-  }
+  const resolvedOptions: Required<ReplayRunOptions> = resolveReplayRunOptions(options)
 
   const baselineTrigger = findWebhookTrigger(baselineWorkflow)
   const candidateTrigger = findWebhookTrigger(candidateWorkflow)
