@@ -56,6 +56,12 @@ export interface NodeDiffEntry {
   node: string
   status: 'match' | 'changed' | 'unverifiable' | 'not_reached_by_this_payload'
   detail: string
+  /** Present only when status === 'changed' due to an output-shape difference (not a
+   * coverage or error-class change) -- the raw before/after shapes, so any formatter
+   * (technical or operator-facing) can build its own field-level breakdown (added/removed/
+   * type-changed) without parsing `detail`'s string. Structured first, rendered text second. */
+  baselineOutputShape?: Record<string, string>
+  candidateOutputShape?: Record<string, string>
 }
 
 export interface PayloadDiffResult {
@@ -200,6 +206,8 @@ export function diffPayloadExecution(
           node: name,
           status: 'changed',
           detail: `Output shape differs: baseline ${JSON.stringify(b!.outputShape ?? {})} vs candidate ${JSON.stringify(c!.outputShape ?? {})}.`,
+          baselineOutputShape: b!.outputShape ?? {},
+          candidateOutputShape: c!.outputShape ?? {},
         })
       }
     } else if (b!.status === 'error' && c!.status === 'error') {

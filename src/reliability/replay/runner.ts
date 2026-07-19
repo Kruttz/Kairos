@@ -230,7 +230,7 @@ export async function runReplay(
   if (captures.length === 0) {
     return {
       status: 'no_captures',
-      detail: `No captured payloads found for workflow ${productionWorkflowId} under client "${clientId}". Run capturePayloads() first.`,
+      detail: `No captured payloads found for workflow ${productionWorkflowId} under client "${clientId}". Run "kairos replay capture ${productionWorkflowId} --client-id ${clientId}" first.`,
       outcomes: [],
       verdict: 'NOT_RUN',
       partialVerification: false,
@@ -342,4 +342,136 @@ export function formatReplayRunResult(result: ReplayRunResult): string {
   }
 
   return lines.join('\n').trimEnd()
+}
+
+interface FieldChanges {
+  added: string[]
+  removed: string[]
+  typeChanged: Array<{ field: string; from: string; to: string }>
+}
+
+function computeFieldChanges(baseline: Record<string, string> = {}, candidate: Record<string, string> = {}): FieldChanges {
+  const added = Object.keys(candidate).filter(k => !(k in baseline))
+  const removed = Object.keys(baseline).filter(k => !(k in candidate))
+  const typeChanged = Object.keys(baseline)
+    .filter(k => k in candidate && baseline[k] !== candidate[k])
+    .map(k => ({ field: k, from: baseline[k]!, to: candidate[k]! }))
+  return { added, removed, typeChanged }
+}
+
+const VERDICT_PLAIN_LANGUAGE: Record<ReplayVerdict | 'INCOMPLETE' | 'NOT_RUN', string> = {
+  IDENTICAL: '✅ SAFE TO DEPLOY -- no behavioral differences detected.',
+  BENIGN_VARIANCE: '✅ SAFE TO DEPLOY -- only minor timing differences detected, no behavior change.',
+  BEHAVIORAL_CHANGE: '⚠️  REVIEW BEFORE DEPLOYING -- this candidate behaves differently than the current version.',
+  BROKEN: '❌ DO NOT DEPLOY -- this candidate fails in cases where the current version succeeds.',
+  INCOMPLETE: '❓ INCONCLUSIVE -- at least one test could not be run at all.',
+  NOT_RUN: '❓ NOT RUN -- no comparison was performed.',
+}
+
+function nextAction(result: ReplayRunResult): string {
+  switch (result.status) {
+    case 'no_captures':
+      return 'Capture at least one real payload first: kairos replay capture <workflow-id>.'
+    case 'not_webhook_shaped':
+      return 'Replay only supports webhook-triggered workflows today. No action available for this workflow.'
+    case 'completed':
+      switch (result.verdict) {
+        case 'IDENTICAL':
+        case 'BENIGN_VARIANCE':
+          return result.partialVerification
+            ? 'Deploy is reasonable, but review the unverified step(s) below manually first -- they were never actually exercised by this test.'
+            : 'Deploy with confidence -- every step was tested and nothing changed.'
+        case 'BEHAVIORAL_CHANGE':
+          return 'Review the changed step(s) below with a human before deploying. If the change is intentional, deploy; if not, fix the candidate and re-test.'
+        case 'BROKEN':
+          return 'Do not deploy this candidate as-is. Fix the failure(s) below and re-run the replay test.'
+        case 'INCOMPLETE':
+          return 'Re-run the replay test -- at least one payload never produced a result, so this run cannot be trusted either way.'
+        case 'NOT_RUN':
+          return 'No comparison was performed. This should not happen for a completed run -- please report this.'
+      }
+  }
+}
+
+/**
+ * The primary, default human-readable output for `kairos replay run` -- built specifically
+ * for an operator or client reading a report, not a developer debugging (that's what
+ * formatReplayRunResult/formatPayloadDiffResult are for, still available via --verbose).
+ * Required content (Jordan/Codex, 2026-07-19): verdict, full vs. partial verification,
+ * payload count tested, changed nodes (in a field-level breakdown, not raw JSON), unverifiable
+ * nodes with plain-language reasons, and an exact next action -- every one of these is always
+ * present in the output, never optional/buried.
+ */
+export function formatReplayReportForHumans(result: ReplayRunResult): string {
+  const lines: string[] = []
+  lines.push('=== Replay Test Report ===')
+  lines.push('')
+
+  if (result.status !== 'completed') {
+    lines.push(`Result: ${result.status === 'no_captures' ? 'No test data available' : 'Not applicable'}`)
+    lines.push(result.detail)
+    lines.push('')
+    lines.push(`Next action: ${nextAction(result)}`)
+    return lines.join('\n')
+  }
+
+  const comparedCount = result.outcomes.filter(o => o.status === 'compared').length
+  const incompleteCount = result.outcomes.filter(o => o.status === 'no_execution_found').length
+
+  lines.push(VERDICT_PLAIN_LANGUAGE[result.verdict])
+  lines.push('')
+  lines.push(`Verification: ${result.partialVerification ? 'PARTIAL -- see "Not verified" below' : 'FULL -- every step in every tested payload was exercised'}`)
+  lines.push(`Payloads tested: ${comparedCount} compared${incompleteCount > 0 ? `, ${incompleteCount} could not be run at all` : ''} (out of ${result.outcomes.length} attempted, using real payloads captured from production)`)
+  lines.push('')
+
+  const changedNodes = new Map<string, { baseline?: Record<string, string>; candidate?: Record<string, string>; detail: string }>()
+  const unverifiableNodes = new Map<string, string>()
+  for (const o of result.outcomes) {
+    if (o.status !== 'compared') continue
+    for (const nd of o.diff!.nodeDiffs) {
+      if (nd.status === 'changed' && !changedNodes.has(nd.node)) {
+        changedNodes.set(nd.node, {
+          ...(nd.baselineOutputShape ? { baseline: nd.baselineOutputShape } : {}),
+          ...(nd.candidateOutputShape ? { candidate: nd.candidateOutputShape } : {}),
+          detail: nd.detail,
+        })
+      }
+      if (nd.status === 'unverifiable' && !unverifiableNodes.has(nd.node)) {
+        unverifiableNodes.set(nd.node, nd.detail)
+      }
+    }
+  }
+
+  if (changedNodes.size > 0) {
+    lines.push(`Changed step(s):`)
+    for (const [node, info] of changedNodes) {
+      lines.push(`  • ${node}`)
+      if (info.baseline && info.candidate) {
+        const { added, removed, typeChanged } = computeFieldChanges(info.baseline, info.candidate)
+        if (added.length) lines.push(`      + new field(s): ${added.join(', ')}`)
+        if (removed.length) lines.push(`      - removed field(s): ${removed.join(', ')}`)
+        for (const t of typeChanged) lines.push(`      ~ ${t.field} changed type: ${t.from} -> ${t.to}`)
+        if (!added.length && !removed.length && !typeChanged.length) lines.push(`      ${info.detail}`)
+      } else {
+        lines.push(`      ${info.detail}`)
+      }
+    }
+    lines.push('')
+  }
+
+  if (unverifiableNodes.size > 0) {
+    lines.push(`Not verified (these steps could not be meaningfully tested in this environment):`)
+    for (const [node, detail] of unverifiableNodes) {
+      lines.push(`  • ${node} -- ${detail}`)
+    }
+    lines.push('')
+  }
+
+  if (incompleteCount > 0) {
+    lines.push(`Could not run at all: ${incompleteCount} payload(s) -- treated as unverified, not as a pass. See --verbose for details.`)
+    lines.push('')
+  }
+
+  lines.push(`Next action: ${nextAction(result)}`)
+  return lines.join('\n')
 }

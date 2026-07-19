@@ -896,6 +896,36 @@ kairos drift check <n8n-workflow-id>
 kairos drift check <n8n-workflow-id> --live  # fetch and record the latest execution first
 kairos drift check <n8n-workflow-id> --json  # exact structured findings/diagnoses, not rendered text
 
+# Boot/inspect/stop the local replay sandbox (isolated n8n instance, never production --
+# a candidate is normally imported alongside baseline under the same working directory's
+# ~/.kairos/sandbox, credentials always stripped, workflow names always prefixed
+# [kairos-sandbox]). First boot downloads and provisions n8n (a few minutes); later boots
+# reuse the existing instance (seconds). "up" is optional -- "replay run" boots it automatically
+# if it isn't already running.
+kairos sandbox up
+kairos sandbox status
+kairos sandbox down
+
+# Capture real production payloads (opt-in, local-only, chmod 600, retention-capped) for
+# later replay. Only the triggering webhook's own input is stored -- never the whole
+# execution. --scrub redacts recognizable secret-shaped substrings (best-effort, not a PII
+# guarantee -- an ordinary name/phone number is not redacted). Requires N8N_BASE_URL/N8N_API_KEY.
+kairos replay capture <n8n-workflow-id> --client-id acme
+kairos replay capture <n8n-workflow-id> --client-id acme --scrub
+
+# Replay every captured payload against both the currently-deployed workflow and a candidate
+# file, side by side in the sandbox -- never against production. Reports a client/operator-
+# readable verdict (SAFE TO DEPLOY / REVIEW BEFORE DEPLOYING / DO NOT DEPLOY / INCONCLUSIVE),
+# full vs. partial verification (credentialed nodes can't meaningfully run in the sandbox --
+# this is reported honestly, never papered over as a clean match), changed steps with a
+# field-level breakdown, and an exact next action. Exits 1 for anything short of a clean pass.
+kairos replay run <n8n-workflow-id> --candidate ./candidate.json --client-id acme
+kairos replay run <n8n-workflow-id> --candidate ./candidate.json --client-id acme --verbose  # adds the technical, node-by-node detail underneath
+kairos replay run <n8n-workflow-id> --candidate ./candidate.json --client-id acme --json      # the exact structured report, not rendered text
+
+# Delete every captured payload for a workflow -- the revocation path for opted-in data.
+kairos replay purge <n8n-workflow-id> --client-id acme
+
 # Seed library with n8n community templates
 kairos sync-templates --max 200
 

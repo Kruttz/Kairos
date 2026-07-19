@@ -24,6 +24,12 @@ Usage:
   kairos trace record <n8n-workflow-id>
   kairos drift baseline <n8n-workflow-id> [--json]
   kairos drift check <n8n-workflow-id> [--live] [--original-build-hash <hash>] [--json]
+  kairos sandbox up [--port <n>]
+  kairos sandbox status [--json]
+  kairos sandbox down
+  kairos replay capture <n8n-workflow-id> --client-id <slug> [--limit <n>] [--scrub] [--json]
+  kairos replay run <n8n-workflow-id> --candidate <file> --client-id <slug> [--live] [--verbose] [--json]
+  kairos replay purge <n8n-workflow-id> --client-id <slug> [--json]
   kairos replace <n8n-id> <description>
   kairos memory add|list|search|forget|rebuild-index <client-id> [...]
   kairos patterns [options]
@@ -1333,6 +1339,185 @@ async function handleDrift(positional: string[], flags: Record<string, string | 
   if (report.verdict === 'DRIFTING') process.exit(1)
 }
 
+async function handleSandbox(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const subcommand = positional[0]
+  const { bootSandbox, sandboxStatus, stopSandbox } = await import('./reliability/sandbox/manager.js')
+
+  if (subcommand === 'up') {
+    const port = typeof flags['port'] === 'string' ? parseInt(flags['port'], 10) : undefined
+    console.error('Booting sandbox (first run downloads and provisions n8n -- may take a few minutes; subsequent runs are fast)...')
+    const config = await bootSandbox(port !== undefined ? { port } : {})
+    console.log(`Sandbox running at ${config.baseUrl} (n8n ${config.n8nVersion}).`)
+    return
+  }
+  if (subcommand === 'status') {
+    const status = await sandboxStatus()
+    if (flags['json'] === true) {
+      console.log(JSON.stringify(status, null, 2))
+    } else {
+      console.log(status.running ? `Running at ${status.config?.baseUrl}` : 'Not running.')
+    }
+    return
+  }
+  if (subcommand === 'down') {
+    await stopSandbox()
+    console.log('Sandbox stopped.')
+    return
+  }
+
+  console.error('Usage: kairos sandbox up [--port <n>]')
+  console.error('       kairos sandbox status [--json]')
+  console.error('       kairos sandbox down')
+  process.exit(1)
+}
+
+async function loadWorkflowByN8nId(n8nWorkflowId: string): Promise<{ libraryId: string; workflow: import('./types/workflow.js').N8nWorkflow; description: string }> {
+  const lib = createLibrary()
+  await lib.initialize()
+  const all = await lib.list()
+  const match = all.find(w => w.n8nWorkflowId === n8nWorkflowId)
+  if (!match) {
+    console.error(`No library entry found with n8nWorkflowId="${n8nWorkflowId}".`)
+    console.error('Build and deploy a workflow with kairos first to create a library entry, or')
+    console.error('run "kairos trace record <n8n-workflow-id>" to link an existing n8n workflow.')
+    process.exit(1)
+  }
+  return { libraryId: match.id, workflow: match.workflow, description: match.description }
+}
+
+async function handleReplay(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const subcommand = positional[0]
+  const n8nWorkflowId = positional[1]
+  const clientId = typeof flags['client-id'] === 'string' ? flags['client-id'] : undefined
+
+  if (!subcommand || !['capture', 'run', 'purge'].includes(subcommand) || !n8nWorkflowId || !clientId) {
+    console.error('Usage: kairos replay capture <n8n-workflow-id> --client-id <slug> [--limit <n>] [--scrub] [--json]')
+    console.error('       kairos replay run <n8n-workflow-id> --candidate <file> --client-id <slug> [--live] [--verbose] [--json]')
+    console.error('       kairos replay purge <n8n-workflow-id> --client-id <slug> [--json]')
+    console.error('')
+    console.error('capture records real production payloads (opt-in, local-only, chmod 600) for later replay.')
+    console.error('run replays every captured payload against both the currently-deployed workflow and a')
+    console.error('  candidate file, in an isolated sandbox -- never against production.')
+    console.error('purge deletes every captured payload for a workflow (the revocation path).')
+    process.exit(1)
+  }
+
+  if (subcommand === 'purge') {
+    const { deleteCapturedPayloads } = await import('./reliability/replay/capture.js')
+    const result = await deleteCapturedPayloads(clientId, n8nWorkflowId)
+    if (flags['json'] === true) {
+      console.log(JSON.stringify(result, null, 2))
+    } else {
+      console.log(`Deleted ${result.deletedCount} captured payload(s) for workflow ${n8nWorkflowId} (client "${clientId}").`)
+    }
+    return
+  }
+
+  if (subcommand === 'capture') {
+    const n8nBaseUrl = process.env['N8N_BASE_URL']
+    const n8nApiKey = process.env['N8N_API_KEY']
+    if (!n8nBaseUrl || !n8nApiKey) {
+      console.error('N8N_BASE_URL and N8N_API_KEY are required for capture (reads real recent executions).')
+      process.exit(1)
+    }
+    const { workflow, libraryId } = await loadWorkflowByN8nId(n8nWorkflowId)
+    const { capturePayloads } = await import('./reliability/replay/capture.js')
+    const client = new N8nApiClient(n8nBaseUrl, n8nApiKey, CLI_LOGGER)
+    const result = await capturePayloads(client, workflow, n8nWorkflowId, clientId, {
+      ...(typeof flags['limit'] === 'string' ? { limit: parseInt(flags['limit'], 10) } : {}),
+      ...(flags['scrub'] === true ? { scrub: true } : {}),
+    })
+
+    if (flags['json'] === true) {
+      console.log(JSON.stringify(result, null, 2))
+      return
+    }
+    if (result.skippedNonWebhook) {
+      console.log(`Skipped: workflow ${libraryId} has no webhook trigger. Capture only supports webhook-triggered workflows today.`)
+      return
+    }
+    console.log(`Captured ${result.captured.length} payload(s) for workflow ${n8nWorkflowId} (client "${clientId}").`)
+    if (result.sweptCount > 0) console.log(`Retention swept ${result.sweptCount} older/excess capture(s).`)
+    return
+  }
+
+  // subcommand === 'run'
+  const candidateFile = typeof flags['candidate'] === 'string' ? flags['candidate'] : undefined
+  if (!candidateFile) {
+    console.error('Usage: kairos replay run <n8n-workflow-id> --candidate <file> --client-id <slug> [--live] [--verbose] [--json]')
+    process.exit(1)
+  }
+
+  const { workflow: baselineWorkflow } = await loadWorkflowByN8nId(n8nWorkflowId)
+
+  const { readFile } = await import('node:fs/promises')
+  let candidateWorkflow: import('./types/workflow.js').N8nWorkflow
+  try {
+    candidateWorkflow = JSON.parse(await readFile(candidateFile, 'utf-8')) as import('./types/workflow.js').N8nWorkflow
+  } catch (err) {
+    console.error(`Could not read/parse candidate workflow file "${candidateFile}": ${String(err)}`)
+    process.exit(1)
+  }
+
+  if (flags['live'] === true) {
+    const n8nBaseUrl = process.env['N8N_BASE_URL']
+    const n8nApiKey = process.env['N8N_API_KEY']
+    if (!n8nBaseUrl || !n8nApiKey) {
+      console.error('N8N_BASE_URL and N8N_API_KEY are required for --live (captures a fresh payload before replaying).')
+      process.exit(1)
+    }
+    const { capturePayloads } = await import('./reliability/replay/capture.js')
+    const client = new N8nApiClient(n8nBaseUrl, n8nApiKey, CLI_LOGGER)
+    console.error('--live: capturing a fresh payload before replay...')
+    await capturePayloads(client, baselineWorkflow, n8nWorkflowId, clientId, { limit: 1 })
+  }
+
+  const { bootSandbox } = await import('./reliability/sandbox/manager.js')
+  const { runReplay, formatReplayReportForHumans, formatReplayRunResult } = await import('./reliability/replay/runner.js')
+
+  console.error('Booting sandbox (reuses an already-running instance if present)...')
+  const sandboxConfig = await bootSandbox()
+
+  const result = await runReplay(sandboxConfig, baselineWorkflow, candidateWorkflow, n8nWorkflowId, clientId)
+
+  if (flags['json'] === true) {
+    console.log(JSON.stringify(result, null, 2))
+  } else {
+    console.log(formatReplayReportForHumans(result))
+    if (flags['verbose'] === true) {
+      console.log('')
+      console.log('--- Technical detail (--verbose) ---')
+      console.log(formatReplayRunResult(result))
+    }
+  }
+
+  const telemetry = await createTelemetryCollector()
+  if (telemetry) {
+    try {
+      const comparedCount = result.status === 'completed' ? result.outcomes.filter(o => o.status === 'compared').length : 0
+      const incompleteCount = result.status === 'completed' ? result.outcomes.filter(o => o.status === 'no_execution_found').length : 0
+      await telemetry.emit('replay_completed', {
+        workflowId: n8nWorkflowId,
+        verdict: result.verdict,
+        status: result.status,
+        payloadCount: comparedCount,
+        incompleteCount,
+        partialVerification: result.partialVerification,
+      })
+    } catch {
+      // Swallowed deliberately -- telemetry must never change this command's outcome.
+    }
+  }
+
+  // Exit 1 for anything short of a clean, fully-or-benignly-verified pass -- matches
+  // kairos drift check's own "only real problems trip the exit code" philosophy, but here
+  // that includes an incomplete/uncomparable run, since a candidate that couldn't be tested
+  // is not something a caller should treat as safe.
+  if (result.status !== 'completed' || (result.verdict !== 'IDENTICAL' && result.verdict !== 'BENIGN_VARIANCE')) {
+    process.exit(1)
+  }
+}
+
 async function handlePreflight(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const packName = positional[0]
   if (!packName) {
@@ -1604,6 +1789,12 @@ async function main(): Promise<void> {
       break
     case 'drift':
       await handleDrift(positional, flags)
+      break
+    case 'sandbox':
+      await handleSandbox(positional, flags)
+      break
+    case 'replay':
+      await handleReplay(positional, flags)
       break
     case 'library': {
       const subcommand = positional[0]

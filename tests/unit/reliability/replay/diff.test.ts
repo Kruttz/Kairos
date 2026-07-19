@@ -94,6 +94,10 @@ describe('diffPayloadExecution -- no fake equivalence', () => {
     expect(result.partialVerification).toBe(true) // still true -- HTTP Request/Send Email remain unverifiable
     const setDiff = result.nodeDiffs.find(d => d.node === 'Set')
     expect(setDiff?.status).toBe('changed')
+    // Structured before/after shapes, not just a formatted string -- so any formatter
+    // (technical or operator-facing) can build its own field-level breakdown.
+    expect(setDiff?.baselineOutputShape).toEqual({ customerName: 'string' })
+    expect(setDiff?.candidateOutputShape).toEqual({ customerName: 'string', customerEmail: 'string' })
   })
 
   it('trusts a genuine successful run over the structural credential assumption when both sides actually succeed', () => {

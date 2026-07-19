@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { buildSnapshotFromExecution, replayOnePayload } from '../../../../src/reliability/replay/runner.js'
+import { buildSnapshotFromExecution, replayOnePayload, formatReplayReportForHumans, type ReplayRunResult } from '../../../../src/reliability/replay/runner.js'
 import type { CapturedPayload } from '../../../../src/reliability/replay/capture.js'
 import type { N8nApiClient } from '../../../../src/providers/n8n/api-client.js'
+import type { PayloadDiffResult } from '../../../../src/reliability/replay/diff.js'
 
 describe('buildSnapshotFromExecution', () => {
   it('extracts output shape (keys/types, never values) for a successful node', () => {
@@ -151,5 +152,129 @@ describe('replayOnePayload -- polling, timeout, no-execution-found', () => {
       if (ORIGINAL === undefined) delete process.env['N8N_BASE_URL']
       else process.env['N8N_BASE_URL'] = ORIGINAL
     }
+  })
+})
+
+function makeDiff(overrides: Partial<PayloadDiffResult> = {}): PayloadDiffResult {
+  return {
+    payloadId: 'exec-1',
+    verdict: 'IDENTICAL',
+    verificationBoundary: { verified: [], unverifiable: [] },
+    nodeDiffs: [],
+    partialVerification: false,
+    ...overrides,
+  }
+}
+
+function makeCompletedResult(overrides: Partial<ReplayRunResult> = {}): ReplayRunResult {
+  return {
+    status: 'completed',
+    detail: 'Replayed 1 captured payload(s) against baseline and candidate.',
+    baselineImportedName: '[kairos-sandbox] baseline: Missed Call Text-Back',
+    candidateImportedName: '[kairos-sandbox] candidate: Missed Call Text-Back',
+    outcomes: [{ payloadId: 'exec-1', status: 'compared', baselineExecutionId: '2', candidateExecutionId: '3', diff: makeDiff(), detail: 'Compared successfully -- verdict IDENTICAL.' }],
+    verdict: 'IDENTICAL',
+    partialVerification: false,
+    ...overrides,
+  }
+}
+
+describe('formatReplayReportForHumans -- operator/client-readable output (Jordan/Codex, 2026-07-19)', () => {
+  it('always includes all six required elements: verdict, verification status, payload count, changed nodes, unverifiable nodes, next action', () => {
+    const result = makeCompletedResult({
+      verdict: 'BEHAVIORAL_CHANGE',
+      partialVerification: true,
+      outcomes: [{
+        payloadId: 'exec-1', status: 'compared', baselineExecutionId: '2', candidateExecutionId: '3',
+        diff: makeDiff({
+          verdict: 'BEHAVIORAL_CHANGE',
+          partialVerification: true,
+          nodeDiffs: [
+            { node: 'Format', status: 'changed', detail: 'Output shape differs.', baselineOutputShape: { customerName: 'string' }, candidateOutputShape: { customerName: 'string', customerPhone: 'string' } },
+            { node: 'CRM Lookup', status: 'unverifiable', detail: 'This node has a credential binding stripped for sandbox execution.' },
+          ],
+        }),
+        detail: 'Compared successfully -- verdict BEHAVIORAL_CHANGE.',
+      }],
+    })
+    const text = formatReplayReportForHumans(result)
+
+    expect(text).toContain('REVIEW BEFORE DEPLOYING') // verdict, plain language
+    expect(text).toContain('Verification: PARTIAL') // verification status
+    expect(text).toContain('Payloads tested: 1') // payload count
+    expect(text).toContain('Format') // changed node named
+    expect(text).toContain('CRM Lookup') // unverifiable node named
+    expect(text).toContain('Next action:') // exact next action, always present
+  })
+
+  it('presents a field-level breakdown of what changed, not raw JSON', () => {
+    const result = makeCompletedResult({
+      verdict: 'BEHAVIORAL_CHANGE',
+      outcomes: [{
+        payloadId: 'exec-1', status: 'compared', baselineExecutionId: '2', candidateExecutionId: '3',
+        diff: makeDiff({
+          verdict: 'BEHAVIORAL_CHANGE',
+          nodeDiffs: [{
+            node: 'Format', status: 'changed', detail: 'Output shape differs.',
+            baselineOutputShape: { customerName: 'string', status: 'string' },
+            candidateOutputShape: { customerName: 'string', customerPhone: 'string', status: 'number' },
+          }],
+        }),
+        detail: 'x',
+      }],
+    })
+    const text = formatReplayReportForHumans(result)
+    expect(text).toContain('new field(s): customerPhone')
+    expect(text).toContain('status changed type: string -> number')
+  })
+
+  it('says SAFE TO DEPLOY with confidence when fully verified and identical', () => {
+    const result = makeCompletedResult({ verdict: 'IDENTICAL', partialVerification: false })
+    const text = formatReplayReportForHumans(result)
+    expect(text).toContain('SAFE TO DEPLOY')
+    expect(text).toContain('Verification: FULL')
+    expect(text).toContain('Deploy with confidence')
+  })
+
+  it('recommends manual review, not blind confidence, when identical but only partially verified', () => {
+    const result = makeCompletedResult({
+      verdict: 'IDENTICAL',
+      partialVerification: true,
+      outcomes: [{ payloadId: 'exec-1', status: 'compared', baselineExecutionId: '2', candidateExecutionId: '3', diff: makeDiff({ partialVerification: true }), detail: 'x' }],
+    })
+    const text = formatReplayReportForHumans(result)
+    expect(text).toContain('SAFE TO DEPLOY') // still identical -- the verdict itself is accurate
+    expect(text.toLowerCase()).toContain('review') // but the next action must still say review the unverified parts
+  })
+
+  it('says DO NOT DEPLOY for BROKEN', () => {
+    const result = makeCompletedResult({ verdict: 'BROKEN' })
+    const text = formatReplayReportForHumans(result)
+    expect(text).toContain('DO NOT DEPLOY')
+    expect(text).toContain('Do not deploy')
+  })
+
+  it('says INCONCLUSIVE and recommends re-running for INCOMPLETE, never a clean pass', () => {
+    const result = makeCompletedResult({
+      verdict: 'INCOMPLETE',
+      partialVerification: true,
+      outcomes: [
+        { payloadId: 'exec-1', status: 'compared', baselineExecutionId: '2', candidateExecutionId: '3', diff: makeDiff(), detail: 'x' },
+        { payloadId: 'exec-2', status: 'no_execution_found', detail: 'No fresh execution appeared.' },
+      ],
+    })
+    const text = formatReplayReportForHumans(result)
+    expect(text).toContain('INCONCLUSIVE')
+    expect(text).toContain('could not be run at all')
+    expect(text).toContain('Re-run the replay test')
+    expect(text).not.toContain('SAFE TO DEPLOY')
+  })
+
+  it('gives a real next action for no_captures and not_webhook_shaped, not a blank/generic message', () => {
+    const noCaptures: ReplayRunResult = { status: 'no_captures', detail: 'No captures found.', outcomes: [], verdict: 'NOT_RUN', partialVerification: false }
+    expect(formatReplayReportForHumans(noCaptures)).toContain('kairos replay capture')
+
+    const notWebhook: ReplayRunResult = { status: 'not_webhook_shaped', detail: 'Not a webhook workflow.', outcomes: [], verdict: 'NOT_RUN', partialVerification: false }
+    expect(formatReplayReportForHumans(notWebhook)).toContain('webhook-triggered')
   })
 })
