@@ -184,6 +184,15 @@ export async function bootSandbox(options?: { port?: number; bootTimeoutMs?: num
       ...process.env,
       N8N_USER_FOLDER: SANDBOX_USER_FOLDER,
       N8N_PORT: String(port),
+      // Found live: n8n's internal Task Broker sub-process binds a SEPARATE port,
+      // independent of N8N_PORT, defaulting to a fixed 5679 regardless of the main HTTP
+      // port. Any other n8n instance already running on this machine (a real user's own
+      // dev/production instance, or -- as happened during this arc's own CLI checkpoint -- a
+      // second test instance) collides on that fixed port even though the main HTTP ports
+      // never overlap ("n8n Task Broker's port 5679 is already in use"). Derived
+      // deterministically from the sandbox's own configured port so it's unique per sandbox
+      // instance without needing a second port option surfaced to callers.
+      N8N_RUNNERS_BROKER_PORT: String(port + 10_000),
       N8N_DIAGNOSTICS_ENABLED: 'false',
       N8N_VERSION_NOTIFICATIONS_ENABLED: 'false',
     },
