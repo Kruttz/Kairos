@@ -1197,7 +1197,7 @@ kairos patterns reject <rule-number> [reason]  # marks resolved -- excluded, sam
 
 ### Community Pattern Sharing
 
-`kairos patterns share` builds a report of your **confirmed** local patterns and, with your explicit consent, opens it as a GitHub issue so other Kairos users benefit from what your install has learned. This is export-only (v1) — there is no ingestion into your own install's scoring yet.
+`kairos patterns share` builds a report of your **confirmed** local patterns and, with your explicit consent, opens it as a GitHub issue so other Kairos users benefit from what your install has learned.
 
 The report is whitelist-only **by construction**, not by scrubbing: the type it's built from only has fields for rule number, pipeline stage, failure count, and confidence. Free text, node names, workflow names, URLs, parameter values, and expressions are never representable in it — nothing to leak because nothing else can exist in the type.
 
@@ -1206,6 +1206,16 @@ kairos patterns share
 ```
 
 Every run prints the exact JSON that would leave your machine, then asks a single explicit question naming the real consequence (*"This will create a public GitHub issue at github.com/Kruttz/Kairos containing the JSON above. Continue? [y/N]"*) before anything is written or transmitted. Declining does nothing further. Confirming writes `pattern-report.json` locally and, if the `gh` CLI is installed, opens the issue directly — otherwise it prints the URL to open manually. There is no background or automatic transmission path in this codebase.
+
+### Community Pattern Ingestion (EXPERIMENTAL)
+
+`kairos patterns ingest <path>` reads a local `kairos patterns share`-shaped JSON file (no network) and `kairos patterns sync --url <url>` fetches one such file with a single explicit request (no retries, no polling, no default URL — there is no official community feed yet). Both write the same aggregate to `~/.kairos/community-patterns.json`, overwriting on each call.
+
+This is a small, deliberately conservative feature, not a platform: there is no marketplace, no dashboard, no accounts, and no automated moderation — a real community corpus today is nothing more than whatever a maintainer hand-copies out of reviewed GitHub issues into one file.
+
+Community data is **always a fully separate store** — it is never merged into your local `patterns.json`, never an input to local pattern scoring, and never changes a local pattern's `state`. `src/telemetry/pattern-analyzer.ts` has no import from the community module at all, so there is no code path by which community data could influence local scoring, confirmed pattern promotion, or generation, even accidentally.
+
+The annotation is off by default. Set `KAIROS_COMMUNITY_PATTERNS=true` to see it in `kairos patterns` output, clearly labeled `[EXPERIMENTAL COMMUNITY]` — a rule that already has a local pattern shows how many community installs also reported it (informational only); a rule with no local pattern at all appears in its own separate, always-lower-priority section, never interleaved into your ranked local findings. Unset the env var (the default) to fully disable the display — ingested data stays on disk but is never rendered.
 
 ---
 

@@ -42,6 +42,8 @@ Usage:
   kairos patterns approve <rule-number>
   kairos patterns reject <rule-number> [reason]
   kairos patterns share
+  kairos patterns ingest <path>
+  kairos patterns sync --url <url>
   kairos sessions [options]
   kairos list
   kairos get <id>
@@ -92,6 +94,17 @@ Patterns share (community pattern library, export-only -- see docs/plans/reliabi
                    explicit y/N confirmation naming the real consequence (a public GitHub issue)
                    before anything is written or transmitted. Uses the gh CLI if present, else
                    prints the issue URL to open manually. No background transmission path exists.
+
+Patterns ingest/sync (community pattern library, EXPERIMENTAL -- see docs/plans/reliability-suite-plan.md §10.4/10.4a):
+  patterns ingest <path>    Read a local kairos-patterns-share-shaped JSON file (no network) and
+                             overwrite ~/.kairos/community-patterns.json with its aggregate.
+  patterns sync --url <url> Fetch one JSON file (same shape) and ingest it the same way. A single
+                             explicit request, no retries, no polling, no default URL.
+                             Community data is always a fully separate store -- it never enters
+                             local pattern scoring, never changes a local pattern's state, and
+                             never influences generation. Set KAIROS_COMMUNITY_PATTERNS=true to
+                             see it (clearly marked [EXPERIMENTAL COMMUNITY]) in 'kairos patterns'
+                             output; unset it (the default) to fully disable the display.
 
 Sessions options:
   --limit <n>     Number of recent sessions to show (default: 20)
@@ -668,6 +681,17 @@ async function handlePatterns(flags: Record<string, string | boolean>): Promise<
   )
   const resolved = pendingOnly ? [] : analysis.topFailureRules.filter(p => p.state === 'resolved')
 
+  // Experimental, off by default (docs/plans/reliability-suite-plan.md §10.4/10.4a): community
+  // data never touches analysis.topFailureRules or its scoring -- this is purely a text-render
+  // annotation layer, loaded and rendered only when explicitly enabled.
+  const communityEnabled = process.env['KAIROS_COMMUNITY_PATTERNS'] === 'true'
+  let communityAnnotations: import('./reliability/community/ingest.js').CommunityAnnotations | null = null
+  if (communityEnabled) {
+    const { loadCommunityPatternStore, annotateWithCommunityData } = await import('./reliability/community/ingest.js')
+    const store = await loadCommunityPatternStore()
+    if (store) communityAnnotations = annotateWithCommunityData(analysis.topFailureRules, store)
+  }
+
   if (active.length > 0) {
     console.log(pendingOnly ? `\nPatterns Awaiting Review:` : `\nActive Failure Patterns:`)
     for (const p of active) {
@@ -685,9 +709,21 @@ async function handlePatterns(flags: Record<string, string | boolean>): Promise<
         const topType = Object.entries(p.workflowTypeBreakdown).sort((a, b) => b[1] - a[1])[0]
         if (topType) console.log(`    Top workflow type: ${topType[0]} (${topType[1]} failures)`)
       }
+      const communityMatch = communityAnnotations?.localMatches.get(p.rule)
+      if (communityMatch) {
+        console.log(`    [EXPERIMENTAL COMMUNITY] also reported in ${communityMatch.reportCount} community submission(s) -- informational only, does not affect this pattern's score or state`)
+      }
     }
   } else {
     console.log(`\nNo active failure patterns.`)
+  }
+
+  if (communityAnnotations && communityAnnotations.communityOnly.length > 0) {
+    console.log(`\n[EXPERIMENTAL COMMUNITY] Reported by other Kairos installs, not yet seen locally:`)
+    for (const c of communityAnnotations.communityOnly) {
+      console.log(`  Rule ${c.rule} — ${c.reportCount} submission(s), ${c.totalOccurrences} total occurrences [${c.pipelineStage.replace(/_/g, ' ')}]`)
+    }
+    console.log(`  (unconfirmed by this install's own telemetry -- never influences generation or local scoring)`)
   }
 
   if (resolved.length > 0) {
@@ -799,6 +835,51 @@ async function handlePatternShare(): Promise<void> {
   } else {
     console.log(`gh CLI not found. Open manually: ${manualIssueUrl()} and attach or paste the contents of ${path}.`)
   }
+}
+
+async function handlePatternIngest(positional: string[]): Promise<void> {
+  const path = positional[0]
+  if (!path) {
+    console.error('Usage: kairos patterns ingest <path>')
+    console.error('Reads a local kairos-patterns-share-shaped JSON file (no network) and')
+    console.error('overwrites ~/.kairos/community-patterns.json with its aggregate.')
+    process.exit(1)
+  }
+
+  const { ingestCommunityPatternsFromFile } = await import('./reliability/community/ingest.js')
+  let store: Awaited<ReturnType<typeof ingestCommunityPatternsFromFile>>
+  try {
+    store = await ingestCommunityPatternsFromFile(path)
+  } catch (err) {
+    console.error(`Could not ingest ${path}: ${String(err)}`)
+    process.exit(1)
+  }
+
+  console.log(`Ingested ${store.entries.length} rule(s) from ${path} into ~/.kairos/community-patterns.json.`)
+  console.log(`[EXPERIMENTAL] This is display-only context -- set KAIROS_COMMUNITY_PATTERNS=true to see it in 'kairos patterns'. It never influences local pattern scoring or generation.`)
+}
+
+async function handlePatternSync(flags: Record<string, string | boolean>): Promise<void> {
+  const url = typeof flags['url'] === 'string' ? flags['url'] : undefined
+  if (!url) {
+    console.error('Usage: kairos patterns sync --url <url>')
+    console.error('Fetches one JSON file (a kairos patterns share-shaped report) and ingests it')
+    console.error('the same way `kairos patterns ingest` does. No default URL -- there is no')
+    console.error('official community corpus feed yet; you must name the source explicitly.')
+    process.exit(1)
+  }
+
+  const { syncCommunityPatternsFromUrl } = await import('./reliability/community/ingest.js')
+  let store: Awaited<ReturnType<typeof syncCommunityPatternsFromUrl>>
+  try {
+    store = await syncCommunityPatternsFromUrl(url)
+  } catch (err) {
+    console.error(`Could not sync from ${url}: ${String(err)}`)
+    process.exit(1)
+  }
+
+  console.log(`Synced ${store.entries.length} rule(s) from ${url} into ~/.kairos/community-patterns.json.`)
+  console.log(`[EXPERIMENTAL] This is display-only context -- set KAIROS_COMMUNITY_PATTERNS=true to see it in 'kairos patterns'. It never influences local pattern scoring or generation.`)
 }
 
 async function handleSessions(flags: Record<string, string | boolean>): Promise<void> {
@@ -2205,6 +2286,10 @@ async function main(): Promise<void> {
         await handlePatternReject(positional.slice(1))
       } else if (subcommand === 'share') {
         await handlePatternShare()
+      } else if (subcommand === 'ingest') {
+        await handlePatternIngest(positional.slice(1))
+      } else if (subcommand === 'sync') {
+        await handlePatternSync(flags)
       } else {
         await handlePatterns(flags)
       }

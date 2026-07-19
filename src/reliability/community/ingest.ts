@@ -122,3 +122,45 @@ export async function loadCommunityPatternStore(): Promise<CommunityPatternStore
     return null
   }
 }
+
+/** The one network-capable path this feature adds: a single explicit fetch, no retries, no
+ * polling, no default URL (there is no real hosted community corpus yet -- implying one exists
+ * via a plausible-looking default would be dishonest for a feature this experimental). Reuses
+ * the exact same shape-validation and aggregation as the local-file path; a fetched response is
+ * untrusted input exactly like a local file is. */
+export async function syncCommunityPatternsFromUrl(url: string): Promise<CommunityPatternStore> {
+  const response = await fetch(url)
+  if (!response.ok) {
+    throw new Error(`kairos patterns sync: fetching ${url} returned HTTP ${response.status}`)
+  }
+  const raw = await response.text()
+  const report = parseShareReportFile(raw)
+  const store = aggregateCommunityPatterns([report])
+  await writeCommunityPatternStore(store)
+  return store
+}
+
+export interface CommunityAnnotations {
+  /** Keyed by rule number -- only for rules where a local Pattern already exists. */
+  localMatches: Map<number, CommunityPatternRecord>
+  /** Community records with no corresponding local Pattern at all -- unconfirmed locally. */
+  communityOnly: CommunityPatternRecord[]
+}
+
+/** Pure display-composition: splits a community store's entries by whether this install's own
+ * local telemetry has independently produced a Pattern for the same rule ("corroboration").
+ * Deliberately produces no ranking, no merged list, no score -- callers render `localMatches`
+ * as an inline annotation next to the existing local pattern line, and `communityOnly` in a
+ * separate, always-lower-priority section. There is no code path here by which a community
+ * record could be sorted into or above the local ranked list. */
+export function annotateWithCommunityData(localPatterns: Array<{ rule: number }>, community: CommunityPatternStore | null): CommunityAnnotations {
+  if (!community) return { localMatches: new Map(), communityOnly: [] }
+  const localRules = new Set(localPatterns.map(p => p.rule))
+  const localMatches = new Map<number, CommunityPatternRecord>()
+  const communityOnly: CommunityPatternRecord[] = []
+  for (const entry of community.entries) {
+    if (localRules.has(entry.rule)) localMatches.set(entry.rule, entry)
+    else communityOnly.push(entry)
+  }
+  return { localMatches, communityOnly }
+}
