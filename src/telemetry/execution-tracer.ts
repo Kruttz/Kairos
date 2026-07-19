@@ -53,15 +53,25 @@ export function parseExecutionTrace(execution: ExecutionDetail): ExecutionTrace 
           nodeDurations[nodeName] = (nodeDurations[nodeName] ?? 0) + executionTime
         }
 
-        // Check for errors (only capture the error type/name, not the message content)
+        // Check for errors (only capture the error type/name/httpCode, not the message content).
+        // errorType coverage genuinely varies by node/error class -- confirmed directly against
+        // a live n8n instance (reliability-suite-plan.md S1): a Code-node thrown error carries
+        // no `name`/`type` at all (falls back to UnknownError below), while an HTTP Request
+        // node error carries both a real `name` ('NodeApiError') and `httpCode` ('ENOTFOUND',
+        // '429', etc.) -- a far stronger diagnostic signal that was previously read nowhere.
         const error = runObj['error'] as Record<string, unknown> | undefined
         if (error) {
           const errorType = (error['name'] as string | undefined)
             ?? (error['type'] as string | undefined)
             ?? 'UnknownError'
+          const httpCode = error['httpCode'] as string | number | undefined
           // Avoid duplicate error entries for the same node
           if (!erroredNodes.some(e => e.name === nodeName)) {
-            erroredNodes.push({ name: nodeName, errorType })
+            erroredNodes.push({
+              name: nodeName,
+              errorType,
+              ...(httpCode !== undefined ? { httpCode: String(httpCode) } : {}),
+            })
           }
         }
 
@@ -97,7 +107,13 @@ export function getSlowestNodes(nodeDurations: Record<string, number>, n = 3): A
     .map(([name, ms]) => ({ name, ms }))
 }
 
-const MAX_TRACES_PER_WORKFLOW = 10
+// Raised from 10 -- drift checks (D5 windowed error-rate, D6 cadence) need a wider window to
+// be meaningful than single-latest-vs-baseline drift did. Cheap to raise: traces carry only
+// names/durations/counts, never payload values. Configurable since a client's real execution
+// volume/cadence varies widely.
+const MAX_TRACES_PER_WORKFLOW = process.env['KAIROS_MAX_TRACES_PER_WORKFLOW']
+  ? parseInt(process.env['KAIROS_MAX_TRACES_PER_WORKFLOW'], 10)
+  : 50
 
 /**
  * Merge a new trace into an existing trace history (capped at MAX_TRACES_PER_WORKFLOW).

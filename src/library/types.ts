@@ -60,7 +60,12 @@ export interface ExecutionTrace {
   status: 'success' | 'error' | 'waiting' | 'running' | 'canceled'
   durationMs: number | null
   executedNodes: string[]
-  erroredNodes: Array<{ name: string; errorType: string }>
+  /** httpCode is present only for error classes that carry one (e.g. HTTP Request node
+   * failures: 'ENOTFOUND', '429', '500') -- absent for classes with no structured signal
+   * beyond a bare message (e.g. a Code-node thrown error), confirmed directly against a
+   * live n8n instance. See drift/checks.ts's evidenceQuality for how this absence is
+   * surfaced honestly rather than papered over. */
+  erroredNodes: Array<{ name: string; errorType: string; httpCode?: string }>
   itemCount: number
   /** Per-node execution time in ms, summed across all runs of that node in this execution */
   nodeDurations: Record<string, number>

@@ -205,17 +205,19 @@ describe('mergeTraces', () => {
     expect(merged.filter(t => t.executionId === 'exec-1').length).toBe(1)
   })
 
-  it('caps at 10 traces, keeping most recent', () => {
-    const existing = Array.from({ length: 10 }, (_, i) => makeTrace({
+  it('caps at 50 traces, keeping most recent', () => {
+    // Cap raised 10 -> 50 (reliability-suite-plan.md Phase 1 6.1) so drift checks needing a
+    // wider window (D5 windowed error-rate, D6 cadence) have enough history to be meaningful.
+    const existing = Array.from({ length: 50 }, (_, i) => makeTrace({
       executionId: `exec-${i}`,
-      recordedAt: new Date(Date.now() - (10 - i) * 1000).toISOString(),
+      recordedAt: new Date(Date.now() - (50 - i) * 1000).toISOString(),
     }))
     const newest = makeTrace({
       executionId: 'exec-newest',
       recordedAt: new Date().toISOString(),
     })
     const merged = mergeTraces(existing, newest)
-    expect(merged.length).toBe(10)
+    expect(merged.length).toBe(50)
     expect(merged.some(t => t.executionId === 'exec-newest')).toBe(true)
     // Oldest should be evicted
     expect(merged.some(t => t.executionId === 'exec-0')).toBe(false)
