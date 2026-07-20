@@ -159,7 +159,12 @@ export interface ProcessContract {
 
   owners: OwnerAssignment[]
   sla: SlaSpec[]
-  businessCalendar: BusinessCalendarRef
+  /** Absent when every SlaSpec/ExpirationRule in this contract uses a wall-clock duration unit
+   * ('minutes'/'hours') -- required only when at least one uses a business-calendar-aware unit
+   * ('business_hours'/'business_days'), enforced by the deterministic validator (§4.4), not
+   * left as a silently-unused required field on a wall-clock-only contract. Found via the
+   * Phase 0 pressure test (§4.5b) -- a real refinement, not part of the original sketch. */
+  businessCalendar?: BusinessCalendarRef
 
   /** Absent means no pause behavior -- SLA clocks always run once started. Present entries are
    * the only conditions that ever stop a clock; nothing implicit. */
@@ -272,6 +277,16 @@ export interface SlaSpec {
    * arithmetic (§5.3) has enough to actually compute a real deadline against real business
    * hours/holidays, not just wall-clock time. */
   duration: { amount: number; unit: 'minutes' | 'hours' | 'business_hours' | 'business_days' }
+  /** Absent (the default, and the only shape Empire Homecare's own example needs) means a
+   * single deadline. Present means the same deadline re-arms every `duration` after the
+   * previous instance of it is met, for as long as the promise instance remains in
+   * `whileInState` -- e.g. "a status update at least every 30 minutes while the incident
+   * remains open." Found necessary by the Phase 0 pressure test (§4.5b) against a SaaS
+   * incident-response contract -- Empire Homecare's referral-intake never needed this, so the
+   * gap wasn't visible until a genuinely different example was worked through. Kept
+   * deliberately minimal: no cron-style cadence expressions, no per-recurrence variable
+   * duration -- just "the same fixed interval, repeated, while a condition holds." */
+  recurring?: { whileInState: string }
 }
 
 export interface BusinessCalendarRef {
@@ -346,6 +361,8 @@ A `ProcessContract` is well-formed only if (all deterministic, no LLM call, styl
 5. Every `SlaSpec.measuredFrom`/`expectedBy` and `ExceptionRule`/`EvidenceRequirement` reference real states/events/transitions.
 6. `correlationKey.fieldPath` is a non-empty, syntactically valid dot-path (structural check only — v0 cannot confirm the path actually exists in a real payload until compile time, §5.1).
 7. At least one terminal outcome has `outcome: 'success'` (a contract with no possible success path is almost certainly an authoring mistake, not a real business intent — flagged as an error, not silently accepted).
+8. **(Added post-pressure-test, §4.5b)** If any `SlaSpec`/`ExpirationRule` uses a `business_hours`/`business_days` duration unit, `businessCalendar` must be present; if `businessCalendar` is absent, no `SlaSpec`/`ExpirationRule` may use a business-calendar-aware unit. The two conditions are checked together, not independently, so a contract can never end up with a calendar-aware SLA and no calendar to compute it against, nor a populated calendar nobody actually needed.
+9. **(Added post-pressure-test, §4.5b)** `SlaSpec.recurring.whileInState`, when present, references a real `ProcessState.id`.
 
 **Outcome:** a `validateProcessContract(contract): ContractValidationIssue[]` function, exit-code-gated the same way `kairos validate-pack` already is. This ships in Phase 0 (§10) with zero LLM involvement — pure, fast, fully deterministic, the same trust profile as the existing 131-rule validator.
 
@@ -365,6 +382,29 @@ A `ProcessContract` is well-formed only if (all deterministic, no LLM call, styl
 - **Evidence requirements:** `{transitionId: "contact_attempted→contacted", requiredFields: ["callOutcome", "callTimestamp"], description: "The call log entry recording the attempt's result."}`
 
 This is deliberately worked through in full here, not left abstract, so §5-§7 below can each show exactly what they do *to this same contract* rather than re-explaining the domain each time.
+
+### 4.5b Pressure test: a second, deliberately contrasting example (Codex's explicit instruction — worked through *before* §4.3's schema above was finalized, not after)
+
+Codex's own framing for this step: *"Before finalizing the Phase 0 schema, sketch one non-homecare/non-referral example to test whether the schema is too Empire-specific. It does not need to compile or build yet — just use it to pressure-test the model."* This section is that pressure test, done honestly — it records what the schema got right on the first try, and the one real gap it found, rather than only the parts that confirm the original design.
+
+**The example: a SaaS company's P1 (critical) incident-response promise**, chosen specifically to differ from Empire Homecare's referral-intake along several axes at once — a system-generated (not customer-submitted) correlation key, a 24/7 (not business-hours) SLA sitting in the *same contract* as a business-hours SLA, and a recurring obligation rather than a single deadline:
+
+> *"Every P1 incident is acknowledged by an on-call engineer within 15 minutes of being raised, 24/7. While the incident remains open, a status update is posted at least every 30 minutes until it is resolved. Every P1 is followed by a post-incident report within 3 business days of resolution."*
+
+Worked through field by field against §4.3's schema *as originally drafted, before this section's own findings were folded back in above* (the diffs described below are what changed §4.3 already has applied — this section explains *why*, not just *what*):
+
+- **Entity/correlation key:** `{name: "Incident", ...}`, `{fieldPath: "body.incidentId", description: "The unique ID assigned by the paging system (e.g. PagerDuty) when the incident is created"}`. **Confirmed correct, no change:** `CorrelationKeySpec` is just "a field path into a payload" — it does not care whether the value is customer-submitted (a phone number) or system-generated (a paging-system ID). The abstraction already generalizes.
+- **States/events/transitions:** `raised → acknowledged → open_updating → resolved → postmortem_complete` (terminal, success), with `open_updating` looping on itself via repeated `status_update_posted` events, and a `downgraded` terminal (acceptable) if severity drops below P1 before resolution. **Confirmed correct, no change:** this maps cleanly onto `ProcessState`/`ProcessTransition` with zero new fields — and the `open_updating` self-loop is the *same pattern* Empire Homecare's own `received + intake_received → received` self-loop already used (§4.5), now proven in a second, unrelated domain rather than only once.
+- **SLA #1 (ack within 15 minutes, 24/7):** `{measuredFrom: {state: "raised"}, expectedBy: {state: "acknowledged"}, duration: {amount: 15, unit: "minutes"}}`. **Confirmed correct, no change:** this is exactly what the plain `'minutes'`/`'hours'` (wall-clock, non-business-hours) units in `SlaSpec.duration.unit` were already designed for — a real, working example of a 24/7 SLA that must NOT be computed against business hours, sitting in the schema's own type since the original draft.
+- **SLA #3 (post-incident report within 3 business days):** `{measuredFrom: {state: "resolved"}, expectedBy: {state: "postmortem_complete"}, duration: {amount: 3, unit: "business_days"}}`. **Confirmed correct, no change:** the business-calendar-aware unit works exactly as designed — and, combined with SLA #1 above, proves a *single contract* can legitimately mix wall-clock and business-calendar-aware SLAs, which the original schema already technically allowed (`SlaSpec[]`, each with its own `duration.unit`) but which Empire Homecare's own example (uniformly business-hours) never actually exercised.
+- **Exception on a missed ack SLA:** the natural instinct is "if ack is late, the promise is broken, expire the instance" — but a real P1 that's acknowledged *late* is still an ongoing incident that still needs to be acknowledged; it must not silently stop being tracked. Checked directly against the schema: `ExceptionRule` (§4.3) has no state-transition side effect of its own — firing an exception routes to ExceptionDesk (§7) but does not move the instance anywhere, and `ExpirationRule` is a *fully separate*, optional mechanism. **Confirmed correct, no change** — but this is a genuinely useful confirmation the Empire Homecare example alone didn't surface clearly, since there both mechanisms fired together at the same 24-hour boundary and could easily have been mistaken for coupled. This second example proves they're independent, which is exactly the behavior a real incident-response contract needs (raise the alarm; don't stop tracking the incident).
+- **SLA #2 (a status update at least every 30 minutes while open) — THE REAL GAP.** This is not a single deadline from one point to another; it's a recurring obligation that re-applies for as long as the instance sits in one state. §4.3's `SlaSpec` as originally drafted (`measuredFrom → expectedBy`, once) has no way to express "and then again, and then again, until the incident resolves." **This is a genuine, real gap the pressure test was specifically for.**
+
+**The decision, made here rather than deferred:** add one small, optional field — `SlaSpec.recurring?: { whileInState: string }` (full type + rationale now folded into §4.3 above) — rather than either silently leaving the gap unaddressed or building a general cadence/cron sub-language. The scope is deliberately narrow: a fixed interval, repeated, while a named state holds. No variable intervals, no cron expressions, no per-recurrence conditions. This is exactly the same "add exactly what a real example needs, nothing speculative" discipline the whole plan's §9 guardrails already commit to — the pressure test is what makes that discipline verifiable rather than aspirational.
+
+**A smaller, secondary finding, also folded into §4.3:** `businessCalendar` was originally a required field on every `ProcessContract`. This example's SLA #1/#2 are wall-clock and never reference the calendar at all — only SLA #3 does. Made `businessCalendar` optional, with §4.4's validator (rule 8, added here) enforcing the real constraint precisely: present if and only if some `SlaSpec`/`ExpirationRule` actually needs it, rather than a required field that's sometimes structurally unused.
+
+**What this pressure test did *not* find:** no change was needed to `EntityDefinition`, `ProcessState`, `ProcessEvent`, `ProcessTransition`, `TerminalOutcome`, `OwnerAssignment`, `ExceptionRule`, or `EvidenceRequirement` — all five carried over to a structurally different domain (system alerting vs. customer intake; 24/7 vs. business-hours; recurring vs. one-shot) without modification. That is a meaningfully positive signal about the schema's actual shape, not just an absence of problems — five of seven non-trivial structural concepts generalized on the first attempt, and the two that didn't (`SlaSpec`, `businessCalendar`) needed small, narrow, additive fixes, not a redesign. This is the outcome §9's "don't over-engineer, but do pressure-test before locking the schema" instruction was aiming for.
 
 ---
 
@@ -615,13 +655,16 @@ A new, enforced module-boundary test — `src/promise/` must never import from `
 
 Sequenced and checkpointed the same way the reliability-suite arc was: each phase re-verifies its own assumptions against the actual code at that point (not this document, which will be stale by the time later phases start — the reliability suite's own §6.1/§7.1/§8.0/§10.0 design-verification passes are the model to repeat, not skip).
 
-**Phase 0 — Schema + deterministic validator only. No LLM authoring, no compilation, no ledger.**
-- `src/promise/types.ts` (§4.3), `src/promise/validate.ts` (§4.4).
+**Phase 0 — Schema + deterministic validator + minimal storage only. No LLM authoring, no compilation, no ledger, no exception desk, no workflow reporting/listener, no dashboard, no autonomous decisions, no hosted service (Codex's guardrail list, restated verbatim as this phase's own scope boundary, 2026-07-19).**
+- Pressure-test a second, deliberately non-homecare/non-referral example against the schema *before* locking the types (§4.5b — done in this same planning pass, folded back into §4.3/§4.4 above; a real gap found and fixed narrowly: `SlaSpec.recurring`, plus `businessCalendar` made conditionally-required).
+- `src/promise/types.ts` (§4.3, post-pressure-test).
+- `src/promise/validate.ts` (§4.4, 9 rules including the two the pressure test added).
+- `src/promise/store.ts` — minimal save/load/list for a `ProcessContract` JSON file (mirrors `reliability/repair/snapshot.ts`'s own small save/list/load precedent, §3.6's sibling pattern — no versioning/update semantics yet, that's real design work for a later phase, not assumed here).
 - `kairos contract validate <file.json> [--json]` CLI command.
-- The Empire Homecare example (§4.5) hand-authored as a fixture, used as the primary test case.
-- Deliberately-broken variants (unreachable state, dangling transition reference, a `terminal: true` state with an outgoing transition, zero success-outcome terminals) as negative test fixtures, matching the validator's own established "prove the check actually catches the thing" discipline.
+- Two positive fixtures: the Empire Homecare example (§4.5) and the SaaS incident-response example (§4.5b) — both hand-authored, both validated clean, proving the schema (and the validator) against two structurally different domains, not just the one it was originally designed around.
+- Deliberately-broken variants (unreachable state, dangling transition reference, a `terminal: true` state with an outgoing transition, zero success-outcome terminals, a business-calendar-aware SLA with no `businessCalendar` present, a dangling `recurring.whileInState` reference) as negative test fixtures, one per validator rule, matching the workflow validator's own established "prove the check actually catches the thing, specifically, not just generically" discipline.
 - The module-boundary firewall test (§9.4) ships in this same phase, not later — the privacy guardrail exists before there's real data to violate it, the identical discipline `module-boundaries.test.ts` itself was built with (asserted before `community/` had any files, §3.6 of the reliability-suite-plan).
-- **Checkpoint:** hand-author the Empire Homecare contract, confirm it validates cleanly; confirm every negative fixture is correctly rejected with a specific, correct reason (not just "invalid").
+- **Checkpoint:** hand-author both fixtures, confirm both validate cleanly; confirm every negative fixture is correctly rejected with a specific, correct reason (not just "invalid"); confirm save/load round-trips a contract byte-for-byte.
 
 **Phase 1 — LLM-assisted contract authoring from a raw description.**
 - `planProcessContract(description: string): Promise<ProcessContract>`, mirroring `PackBuilder.plan()`'s shape (§3.1) — same `assumptions`/blocking-escalation pattern reused verbatim, not reinvented.
