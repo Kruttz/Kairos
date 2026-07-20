@@ -3,6 +3,7 @@ import { spawnSync, spawn } from 'node:child_process'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { mkdtemp, writeFile, rm, readFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { createServer, type Server } from 'node:http'
 import { FileLibrary } from '../../../src/library/file-library.js'
@@ -57,6 +58,29 @@ describe('CLI — parseArgs / routing', () => {
       expect(r.stdout).toContain('ANTHROPIC_API_KEY')
       expect(r.stdout).toContain('N8N_BASE_URL')
       expect(r.stdout).toContain('KAIROS_MODEL')
+    })
+  })
+
+  describe('cli.ts must never statically import client.js (2026-07-19 npm-pack smoke test finding)', () => {
+    // Real bug found via a real `npm pack` + fresh install (no dev node_modules, no optional
+    // peer deps): a *static* `import { Kairos } from './client.js'` at cli.ts's top level made
+    // the entire CLI -- including --help and every command that never touches generation --
+    // crash with ERR_MODULE_NOT_FOUND on any install that skipped @anthropic-ai/sdk (an
+    // intentionally optional peer dependency -- kairos-mcp never needs an Anthropic API key).
+    // ES module static imports resolve before any code runs, so this was unreachable from a
+    // normal dev-tree test run (the peer dep IS present in this repo's own node_modules) --
+    // only a real fresh install without it ever surfaces it. This test encodes the fix as a
+    // cheap, always-run static check: as long as the import stays type-only, the regression is
+    // structurally impossible regardless of what's installed.
+    it('imports Kairos as a type only, never as a value, at the top level', () => {
+      const cliSrc = readFileSync(CLI, 'utf-8')
+      expect(cliSrc).toMatch(/import type \{ Kairos \} from '\.\/client\.js'/)
+      expect(cliSrc).not.toMatch(/^import \{ Kairos \}/m)
+    })
+
+    it('createClient/createDryRunClient import the real Kairos value dynamically', () => {
+      const cliSrc = readFileSync(CLI, 'utf-8')
+      expect(cliSrc).toContain("const { Kairos } = await import('./client.js')")
     })
   })
 

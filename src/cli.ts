@@ -1,6 +1,16 @@
 #!/usr/bin/env node
 
-import { Kairos } from './client.js'
+// Kairos is imported as a type only here -- @anthropic-ai/sdk (an optional peer dependency,
+// deliberately, so `kairos-mcp` never needs an Anthropic API key) is pulled in transitively by
+// client.ts's own top-level import. A real npm-pack + fresh-install smoke test (2026-07-19
+// closeout) found that a *static* top-level `import { Kairos }` here made the entire CLI --
+// including --help and every command that never touches generation (drift/chaos/watch/repair/
+// patterns/etc.) -- crash immediately with ERR_MODULE_NOT_FOUND on any install that skipped the
+// optional peer dependency, since ES module static imports resolve before any code (including
+// argument parsing) runs. createClient()/createDryRunClient() below import the real value
+// dynamically, deferring the @anthropic-ai/sdk resolution until a command that actually
+// generates something is invoked.
+import type { Kairos } from './client.js'
 import { FileLibrary } from './library/file-library.js'
 import { TemplateSyncer } from './templates/syncer.js'
 import { PatternAnalyzer } from './telemetry/pattern-analyzer.js'
@@ -230,6 +240,7 @@ async function loadNodeRegistry(): Promise<NodeRegistry | undefined> {
 async function createClient(clientId?: string): Promise<Kairos> {
   const telemetry = getTelemetryOption()
   const nodeRegistry = await loadNodeRegistry()
+  const { Kairos } = await import('./client.js')
   return new Kairos({
     anthropicApiKey: getEnvOrExit('ANTHROPIC_API_KEY'),
     n8nBaseUrl: getEnvOrExit('N8N_BASE_URL'),
@@ -248,6 +259,7 @@ async function createClient(clientId?: string): Promise<Kairos> {
 async function createDryRunClient(clientId?: string): Promise<Kairos> {
   const telemetry = getTelemetryOption()
   const nodeRegistry = await loadNodeRegistry()
+  const { Kairos } = await import('./client.js')
   return new Kairos({
     anthropicApiKey: getEnvOrExit('ANTHROPIC_API_KEY'),
     ...(process.env['N8N_BASE_URL'] ? { n8nBaseUrl: process.env['N8N_BASE_URL'] } : {}),
