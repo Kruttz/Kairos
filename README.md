@@ -72,6 +72,7 @@ console.log(pack.testChecklist)               // how to verify each workflow
 | Verifies a candidate change behaves like the version it replaces before deploy (`kairos replay run`) | That every workflow matches intent perfectly |
 | Proposes and, gated + snapshot-backed + replay-verified, applies a restore for build-vs-live structural drift (`kairos repair propose`/`apply`, `kairos rollback`) | Full replacement for human review |
 | Exports your own confirmed patterns for the community, and optionally ingests others' — informational only, never influencing your local scoring (`kairos patterns share`/`ingest`/`sync`) | — |
+| Compiles a business promise (states, SLAs, owners, terminal outcomes) into workflows, tracks whether it was actually kept from real execution evidence, and opens/reports exceptions for a real miss (`kairos contract plan`/`compile`/`report`, `kairos watch --contracts`) | Autonomous business decisions — exception detection is automatic, but resolution is human-only, always, with no `--auto` mode at all |
 | Documents assumptions, open questions, and test steps | — |
 | Syncs node types from your live instance | — |
 | Learns from prior builds and failures | — |
@@ -922,7 +923,7 @@ kairos trace record <n8n-workflow-id>
 # before being returned, and always saved to ~/.kairos/contracts/<client-id>/<id>.json for human
 # review -- even when it needs review, it is never withheld. Exits 2 (not 1) when the draft has
 # a validation error or a blocking assumption, so scripts can tell "needs a human" apart from a
-# hard failure. No ProofLedger, no ExceptionDesk yet.
+# hard failure.
 kairos contract plan "every referral gets contacted within 4 business hours, outcome logged" --client-id acme
 kairos contract plan "..." --client-id acme --json  # full PlanContractResult as JSON
 

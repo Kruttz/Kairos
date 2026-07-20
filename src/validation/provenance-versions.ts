@@ -102,16 +102,24 @@ function findKairosPackageJson(startDir: string): string | null {
  *
  * Real bug found and fixed via a live Phase 5 checkpoint (docs/plans/
  * process-contract-promise-engine-plan.md): a real `kairos contract report --bundle` run
- * through the actual bundled `dist/cli.cjs` reported 'unknown' where a real version was
+ * through the built `dist/cli.cjs` artifact reported 'unknown' where a real version was
  * expected. Root cause confirmed directly in the built output: tsup's CJS build shims
  * `import.meta` to a bare `{}` (`import_meta = {}` in dist/cli.cjs), so `import.meta.url` is
- * `undefined` in that context -- the exact same class of dist-only bug as the eager
- * `@anthropic-ai/sdk` import found in the reliability-suite closeout, invisible to any
- * source-tree test since tests never run against the bundled output. Fixed by falling back to
- * `process.argv[1]` (the running script's own path, always defined for both ESM and CJS entry
- * points) whenever `import.meta.url` is unavailable -- correctly finds this package's own
- * package.json for the CLI (`dist/cli.cjs`, `dist/mcp-server.cjs`, etc., all siblings in the
- * same `dist/` directory), the dominant real-world runtime this function needs to serve.
+ * `undefined` in that context.
+ *
+ * Precisely scoped by a real `npm pack` + fresh-install check (Promise Engine v0 closeout,
+ * 2026-07-20), not assumed: the actual published CLI is unaffected -- `bin.kairos` in
+ * package.json resolves to the ESM `dist/cli.js`, where `import.meta.url` is never shimmed,
+ * confirmed by generating a real report through the real installed binary in a clean scratch
+ * install and getting the correct version back. This bug is real for the two paths that do load
+ * the CJS build: a `require('@kairos-sdk/core')` consumer (a documented `exports` "require"
+ * condition, pointing at `dist/index.cjs`) inspecting `BuildProvenance` or calling
+ * `writeBundle()` themselves, or anyone directly invoking `dist/cli.cjs` rather than the
+ * published `kairos` bin -- a real, narrower bug than the eager `@anthropic-ai/sdk` import found
+ * in the reliability-suite closeout (which broke the actual published CLI for every command),
+ * not the same severity, just the same "invisible to any source-tree test" class. Fixed by
+ * falling back to `process.argv[1]` (the running script's own path, always defined for both ESM
+ * and CJS entry points) whenever `import.meta.url` is unavailable.
  */
 export function getKairosVersion(): string {
   if (cachedKairosVersion !== null) return cachedKairosVersion
