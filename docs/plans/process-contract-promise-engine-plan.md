@@ -216,6 +216,13 @@ export interface StartCondition {
    * reads, not a formal trigger-matching DSL) since the actual binding to a real webhook/
    * schedule happens at compile time (§5.1), not contract-authoring time. */
   trigger: string
+  /** Which ProcessState.id a new promise instance begins in when this condition fires.
+   * Explicit, not inferred from a self-loop transition or any other convention -- found missing
+   * while implementing the deterministic validator's reachability check (§4.4 rule 3), which
+   * genuinely needs a real starting point to compute reachability from. Replaces this plan's
+   * original self-loop-as-implicit-start modeling (§4.5's first draft) -- a promise instance
+   * simply comes into existence in `initialState`, no synthetic "start event" needed. */
+  initialState: string
 }
 
 export interface ProcessState {
@@ -356,7 +363,7 @@ A `ProcessContract` is well-formed only if (all deterministic, no LLM call, styl
 
 1. Every `ProcessTransition.fromState`/`toState` references a real `ProcessState.id`.
 2. Every `ProcessTransition.event` references a real `ProcessEvent.id`.
-3. Every state is reachable from at least one `StartCondition` via some transition path (unreachable states are a real authoring bug, not a stylistic nit — an unreachable state can never be entered, so any owner/SLA/exception rule attached to it is dead code).
+3. Every state is reachable from at least one `StartCondition.initialState` via zero or more transitions (an initial state is trivially reachable from itself; unreachable states are a real authoring bug, not a stylistic nit — an unreachable state can never be entered, so any owner/SLA/exception rule attached to it is dead code). Every `StartCondition.initialState` references a real `ProcessState.id`.
 4. Every state flagged `terminal: true` has no outgoing transitions (a "terminal" state that can still transition is a contradiction), and every state referenced in `terminalOutcomes` is flagged `terminal: true` (keeps §4.3's deliberate double-bookkeeping honest — see the comment on `ProcessState.terminal`).
 5. Every `SlaSpec.measuredFrom`/`expectedBy` and `ExceptionRule`/`EvidenceRequirement` reference real states/events/transitions.
 6. `correlationKey.fieldPath` is a non-empty, syntactically valid dot-path (structural check only — v0 cannot confirm the path actually exists in a real payload until compile time, §5.1).
@@ -371,8 +378,9 @@ A `ProcessContract` is well-formed only if (all deterministic, no LLM call, styl
 - **Entity:** `{name: "Referral", description: "A person referred to Empire Homecare for DME services"}`
 - **Correlation key:** `{fieldPath: "body.phone", description: "The referral's phone number, as submitted on the intake form"}`
 - **States:** `received` (terminal: false) → `contact_attempted` (terminal: false) → `contacted` (terminal: false, an intermediate success-path state, not terminal itself since it still needs an outcome) → `scheduled` (terminal: true), `declined` (terminal: true), `no_answer` (terminal: true, reached via expiration, §4.3's `ExpirationRule`)
-- **Events:** `intake_received`, `call_attempted`, `call_answered`, `call_no_answer`, `customer_declined`, `appointment_scheduled`
-- **Transitions:** `received + intake_received → received` (self-loop representing the start itself — see §9.6's note on this being a v0 simplification), `received + call_attempted → contact_attempted`, `contact_attempted + call_answered → contacted`, `contacted + appointment_scheduled → scheduled`, `contacted + customer_declined → declined`
+- **Start condition:** `{trigger: "New row in the referral intake Google Sheet / webhook POST from the intake form", initialState: "received"}` — a new instance comes into existence directly in `received`; no synthetic "start event" needed (§4.3's `StartCondition.initialState`, added while implementing the reachability validator — see that field's own comment for why).
+- **Events:** `call_attempted`, `call_answered`, `call_no_answer`, `customer_declined`, `appointment_scheduled`
+- **Transitions:** `received + call_attempted → contact_attempted`, `contact_attempted + call_answered → contacted`, `contacted + appointment_scheduled → scheduled`, `contacted + customer_declined → declined`
 - **Terminal outcomes:** `scheduled` (success), `declined` (acceptable — the promise to *attempt* contact was kept even though the answer was no), `no_answer` (failure)
 - **Owners:** `{state: "received", owner: "intake coordinator"}`, `{state: "contact_attempted", owner: "on-call rep"}`
 - **SLA:** `{measuredFrom: {state: "received"}, expectedBy: {state: "contact_attempted"}, duration: {amount: 4, unit: "business_hours"}}`
@@ -394,7 +402,7 @@ Codex's own framing for this step: *"Before finalizing the Phase 0 schema, sketc
 Worked through field by field against §4.3's schema *as originally drafted, before this section's own findings were folded back in above* (the diffs described below are what changed §4.3 already has applied — this section explains *why*, not just *what*):
 
 - **Entity/correlation key:** `{name: "Incident", ...}`, `{fieldPath: "body.incidentId", description: "The unique ID assigned by the paging system (e.g. PagerDuty) when the incident is created"}`. **Confirmed correct, no change:** `CorrelationKeySpec` is just "a field path into a payload" — it does not care whether the value is customer-submitted (a phone number) or system-generated (a paging-system ID). The abstraction already generalizes.
-- **States/events/transitions:** `raised → acknowledged → open_updating → resolved → postmortem_complete` (terminal, success), with `open_updating` looping on itself via repeated `status_update_posted` events, and a `downgraded` terminal (acceptable) if severity drops below P1 before resolution. **Confirmed correct, no change:** this maps cleanly onto `ProcessState`/`ProcessTransition` with zero new fields — and the `open_updating` self-loop is the *same pattern* Empire Homecare's own `received + intake_received → received` self-loop already used (§4.5), now proven in a second, unrelated domain rather than only once.
+- **States/events/transitions:** `raised → acknowledged → open_updating → resolved → postmortem_complete` (terminal, success), with `open_updating` looping on itself via repeated `status_update_posted` events, and a `downgraded` terminal (acceptable) if severity drops below P1 before resolution. **Confirmed correct, no change:** this maps cleanly onto `ProcessState`/`ProcessTransition` with zero new fields — a genuine, meaningful self-loop (an update event that keeps the instance in the same state) is representable exactly the same way an ordinary transition is, no special case needed.
 - **SLA #1 (ack within 15 minutes, 24/7):** `{measuredFrom: {state: "raised"}, expectedBy: {state: "acknowledged"}, duration: {amount: 15, unit: "minutes"}}`. **Confirmed correct, no change:** this is exactly what the plain `'minutes'`/`'hours'` (wall-clock, non-business-hours) units in `SlaSpec.duration.unit` were already designed for — a real, working example of a 24/7 SLA that must NOT be computed against business hours, sitting in the schema's own type since the original draft.
 - **SLA #3 (post-incident report within 3 business days):** `{measuredFrom: {state: "resolved"}, expectedBy: {state: "postmortem_complete"}, duration: {amount: 3, unit: "business_days"}}`. **Confirmed correct, no change:** the business-calendar-aware unit works exactly as designed — and, combined with SLA #1 above, proves a *single contract* can legitimately mix wall-clock and business-calendar-aware SLAs, which the original schema already technically allowed (`SlaSpec[]`, each with its own `duration.unit`) but which Empire Homecare's own example (uniformly business-hours) never actually exercised.
 - **Exception on a missed ack SLA:** the natural instinct is "if ack is late, the promise is broken, expire the instance" — but a real P1 that's acknowledged *late* is still an ongoing incident that still needs to be acknowledged; it must not silently stop being tracked. Checked directly against the schema: `ExceptionRule` (§4.3) has no state-transition side effect of its own — firing an exception routes to ExceptionDesk (§7) but does not move the instance anywhere, and `ExpirationRule` is a *fully separate*, optional mechanism. **Confirmed correct, no change** — but this is a genuinely useful confirmation the Empire Homecare example alone didn't surface clearly, since there both mechanisms fired together at the same 24-hour boundary and could easily have been mistaken for coupled. This second example proves they're independent, which is exactly the behavior a real incident-response contract needs (raise the alarm; don't stop tracking the incident).
@@ -528,7 +536,7 @@ export interface ProofLedgerEntry {
 
 ### 6.5 Applied to the running example
 
-A real referral's timeline in ProofLedger might read: `{kind: 'event', eventId: 'intake_received', status: 'observed', evidenceQuality: 'specific', sourceExecutionId: 'exec-abc'}` → `{kind: 'evidence', eventId: 'call_attempted', status: 'observed', detail: 'Call attempted, outcome: no answer.'}` (twice more, per the 3-attempt exception rule) → if a 4th attempt never comes and 24 business hours pass with no `contacted`/`declined` event, **no new ProofLedger entry is ever fabricated** — the *absence* of an expected entry, evaluated against the SLA (§5.3), is what `checkSlaCompliance()` reports as drifting, exactly the same "absence is itself the evidence" pattern D6 (cadence drift/silent-stop) already uses today.
+A real referral's timeline in ProofLedger might read: the instance is created in `received` per its `StartCondition` (no event entry needed for this — coming into existence is not itself an observation) → `{kind: 'evidence', eventId: 'call_attempted', status: 'observed', detail: 'Call attempted, outcome: no answer.'}` (twice more, per the 3-attempt exception rule) → if a 4th attempt never comes and 24 business hours pass with no `contacted`/`declined` event, **no new ProofLedger entry is ever fabricated** — the *absence* of an expected entry, evaluated against the SLA (§5.3), is what `checkSlaCompliance()` reports as drifting, exactly the same "absence is itself the evidence" pattern D6 (cadence drift/silent-stop) already uses today.
 
 ---
 
