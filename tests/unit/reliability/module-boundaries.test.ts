@@ -4,6 +4,7 @@ import { join } from 'node:path'
 
 const REPO_ROOT = join(__dirname, '../../..')
 const COMMUNITY_DIR = join(REPO_ROOT, 'src/reliability/community')
+const PROMISE_DIR = join(REPO_ROOT, 'src/promise')
 
 /**
  * Enforces the G4 firewall (docs/plans/reliability-suite-plan.md §12, §10.6): the Phase 5
@@ -96,5 +97,62 @@ describe('module boundary: pattern-analyzer.ts must never import reliability/com
   it('src/telemetry/pattern-analyzer.ts never references the community-patterns.json path literally', () => {
     const analyzerSrc = readFileSync(join(REPO_ROOT, 'src/telemetry/pattern-analyzer.ts'), 'utf-8')
     expect(/community-patterns\.json/.test(analyzerSrc)).toBe(false)
+  })
+})
+
+/**
+ * A new bidirectional firewall for src/promise/ (ProcessContract/ProofLedger/ExceptionDesk,
+ * docs/plans/process-contract-promise-engine-plan.md), shipped in Phase 0 itself rather than
+ * bolted on once real business data flows through it -- the identical discipline this repo's
+ * own community/ firewall (§ above) and module-boundaries.test.ts's own docstring precedent
+ * were built with: assert the boundary before there's anything real to violate it, not after.
+ *
+ * Community pattern sharing (Phase 5) exports validator-rule patterns -- rule numbers, pipeline
+ * stages, occurrence counts. Nothing about a real business's real promise instances (a real
+ * phone number's correlation-key hash, a real evidence detail string) should ever be reachable
+ * from that export path, structurally, from the moment src/promise/ has its first real file.
+ * Checked in both directions: promise/ must never import community/, and community/ must never
+ * import promise/ -- either direction would create a channel the other doesn't currently have.
+ */
+describe('module boundary: src/promise/ and reliability/community/ must never reach each other', () => {
+  function promiseFiles(): string[] {
+    if (!existsSync(PROMISE_DIR)) return []
+    return readdirSync(PROMISE_DIR, { recursive: true })
+      .filter((f): f is string => typeof f === 'string' && f.endsWith('.ts') && !f.endsWith('.test.ts'))
+      .map(f => join(PROMISE_DIR, f))
+  }
+
+  function communityFiles(): string[] {
+    if (!existsSync(COMMUNITY_DIR)) return []
+    return readdirSync(COMMUNITY_DIR, { recursive: true })
+      .filter((f): f is string => typeof f === 'string' && f.endsWith('.ts') && !f.endsWith('.test.ts'))
+      .map(f => join(COMMUNITY_DIR, f))
+  }
+
+  it('no file under src/promise/ imports reliability/community/', () => {
+    const violations: string[] = []
+    for (const file of promiseFiles()) {
+      const content = readFileSync(file, 'utf-8')
+      if (/from\s+['"].*reliability\/community/.test(content)) violations.push(file)
+    }
+    expect(violations, `These files illegally import reliability/community/: ${violations.join(', ')}`).toEqual([])
+  })
+
+  it('no file under reliability/community/ imports src/promise/', () => {
+    const violations: string[] = []
+    for (const file of communityFiles()) {
+      const content = readFileSync(file, 'utf-8')
+      if (/from\s+['"].*(^|\/)promise\//.test(content)) violations.push(file)
+    }
+    expect(violations, `These files illegally import src/promise/: ${violations.join(', ')}`).toEqual([])
+  })
+
+  it('no file under reliability/community/ references the contracts directory path literally', () => {
+    const violations: string[] = []
+    for (const file of communityFiles()) {
+      const content = readFileSync(file, 'utf-8')
+      if (/['"`].*\.kairos[/\\]contracts['"`]/.test(content)) violations.push(file)
+    }
+    expect(violations, `These files reference the contracts/ path directly: ${violations.join(', ')}`).toEqual([])
   })
 })
