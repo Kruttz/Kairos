@@ -214,4 +214,69 @@ describe('validateProcessContract', () => {
       expect(issues.some(i => i.rule === 9 && i.message.includes('does_not_exist'))).toBe(true)
     })
   })
+
+  describe('negative fixtures on disk -- the exact files kairos contract validate is checkpointed against', () => {
+    // Distinct from the mutation-based tests above: these prove the STATIC FILES committed to
+    // tests/fixtures/contracts/ (the ones a real `kairos contract validate <file>` invocation
+    // will be run against during the live checkpoint) are correctly rejected, not just an
+    // in-memory mutation of the same shape.
+    it('negative-unreachable-state.json is rejected under rule 3', () => {
+      const issues = validateProcessContract(loadFixture('negative-unreachable-state.json'))
+      expect(issues.some(i => i.rule === 3 && i.message.includes('unreachable'))).toBe(true)
+    })
+
+    it('negative-dangling-transition.json is rejected under rule 1', () => {
+      const issues = validateProcessContract(loadFixture('negative-dangling-transition.json'))
+      expect(issues.some(i => i.rule === 1)).toBe(true)
+    })
+
+    it('negative-terminal-with-outgoing-transition.json is rejected under rule 4', () => {
+      const issues = validateProcessContract(loadFixture('negative-terminal-with-outgoing-transition.json'))
+      expect(issues.some(i => i.rule === 4 && i.message.includes('outgoing transition'))).toBe(true)
+    })
+
+    it('negative-no-success-outcome.json is rejected under rule 7', () => {
+      const issues = validateProcessContract(loadFixture('negative-no-success-outcome.json'))
+      expect(issues.some(i => i.rule === 7)).toBe(true)
+    })
+
+    it('negative-missing-business-calendar.json is rejected under rule 8', () => {
+      const issues = validateProcessContract(loadFixture('negative-missing-business-calendar.json'))
+      expect(issues.some(i => i.rule === 8)).toBe(true)
+    })
+
+    it('four of the five fixtures are rejected for exactly one specific reason, not a generic catch-all', () => {
+      // Every fixture below should fail for exactly the rule it was constructed to violate, and
+      // never accidentally trip a completely unrelated rule instead -- proves the fixtures are
+      // each isolated, single-issue mutations of a real, otherwise-valid contract.
+      // negative-dangling-transition.json is deliberately excluded here -- see the dedicated
+      // test below for why it's a real exception, not an oversight.
+      const cases: Array<[string, number]> = [
+        ['negative-unreachable-state.json', 3],
+        ['negative-terminal-with-outgoing-transition.json', 4],
+        ['negative-no-success-outcome.json', 7],
+        ['negative-missing-business-calendar.json', 8],
+      ]
+      for (const [file, expectedRule] of cases) {
+        const issues = validateProcessContract(loadFixture(file)).filter(i => i.severity === 'error')
+        expect(issues.map(i => i.rule), file).toEqual([expectedRule])
+      }
+    })
+
+    it('negative-dangling-transition.json genuinely, correctly cascades beyond rule 1 -- a real finding, not a test bug', () => {
+      // Empire Homecare's fixture is a strictly linear chain (received -> contact_attempted ->
+      // contacted -> {scheduled, declined}, plus contact_attempted's expiration to no_answer).
+      // Breaking the one transition connecting `received` to everything downstream doesn't just
+      // trip rule 1 (the dangling fromState itself) -- it also correctly orphans every state
+      // that was only reachable through that edge (contact_attempted, contacted, scheduled,
+      // declined, and no_answer via the now-unreachable contact_attempted's expiration rule).
+      // Found live while writing this exact test, not predicted in advance -- confirms rule 3's
+      // reachability check is doing real, thorough graph analysis, not a shallow direct-edge
+      // check that would have missed the transitive orphaning.
+      const issues = validateProcessContract(loadFixture('negative-dangling-transition.json')).filter(i => i.severity === 'error')
+      expect(issues.some(i => i.rule === 1)).toBe(true)
+      expect(issues.filter(i => i.rule === 3).length).toBeGreaterThan(0)
+      expect(issues.every(i => i.rule === 1 || i.rule === 3)).toBe(true)
+    })
+  })
 })
