@@ -913,6 +913,17 @@ kairos pack export my-pack --impact-notes
 # Record a deployed workflow's latest n8n execution into the library (improves retrieval)
 kairos trace record <n8n-workflow-id>
 
+# Validate a ProcessContract JSON file against the deterministic contract validator --
+# reachability, terminal-state consistency, dangling references, business-calendar
+# consistency. Fully offline, no LLM call. ProcessContract v0 is Phase 0 of a separate,
+# later-stage arc (docs/plans/process-contract-promise-engine-plan.md) that turns Kairos from
+# "did the workflow behave" into "was the business promise kept" -- deliberately separate from
+# PackPlan, since a contract describes a business promise (entities, states, SLAs, terminal
+# outcomes) and a pack describes workflows to build. Schema + validator only in this phase --
+# no LLM authoring, no compilation to a real pack, no ProofLedger, no ExceptionDesk.
+kairos contract validate <file.json>
+kairos contract validate <file.json> --json  # exact structured issues, not rendered text
+
 # Report what Kairos currently knows for this workflow -- which of the 9 named drift checks
 # have real data to evaluate ("captured") vs. which don't yet or structurally can't
 # ("skipped"), and why. Does not compute a verdict -- see "drift check" for that.

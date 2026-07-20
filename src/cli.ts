@@ -32,6 +32,7 @@ Usage:
   kairos validate-pack <name>
   kairos preflight <name> [--live] [--bundle-dir <dir>] [--client-id <slug>] [--json]
   kairos trace record <n8n-workflow-id>
+  kairos contract validate <file.json> [--json]
   kairos drift baseline <n8n-workflow-id> [--json]
   kairos drift check <n8n-workflow-id> [--live] [--original-build-hash <hash>] [--json]
   kairos sandbox up [--port <n>]
@@ -115,6 +116,17 @@ Patterns ingest/sync (community pattern library, EXPERIMENTAL -- see docs/plans/
                              never influences generation. Set KAIROS_COMMUNITY_PATTERNS=true to
                              see it (clearly marked [EXPERIMENTAL COMMUNITY]) in 'kairos patterns'
                              output; unset it (the default) to fully disable the display.
+
+Contract options (ProcessContract v0, Phase 0 only -- see docs/plans/process-contract-promise-engine-plan.md):
+  contract validate <file.json>  Validate a ProcessContract JSON file against the deterministic
+                                  contract validator (reachability, terminal-state consistency,
+                                  dangling references, business-calendar consistency). Fully
+                                  offline. contract plan/compile are later phases, not built yet
+                                  -- ProcessContract is deliberately separate from PackPlan
+                                  (a contract describes a business promise; a pack describes
+                                  workflows to build), and this phase ships the schema +
+                                  validator only, no LLM authoring, no compilation, no
+                                  ProofLedger, no ExceptionDesk, no workflow reporting/listener.
 
 Sessions options:
   --limit <n>     Number of recent sessions to show (default: 20)
@@ -1394,6 +1406,76 @@ async function handleValidatePack(positional: string[]): Promise<void> {
   if (errors.length > 0) process.exit(1)
 }
 
+async function handleContract(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const subcommand = positional[0]
+
+  if (subcommand === 'plan' || subcommand === 'compile') {
+    console.error(`kairos contract ${subcommand} is not built yet -- Phase 0 (docs/plans/process-contract-promise-engine-plan.md) ships the schema and validator only.`)
+    console.error('Run "kairos contract validate <file.json>" against a hand-authored contract instead.')
+    process.exit(1)
+  }
+
+  if (subcommand !== 'validate') {
+    console.error('Usage: kairos contract validate <file.json> [--json]')
+    console.error('')
+    console.error("Validates a ProcessContract JSON file against Kairos's deterministic")
+    console.error('contract validator -- reachability, terminal-state consistency, dangling')
+    console.error('references, business-calendar consistency, and more. Fully offline: no')
+    console.error('Anthropic/n8n API calls, no credentials required. Phase 0 only -- there is')
+    console.error('no `kairos contract plan`/`compile` yet (docs/plans/')
+    console.error('process-contract-promise-engine-plan.md).')
+    process.exit(1)
+  }
+
+  const filePath = positional[1]
+  if (!filePath) {
+    console.error('Usage: kairos contract validate <file.json> [--json]')
+    process.exit(1)
+  }
+
+  const { validateProcessContract } = await import('./promise/validate.js')
+  const { readFile } = await import('node:fs/promises')
+
+  let contract: import('./promise/types.js').ProcessContract
+  try {
+    const content = await readFile(filePath, 'utf-8')
+    contract = JSON.parse(content) as import('./promise/types.js').ProcessContract
+  } catch (err) {
+    console.error(`Could not read or parse ${filePath}: ${err instanceof Error ? err.message : String(err)}`)
+    process.exit(1)
+  }
+
+  const issues = validateProcessContract(contract)
+
+  if (flags['json'] === true) {
+    console.log(JSON.stringify({ valid: issues.filter(i => i.severity === 'error').length === 0, issues }, null, 2))
+    if (issues.some(i => i.severity === 'error')) process.exit(1)
+    return
+  }
+
+  if (issues.length === 0) {
+    console.log(`✓ ${filePath} passed all contract validator checks`)
+    return
+  }
+
+  const errors = issues.filter(i => i.severity === 'error')
+  const warnings = issues.filter(i => i.severity === 'warn')
+
+  console.log(`\n${filePath} — Contract Validation`)
+  console.log('─'.repeat(50))
+  console.log(`Issues: ${errors.length} error(s), ${warnings.length} warning(s)`)
+  console.log('')
+
+  for (const issue of errors) {
+    console.log(`  ✗ [error] [Rule ${issue.rule}] ${issue.message}${issue.path ? ` (${issue.path})` : ''}`)
+  }
+  for (const issue of warnings) {
+    console.log(`  ⚠ [warn]  [Rule ${issue.rule}] ${issue.message}${issue.path ? ` (${issue.path})` : ''}`)
+  }
+
+  if (errors.length > 0) process.exit(1)
+}
+
 async function handleDrift(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const subcommand = positional[0]
   const n8nWorkflowId = positional[1]
@@ -2415,6 +2497,9 @@ async function main(): Promise<void> {
       break
     case 'trace':
       await handleTrace(positional)
+      break
+    case 'contract':
+      await handleContract(positional, flags)
       break
     case 'drift':
       await handleDrift(positional, flags)
