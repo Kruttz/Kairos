@@ -42,11 +42,20 @@ export interface HookInvocationResult {
   error?: string
 }
 
-/** Runs a user-supplied shell command with the drifting result's JSON piped on stdin. Bounded
- * (never hangs indefinitely -- same "bounded, backs off, never indefinite" discipline as
- * replay/chaos polling), and its own failure is reported, never thrown -- a broken or slow hook
- * must never crash or stall the tick loop that invoked it. */
-export function invokeOnDriftHook(command: string, result: WatchTickResult, timeoutMs = DEFAULT_HOOK_TIMEOUT_MS): Promise<HookInvocationResult> {
+/** Runs a user-supplied shell command with `result`'s JSON piped on stdin. Bounded (never hangs
+ * indefinitely -- same "bounded, backs off, never indefinite" discipline as replay/chaos
+ * polling), and its own failure is reported, never thrown -- a broken or slow hook must never
+ * crash or stall the tick loop that invoked it.
+ *
+ * `result` is typed `unknown` rather than `WatchTickResult` -- the body only ever
+ * JSON.stringifies it, never reads a WatchTickResult-specific field, so this was already
+ * behaviorally generic. Widened (Phase 4, docs/plans/process-contract-promise-engine-plan.md)
+ * so `kairos watch --contracts`'s own exception alerts (a genuinely different payload shape,
+ * ExceptionDeskItem, not workflow drift) can reuse this exact spawn/timeout/EPIPE-safety
+ * mechanism -- a real, previously-hard-won bug fix (the reliability-suite closeout's EPIPE
+ * finding) -- rather than risking a second, unproven copy of it. Zero behavior change for
+ * existing callers. */
+export function invokeOnDriftHook(command: string, result: unknown, timeoutMs = DEFAULT_HOOK_TIMEOUT_MS): Promise<HookInvocationResult> {
   return new Promise((resolve) => {
     let settled = false
     const settle = (outcome: HookInvocationResult) => {
