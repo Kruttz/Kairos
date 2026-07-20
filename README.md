@@ -933,10 +933,14 @@ kairos contract plan "..." --client-id acme --json  # full PlanContractResult as
 # plan. With --build, feeds it into the exact same PackBuilder/Kairos.build() machinery
 # `kairos build-pack` uses -- full generation, validation, and (unless --dry-run) deployment, plus
 # (unless --dry-run) automatically registering the real deployed workflow ids against this
-# contract so `kairos ledger poll` knows what to poll. Refuses to compile at all (exit 2, no plan
-# produced) if the contract fails validation or still has a blocking assumption. Deliberately
-# does not attempt to prove the built workflows fulfill the contract -- that verification is
-# ProofLedger's job (see `kairos ledger poll` below).
+# contract. `--dry-run` deliberately never registers fake/placeholder workflow ids -- there are no
+# real ones yet. Refuses to compile at all (exit 2, no plan produced) if the contract fails
+# validation or still has a blocking assumption. Deliberately does not attempt to prove the built
+# workflows fulfill the contract -- that verification is ProofLedger's job (`kairos ledger poll`
+# below). IMPORTANT: `compile` only ever reads the given file -- it never saves the contract
+# itself anywhere. `kairos ledger poll`/`watch --contracts`/`contract report` all need BOTH a
+# saved contract (`kairos contract import`, below) AND a real, non-dry-run build's workflow
+# registration before they have anything to find -- neither one alone is enough.
 kairos contract compile <file.json>                       # print the compiled plan only
 kairos contract compile <file.json> --build --dry-run     # also generate + validate the workflows, skip deployment
 kairos contract compile <file.json> --json                # full CompileToPackPlanResult as JSON
@@ -946,6 +950,16 @@ kairos contract compile <file.json> --json                # full CompileToPackPl
 # consistency. Fully offline, no LLM call.
 kairos contract validate <file.json>
 kairos contract validate <file.json> --json  # exact structured issues, not rendered text
+
+# Save a contract file into the local store (~/.kairos/contracts/<client-id>/<id>.json) --
+# required, alongside a real `contract compile --build`, before `ledger poll`/`watch --contracts`/
+# `contract report` can find it. Same validation gate as `compile`: refuses (exit 2, nothing
+# written) on a validation error or a blocking assumption. `--client-id` must exactly match the
+# contract's own `clientId` field -- refuses rather than silently importing into the wrong
+# client's namespace. Provenance/version/status are preserved exactly as given, never rewritten
+# or bumped -- importing an existing contract is not authoring a new one.
+kairos contract import <file.json> --client-id acme
+kairos contract import <file.json> --client-id acme --json
 
 # ProofLedger v0 (Phase 3): poll n8n execution data (read-only -- GET only, never a write) for
 # every workflow registered against a contract, extract evidence ONLY from the exact fields each
@@ -986,8 +1000,15 @@ kairos exceptions resolve <contract-id> <item-id> --reason "Called and scheduled
 # nothing live), no autonomous decisions. Without --bundle, prints only; with --bundle <dir>, also
 # writes promise-report.md + a manifest there, reusing the same Delivery Bundle artifact/manifest
 # pattern `kairos pack export --bundle` already uses.
+#
+# --from/--to date format: plain ISO 8601 strings, compared lexicographically against each
+# event's own timestamp -- no calendar-aware parsing. A bare date ("2026-07-20") is therefore an
+# EXCLUSIVE boundary against a full timestamp ("2026-07-20T09:00:00Z" sorts AFTER "2026-07-20" as
+# a string), so `--to 2026-07-20` does NOT include events later that same day. For an inclusive
+# "through end of July 20", either pass the following day (`--to 2026-07-21`) or a full timestamp
+# (`--to 2026-07-20T23:59:59.999Z`) directly.
 kairos contract report <contract-id> --client-id acme
-kairos contract report <contract-id> --client-id acme --from 2026-07-01 --to 2026-07-31
+kairos contract report <contract-id> --client-id acme --from 2026-07-01 --to 2026-08-01  # all of July, inclusive
 kairos contract report <contract-id> --client-id acme --bundle ./deliverables
 kairos contract report <contract-id> --client-id acme --json  # full PromiseReportData as JSON
 

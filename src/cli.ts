@@ -35,6 +35,7 @@ Usage:
   kairos contract plan "<business description>" --client-id <slug> [--json]
   kairos contract compile <file.json> [--build] [--dry-run] [--json]
   kairos contract validate <file.json> [--json]
+  kairos contract import <file.json> --client-id <slug> [--json]
   kairos contract report <contract-id> --client-id <slug> [--from <date>] [--to <date>] [--bundle <dir>] [--json]
   kairos ledger poll <contract-id> --client-id <slug> [--limit <n>] [--json]
   kairos ledger show <contract-id> [--instance <promise-instance-id>] [--json]
@@ -142,11 +143,16 @@ Contract options (ProcessContract v0, Phase 0+1+2+5 -- see docs/plans/process-co
                                   it into the same PackBuilder/Kairos.build() machinery
                                   build-pack uses -- full generation, validation, and (unless --dry-run)
                                   deployment, and (unless --dry-run) registers the real deployed
-                                  workflow ids against this contract for "kairos ledger poll".
-                                  Refuses to compile at all (exit 2, no plan) if the contract
-                                  fails validation or still has a blocking assumption. Does not
-                                  attempt to prove the built workflows fulfill the contract --
-                                  that is ProofLedger's job (see Ledger options below).
+                                  workflow ids against this contract. --dry-run deliberately never
+                                  registers fake/placeholder workflow ids -- there are no real ones
+                                  yet. compile itself never saves the CONTRACT anywhere (see import
+                                  below) -- kairos ledger poll/watch --contracts/contract report all
+                                  need BOTH a saved contract AND a real (non-dry-run) build's
+                                  workflow registration before they have anything to find. Refuses
+                                  to compile at all (exit 2, no plan) if the contract fails
+                                  validation or still has a blocking assumption. Does not attempt to
+                                  prove the built workflows fulfill the contract -- that is
+                                  ProofLedger's job (see Ledger options below).
   contract validate <file.json>  Validate a ProcessContract JSON file against the deterministic
                                   contract validator (reachability, terminal-state consistency,
                                   dangling references, business-calendar consistency). Fully
@@ -154,18 +160,34 @@ Contract options (ProcessContract v0, Phase 0+1+2+5 -- see docs/plans/process-co
                                   (a contract describes a business promise; a pack describes
                                   workflows to build) -- a contract compiles into a PackPlan, it
                                   does not extend one.
+  contract import <file.json>    Validates a contract file (same gate as compile: exit 2, nothing
+    --client-id <slug>           written, on a validation error or a blocking assumption) and
+                                  saves it to ~/.kairos/contracts/<client-id>/<id>.json --
+                                  REQUIRED, alongside a real (non-dry-run) "contract compile
+                                  --build", before ledger poll/watch --contracts/contract report can
+                                  find this contract. --client-id must exactly match the contract's
+                                  own clientId field, so a contract can never be silently imported
+                                  into the wrong client's namespace. Provenance/version/status are
+                                  preserved exactly as given, never rewritten -- importing is not
+                                  authoring.
   contract report <contract-id>  Client-facing promise report (Phase 5) from this contract's own
     --client-id <slug>           ProofLedger + ExceptionDesk data -- purely local, no network
-    [--from/--to <date>]         calls. Counts kept/at-risk/missed/unverifiable/in-progress
-    [--bundle <dir>]             instances (never counts unverifiable as kept), open/acknowledged/
-                                  resolved exceptions, an evidence-quality breakdown, and an
-                                  owner/action summary for open exceptions. Always states plainly
-                                  when evidence is incomplete -- no fake ROI math, no raw PII
-                                  beyond the hashed correlation key, no dashboard, no autonomous
-                                  decisions. Without --bundle, prints only; with --bundle <dir>,
-                                  also writes promise-report.md + a manifest there, reusing the
-                                  same Delivery Bundle artifact/manifest pattern pack export
-                                  --bundle already uses.
+    [--from/--to <iso-date>]     calls. --from/--to are plain ISO 8601 strings, compared
+    [--bundle <dir>]             lexicographically against event timestamps -- a bare date
+                                  ("2026-07-20") is an EXCLUSIVE boundary against full timestamps
+                                  ("2026-07-20T09:00:00Z" > "2026-07-20" as a string), so it does
+                                  NOT include events later that same day. Pass the following day
+                                  (--to 2026-07-21) for an inclusive "through end of July 20", or a
+                                  full timestamp (--to 2026-07-20T23:59:59.999Z) directly. Counts
+                                  kept/at-risk/missed/unverifiable/in-progress instances (never
+                                  counts unverifiable as kept), open/acknowledged/resolved
+                                  exceptions, an evidence-quality breakdown, and an owner/action
+                                  summary for open exceptions. Always states plainly when evidence
+                                  is incomplete -- no fake ROI math, no raw PII beyond the hashed
+                                  correlation key, no dashboard, no autonomous decisions. Without
+                                  --bundle, prints only; with --bundle <dir>, also writes
+                                  promise-report.md + a manifest there, reusing the same Delivery
+                                  Bundle artifact/manifest pattern pack export --bundle already uses.
 
 Ledger options (ProofLedger v0, Phase 3 -- see docs/plans/process-contract-promise-engine-plan.md §6):
   ledger poll <contract-id>      Polls n8n execution data (read-only -- GET only, never a write)
@@ -1696,6 +1718,95 @@ async function handleContractCompile(positional: string[], flags: Record<string,
   if (buildResult.escalation) process.exit(2)
 }
 
+/**
+ * Closes a real gap found during the Promise Engine v0 closeout pass: `kairos contract compile
+ * <file.json>` only ever reads a file, it never saves the contract anywhere -- only
+ * `kairos contract plan` does that. A hand-authored or externally-sourced contract, compiled and
+ * built directly from a file, therefore had no path into `kairos ledger poll`/`watch --contracts`/
+ * `contract report` afterward (all three load a saved contract by client id + contract id, and
+ * none existed). Deliberately a separate command, not a `compile --save` flag (Codex's own
+ * preference, 2026-07-20): compiling and persisting are two different concerns, and a dedicated
+ * `import` makes it obvious a file is being adopted into the local store, not silently mutating
+ * disk as a side effect of an otherwise-read-only compile step.
+ */
+async function handleContractImport(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const filePath = positional[1]
+  const clientId = typeof flags['client-id'] === 'string' ? flags['client-id'] : undefined
+
+  if (!filePath || !clientId) {
+    console.error('Usage: kairos contract import <file.json> --client-id <slug> [--json]')
+    console.error('')
+    console.error('Saves a valid ProcessContract file into the local store')
+    console.error('(~/.kairos/contracts/<client-id>/<id>.json) so kairos ledger poll,')
+    console.error('kairos watch --contracts, and kairos contract report can find it afterward --')
+    console.error('kairos contract compile only ever reads a file, it never saves one. Always')
+    console.error('runs the deterministic validator first; refuses to import at all (exit 2,')
+    console.error('nothing written) on a validation error or a blocking assumption, the same gate')
+    console.error('kairos contract compile itself uses. Contract provenance/version/status are')
+    console.error('preserved exactly as given -- never rewritten, never bumped -- importing is not')
+    console.error('authoring.')
+    process.exit(1)
+  }
+
+  const { readFile } = await import('node:fs/promises')
+  let contract: import('./promise/types.js').ProcessContract
+  try {
+    const content = await readFile(filePath, 'utf-8')
+    contract = JSON.parse(content) as import('./promise/types.js').ProcessContract
+  } catch (err) {
+    console.error(`Could not read or parse ${filePath}: ${err instanceof Error ? err.message : String(err)}`)
+    process.exit(1)
+  }
+
+  if (contract.clientId !== clientId) {
+    console.error(`Refusing to import: this contract's own clientId is "${contract.clientId}", not "${clientId}" -- --client-id must match exactly, so a contract can never be silently imported into the wrong client's namespace.`)
+    process.exit(1)
+  }
+
+  const { validateProcessContract } = await import('./promise/validate.js')
+  const issues = validateProcessContract(contract)
+  const errors = issues.filter(i => i.severity === 'error')
+  const warnings = issues.filter(i => i.severity === 'warn')
+  const blocking = contract.assumptions.filter(a => a.type === 'blocking')
+
+  if (errors.length > 0 || blocking.length > 0) {
+    if (flags['json'] === true) {
+      console.log(JSON.stringify({ imported: false, validationIssues: issues, blockingAssumptions: blocking }, null, 2))
+      process.exit(2)
+    }
+    console.error(`\nRefusing to import "${filePath}" -- nothing written.`)
+    if (errors.length > 0) {
+      console.error(`\nValidation errors:`)
+      for (const e of errors) console.error(`  ✗ [Rule ${e.rule}] ${e.message}${e.path ? ` (${e.path})` : ''}`)
+    }
+    if (blocking.length > 0) {
+      console.error(`\nBlocking assumptions:`)
+      for (const a of blocking) console.error(`  ✗ ${a.text}`)
+    }
+    process.exit(2)
+  }
+
+  const { saveProcessContract } = await import('./promise/store.js')
+  const { path } = await saveProcessContract(contract)
+
+  if (flags['json'] === true) {
+    console.log(JSON.stringify({ imported: true, path, validationIssues: issues }, null, 2))
+    return
+  }
+
+  console.log(`✓ Imported "${contract.name}" (${contract.id} v${contract.version}) to: ${path}`)
+  if (warnings.length > 0) {
+    console.log(`\n${warnings.length} warning(s):`)
+    for (const w of warnings) console.log(`  ⚠ [Rule ${w.rule}] ${w.message}${w.path ? ` (${w.path})` : ''}`)
+  }
+  const needsConfirmation = contract.assumptions.filter(a => a.type === 'needs_confirmation')
+  if (needsConfirmation.length > 0) {
+    console.log(`\nNeeds Confirmation:`)
+    for (const a of needsConfirmation) console.log(`  ? ${a.text}`)
+  }
+  console.log(`\nRun "kairos contract compile ${filePath} --build" to generate and register its workflows.`)
+}
+
 async function handleContractReport(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const contractId = positional[1]
   const clientId = typeof flags['client-id'] === 'string' ? flags['client-id'] : undefined
@@ -1769,10 +1880,16 @@ async function handleContract(positional: string[], flags: Record<string, string
     return
   }
 
+  if (subcommand === 'import') {
+    await handleContractImport(positional, flags)
+    return
+  }
+
   if (subcommand !== 'validate') {
     console.error('Usage: kairos contract plan "<business description>" --client-id <slug> [--json]')
     console.error('       kairos contract compile <file.json> [--build] [--dry-run] [--json]')
     console.error('       kairos contract validate <file.json> [--json]')
+    console.error('       kairos contract import <file.json> --client-id <slug> [--json]')
     console.error('       kairos contract report <contract-id> --client-id <slug> [--from <date>] [--to <date>] [--bundle <dir>] [--json]')
     console.error('')
     console.error('plan drafts a ProcessContract from a plain-language description via an LLM,')
@@ -1780,12 +1897,17 @@ async function handleContract(positional: string[], flags: Record<string, string
     console.error('')
     console.error('compile deterministically translates a valid ProcessContract into a PackPlan')
     console.error('(no LLM call in this step) and, with --build, feeds it into the same')
-    console.error('PackBuilder/Kairos.build() machinery `kairos build-pack` uses.')
+    console.error('PackBuilder/Kairos.build() machinery `kairos build-pack` uses. compile only')
+    console.error('ever reads a file -- it never saves the contract; see import below.')
     console.error('')
     console.error("validate checks a ProcessContract JSON file against Kairos's deterministic")
     console.error('contract validator -- reachability, terminal-state consistency, dangling')
     console.error('references, business-calendar consistency, and more. Fully offline: no')
     console.error('Anthropic/n8n API calls, no credentials required.')
+    console.error('')
+    console.error('import validates a contract file and saves it into the local store so ledger')
+    console.error('poll/watch --contracts/contract report can find it afterward -- required')
+    console.error('before those, since compile itself never saves anything.')
     console.error('')
     console.error('report generates a client-facing promise-report.md from ProofLedger +')
     console.error('ExceptionDesk data -- see "kairos contract report" with no args for detail.')
