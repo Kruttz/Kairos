@@ -30,6 +30,12 @@ The first phase in this codebase to write to a live workflow autonomously, delib
 - `diffPayloadExecution`'s `partialVerification` flag is whole-payload, not per-branch, discovered while live-checkpointing chaos Tier B.
 - `module-boundaries.test.ts`'s privacy firewall only ever checked the `captures/` half of its own stated guardrail, never the `memory/` half, despite the guardrail text always naming both.
 
+### Fixed, from the end-to-end closeout review and its own npm-pack release-hygiene check (2026-07-19)
+- **`kairos drift check` missed structural drift `kairos repair propose` already caught.** Without `--original-build-hash`, D9 always reported `not_applicable`, even on a genuinely drifted workflow — confirmed live, back to back, against the same hand-edited workflow. `drift check --live` now falls back to the same stored-library-vs-live-fetch hash comparison `repair propose` already used; an explicit `--original-build-hash` still overrides it.
+- **The entire CLI crashed on any command, including `--help`, on a fresh install without the optional `@anthropic-ai/sdk` peer dependency.** Found by this release's own `npm pack` + fresh-install smoke test — a static top-level import made `client.ts`'s (and therefore `@anthropic-ai/sdk`'s) resolution unconditional at module load, even for commands that never touch generation. Now imported dynamically, only when a command that actually generates something runs.
+- **Unhandled EPIPE** on `invokeOnDriftHook`'s stdin write when a hook command exits before reading its input — a stray, unattributed test-run error, reproduced live twice. Fixed with a no-op error listener on the child's stdin stream, the standard pattern for this class of race.
+- **Documented, not code changes:** `replay run --live`/`chaos run` require `N8N_BASE_URL` to be a genuinely different host than any sandbox Kairos might boot internally (README + CLI help now say so explicitly); `stripForUpdate()`'s blacklist is not a complete safe-write guarantee on its own — a new code comment names the constraint and points at `N8nProvider.get()`/`update()` as the correct path.
+
 ## [0.11.0] - 2026-07-10
 
 ### New: pack-builder output chaining (Step 7/8)

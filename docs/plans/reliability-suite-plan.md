@@ -854,3 +854,20 @@ Every reliability-suite command this arc added to `kairos`, grouped by phase:
 - **Phase 5b (community ingestion, experimental):** `kairos patterns ingest <path>`, `kairos patterns sync --url <url>` (annotation display gated on `KAIROS_COMMUNITY_PATTERNS=true`)
 
 All fourteen commands are documented in this README's CLI section and covered by `docs-drift.test.ts`'s automatic README/source sync check. See §11's `npm run demo:reliability-loop` for a scripted, reproducible end-to-end walkthrough of the detect→diagnose→notify path (drift + watch + chaos audit), and this arc's live-checkpoint notes throughout §6-§10 for every other command's real-world verification.
+
+## 18. End-to-end closeout review (2026-07-19, after §17 above) — findings addressed
+
+A full live checkpoint across every shipped command (real disposable sandbox, two workflows, drift→replay→chaos→watch→repair→rollback in one continuous session, plus a separate patterns share/ingest/sync fixture pass) surfaced five findings, ranked and dispositioned by Codex, all resolved same-day:
+
+**Fixed before any version bump:**
+- **D9's `drift check`-vs-`repair propose` capability gap.** `drift check --live` (no explicit `--original-build-hash`) now falls back to the same stored-library-vs-live-fetch hash comparison `repair propose` already computed, closing an operator-trust gap where the two commands gave genuinely different verdicts on identical real drift.
+- **A sixth, more severe finding this same pass surfaced: the whole CLI crashed on any command, including `--help`, on a fresh install without the optional `@anthropic-ai/sdk` peer dependency.** Found by the `npm pack` + fresh-install smoke test itself (release hygiene, not one of the original five findings) — a static top-level import in `cli.ts` made `@anthropic-ai/sdk`'s resolution unconditional at module load, even for commands that never touch generation. Fixed by making the import type-only and deferring the real import to the two call sites that actually construct a `Kairos` instance.
+- **Unhandled EPIPE on `invokeOnDriftHook`'s stdin write**, reproduced live twice as a stray, unattributed test-run error. Fixed with the standard no-op error listener on the child's stdin stream.
+
+**Documented, no code behavior changed:**
+- `replay run --live`/`chaos run` require `N8N_BASE_URL` to be a genuinely different host than any sandbox Kairos might boot internally — safe, correct, previously-undocumented-anywhere-a-user-would-see-it-first behavior. README + CLI help now say so explicitly.
+- `stripForUpdate()`'s blacklist is not a complete safe-write whitelist on its own (only safe in combination with `N8nProvider.get()`'s upstream whitelist reconstruction, which every real write path already uses) — a code comment now names this explicitly for any future write path.
+
+**Deferred, recorded, not implemented:** the sandbox manager's singleton constraint (one instance, fixed data directory regardless of port) — real, already thoroughly documented across §8/§9's own findings, reconfirmed a third time by this checkpoint. Explicitly not a tiny fix (would need a data-directory/process-lifecycle redesign), so left as a known limitation rather than attempted under closeout-review scope.
+
+Full test suite green (1597 tests, up from 1590), typecheck/lint/docs-drift clean, `npm pack` + local install smoke test re-run clean after the fix. One commit per finding.
