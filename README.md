@@ -922,9 +922,21 @@ kairos trace record <n8n-workflow-id>
 # before being returned, and always saved to ~/.kairos/contracts/<client-id>/<id>.json for human
 # review -- even when it needs review, it is never withheld. Exits 2 (not 1) when the draft has
 # a validation error or a blocking assumption, so scripts can tell "needs a human" apart from a
-# hard failure. No compilation to a real pack yet, no ProofLedger, no ExceptionDesk.
+# hard failure. No ProofLedger, no ExceptionDesk yet.
 kairos contract plan "every referral gets contacted within 4 business hours, outcome logged" --client-id acme
 kairos contract plan "..." --client-id acme --json  # full PlanContractResult as JSON
+
+# Deterministically compile a valid ProcessContract into a PackPlan -- no LLM call in this step,
+# and traceability from every compiled workflow back to the exact contract element ids it came
+# from (e.g. which startCondition/transition/sla produced it). Without --build, only prints the
+# plan. With --build, feeds it into the exact same PackBuilder/Kairos.build() machinery
+# `kairos build-pack` uses -- full generation, validation, and (unless --dry-run) deployment.
+# Refuses to compile at all (exit 2, no plan produced) if the contract fails validation or still
+# has a blocking assumption. Deliberately does not attempt to prove the built workflows fulfill
+# the contract -- that verification is ProofLedger's job, a later, unstarted phase.
+kairos contract compile <file.json>                       # print the compiled plan only
+kairos contract compile <file.json> --build --dry-run     # also generate + validate the workflows, skip deployment
+kairos contract compile <file.json> --json                # full CompileToPackPlanResult as JSON
 
 # Validate a ProcessContract JSON file against the deterministic contract validator --
 # reachability, terminal-state consistency, dangling references, business-calendar

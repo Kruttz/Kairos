@@ -33,6 +33,7 @@ Usage:
   kairos preflight <name> [--live] [--bundle-dir <dir>] [--client-id <slug>] [--json]
   kairos trace record <n8n-workflow-id>
   kairos contract plan "<business description>" --client-id <slug> [--json]
+  kairos contract compile <file.json> [--build] [--dry-run] [--json]
   kairos contract validate <file.json> [--json]
   kairos drift baseline <n8n-workflow-id> [--json]
   kairos drift check <n8n-workflow-id> [--live] [--original-build-hash <hash>] [--json]
@@ -118,7 +119,7 @@ Patterns ingest/sync (community pattern library, EXPERIMENTAL -- see docs/plans/
                              see it (clearly marked [EXPERIMENTAL COMMUNITY]) in 'kairos patterns'
                              output; unset it (the default) to fully disable the display.
 
-Contract options (ProcessContract v0, Phase 0+1 -- see docs/plans/process-contract-promise-engine-plan.md):
+Contract options (ProcessContract v0, Phase 0+1+2 -- see docs/plans/process-contract-promise-engine-plan.md):
   contract plan "<description>"  Draft a ProcessContract from a plain-language business
     --client-id <slug>           description via an LLM (requires ANTHROPIC_API_KEY). Always run
                                   through the deterministic validator before being returned;
@@ -126,15 +127,24 @@ Contract options (ProcessContract v0, Phase 0+1 -- see docs/plans/process-contra
                                   human review, even when it needs review -- never withheld. Exits
                                   2 (not 1) when the draft has a validation error or a blocking
                                   assumption, distinguishing "needs a human" from a hard failure.
+  contract compile <file.json>   Deterministically compile a valid ProcessContract into a
+    [--build] [--dry-run]        PackPlan -- no LLM call in this step; traceability from each
+                                  compiled workflow back to the exact contract element ids it came
+                                  from. Without --build, only prints the plan. With --build, feeds
+                                  it into the same PackBuilder/Kairos.build() machinery
+                                  build-pack uses -- full generation, validation, and (unless --dry-run)
+                                  deployment. Refuses to compile at all (exit 2, no plan) if the
+                                  contract fails validation or still has a blocking assumption.
+                                  Does not attempt to prove the built workflows fulfill the
+                                  contract -- that is ProofLedger, a later, unstarted phase.
   contract validate <file.json>  Validate a ProcessContract JSON file against the deterministic
                                   contract validator (reachability, terminal-state consistency,
                                   dangling references, business-calendar consistency). Fully
                                   offline. ProcessContract is deliberately separate from PackPlan
                                   (a contract describes a business promise; a pack describes
-                                  workflows to build). contract compile (Phase 2, PackPlan
-                                  compilation) is not built yet -- no ProofLedger, no
-                                  ExceptionDesk, no workflow reporting/listener, no autonomous
-                                  business decisions.
+                                  workflows to build) -- a contract compiles into a PackPlan, it
+                                  does not extend one. No ProofLedger, no ExceptionDesk, no
+                                  workflow reporting/listener, no autonomous business decisions yet.
 
 Sessions options:
   --limit <n>     Number of recent sessions to show (default: 20)
@@ -1482,6 +1492,131 @@ async function handleContractPlan(positional: string[], flags: Record<string, st
   if (!readyToProceed) process.exit(2)
 }
 
+async function handleContractCompile(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const filePath = positional[1]
+  if (!filePath) {
+    console.error('Usage: kairos contract compile <file.json> [--build] [--dry-run] [--activate] [--yes] [--despite-blocking] [--json]')
+    console.error('')
+    console.error('Compiles a valid ProcessContract into a PackPlan -- deterministic, no LLM call')
+    console.error('in this step. Without --build, only prints the compiled plan and its')
+    console.error('per-workflow traceability back to contract element ids. With --build, feeds')
+    console.error('the plan into the exact same PackBuilder.build()/Kairos.build() machinery')
+    console.error('`kairos build-pack` uses -- full generation, validation, and (unless')
+    console.error('--dry-run) deployment. Refuses to compile at all -- exit 2, no plan produced')
+    console.error('-- if the contract fails validation or still has a blocking assumption.')
+    console.error('This step does not attempt to prove the built workflows fulfill the contract')
+    console.error('-- that is ProofLedger, a later, unstarted phase.')
+    process.exit(1)
+  }
+
+  const { readFile } = await import('node:fs/promises')
+  let contract: import('./promise/types.js').ProcessContract
+  try {
+    const content = await readFile(filePath, 'utf-8')
+    contract = JSON.parse(content) as import('./promise/types.js').ProcessContract
+  } catch (err) {
+    console.error(`Could not read or parse ${filePath}: ${err instanceof Error ? err.message : String(err)}`)
+    process.exit(1)
+  }
+
+  const { compileToPackPlan } = await import('./promise/compile.js')
+  const result = compileToPackPlan(contract)
+
+  if (result.escalation) {
+    if (flags['json'] === true) {
+      console.log(JSON.stringify(result, null, 2))
+    } else {
+      const label = result.escalation.source === 'validation_errors' ? 'validation errors' : 'blocking assumptions'
+      console.log(`\n⚠ Compilation refused -- ${label}`)
+      console.log('─'.repeat(50))
+      console.log(result.escalation.reason)
+      console.log('')
+      for (const q of result.escalation.questions) console.log(`  - ${q}`)
+    }
+    process.exit(2)
+  }
+
+  if (flags['build'] !== true) {
+    if (flags['json'] === true) {
+      console.log(JSON.stringify(result, null, 2))
+      return
+    }
+    console.log(`\n${contract.name} — Compiled PackPlan (${result.plan.workflows.length} workflow(s))`)
+    console.log('─'.repeat(50))
+    for (let i = 0; i < result.plan.workflows.length; i++) {
+      const wf = result.plan.workflows[i]!
+      const trace = result.traceability[i]!
+      console.log(`\n  ${i + 1}. ${wf.name}`)
+      console.log(`     ${wf.purpose}`)
+      console.log(`     Trace: ${trace.sourceElements.join(', ')}`)
+    }
+    const needsConfirmation = result.plan.assumptions.filter(a => a.type === 'needs_confirmation')
+    if (needsConfirmation.length > 0) {
+      console.log(`\nNeeds Confirmation`)
+      for (const a of needsConfirmation) console.log(`  ? ${a.text}`)
+    }
+    console.log('\nRun again with --build to generate these workflows via the real kairos build machinery (add --dry-run to skip deployment).')
+    return
+  }
+
+  const anthropicKey = getEnvOrExit('ANTHROPIC_API_KEY')
+  const { PackBuilder } = await import('./pack/pack-builder.js')
+  const isDryRun = flags['dry-run'] === true
+  const kairos = isDryRun ? await createDryRunClient() : await createClient()
+  const builder = new PackBuilder({ anthropicApiKey: anthropicKey, kairos })
+
+  console.error(`\n${contract.name} — Compiled Workflows (${result.plan.workflows.length})\n`)
+  for (let i = 0; i < result.plan.workflows.length; i++) {
+    const wf = result.plan.workflows[i]!
+    console.error(`  ${i + 1}. ${wf.name}`)
+    console.error(`     ${wf.purpose}`)
+  }
+
+  const needsConfirmation = result.plan.assumptions.filter(a => a.type === 'needs_confirmation')
+  if (needsConfirmation.length > 0) {
+    console.error(`\nNeeds Confirmation`)
+    for (const a of needsConfirmation) console.error(`  ? ${a.text}`)
+  }
+
+  if (flags['yes'] !== true) {
+    const readline = await import('node:readline')
+    const rl = readline.createInterface({ input: process.stdin, output: process.stderr })
+    const answer = await new Promise<string>(resolve => rl.question('\nBuild all of these? [y/N] ', resolve))
+    rl.close()
+    if (!answer.toLowerCase().startsWith('y')) {
+      console.error('Aborted.')
+      process.exit(0)
+    }
+  }
+
+  console.error('\nBuilding...\n')
+  const buildResult = await builder.build(result.plan, {
+    dryRun: isDryRun,
+    activate: flags['activate'] === true,
+    buildDespiteBlocking: flags['despite-blocking'] === true,
+    onProgress: (wf, i, total) => {
+      console.error(`  [${i + 1}/${total}] ${wf.name}...`)
+    },
+  })
+
+  if (flags['json'] === true) {
+    console.log(JSON.stringify({ ...buildResult, traceability: result.traceability }, null, 2))
+  } else {
+    printPackResult(buildResult)
+  }
+
+  const { writeFile, mkdir } = await import('node:fs/promises')
+  const { join } = await import('node:path')
+  const { homedir } = await import('node:os')
+  const packsDir = join(homedir(), '.kairos', 'packs')
+  await mkdir(packsDir, { recursive: true })
+  const packPath = join(packsDir, `${buildResult.packName}.json`)
+  await writeFile(packPath, JSON.stringify(buildResult, null, 2), 'utf-8')
+  console.error(`\nPack saved to: ${packPath}`)
+
+  if (buildResult.escalation) process.exit(2)
+}
+
 async function handleContract(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const subcommand = positional[0]
 
@@ -1491,25 +1626,26 @@ async function handleContract(positional: string[], flags: Record<string, string
   }
 
   if (subcommand === 'compile') {
-    console.error(`kairos contract ${subcommand} is not built yet -- Phase 0/1 (docs/plans/process-contract-promise-engine-plan.md) ship the schema, validator, and LLM-assisted authoring only.`)
-    console.error('Run "kairos contract plan" to draft a contract, or "kairos contract validate <file.json>" against a hand-authored one.')
-    process.exit(1)
+    await handleContractCompile(positional, flags)
+    return
   }
 
   if (subcommand !== 'validate') {
     console.error('Usage: kairos contract plan "<business description>" --client-id <slug> [--json]')
+    console.error('       kairos contract compile <file.json> [--build] [--dry-run] [--json]')
     console.error('       kairos contract validate <file.json> [--json]')
     console.error('')
     console.error('plan drafts a ProcessContract from a plain-language description via an LLM,')
     console.error('then always runs it through the deterministic validator before returning it.')
     console.error('')
+    console.error('compile deterministically translates a valid ProcessContract into a PackPlan')
+    console.error('(no LLM call in this step) and, with --build, feeds it into the same')
+    console.error('PackBuilder/Kairos.build() machinery `kairos build-pack` uses.')
+    console.error('')
     console.error("validate checks a ProcessContract JSON file against Kairos's deterministic")
     console.error('contract validator -- reachability, terminal-state consistency, dangling')
     console.error('references, business-calendar consistency, and more. Fully offline: no')
     console.error('Anthropic/n8n API calls, no credentials required.')
-    console.error('')
-    console.error('Phase 0/1 only -- there is no `kairos contract compile` yet (docs/plans/')
-    console.error('process-contract-promise-engine-plan.md).')
     process.exit(1)
   }
 
