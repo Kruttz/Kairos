@@ -1792,7 +1792,7 @@ async function handleLedgerPoll(positional: string[], flags: Record<string, stri
   const results: Array<{ workflowName: string } & Awaited<ReturnType<typeof pollWorkflowEvidence>>> = []
   for (const wf of registration.workflows) {
     const watermark = await loadContractPollWatermark(contractId, wf.n8nWorkflowId)
-    const result = await pollWorkflowEvidence(contract, wf.n8nWorkflowId, client, watermark, limit)
+    const result = await pollWorkflowEvidence(contract, wf.n8nWorkflowId, client, watermark, limit, wf.sourceElements)
     await appendProofLedgerEntries(contractId, result.entries)
     await saveContractPollWatermark(result.newWatermark)
     results.push({ workflowName: wf.workflowName, ...result })

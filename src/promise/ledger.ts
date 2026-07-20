@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { evidenceNodeName } from './compile.js'
-import type { ProcessContract, EvidenceRequirement } from './types.js'
+import type { ProcessContract, EvidenceRequirement, StartCondition } from './types.js'
 import type {
   ProofLedgerEntry,
   ProofStatus,
@@ -104,15 +104,26 @@ export interface RawExecutionDetail {
   data?: unknown
 }
 
-/** Pure -- the whole extraction decision for one already-fetched execution, no network call.
+/**
+ * Pure -- the whole extraction decision for one already-fetched execution, no network call.
  * Separated from pollWorkflowEvidence() the same way replay/runner.ts split
  * buildSnapshotFromExecution (pure, tested) from replayOnePayload (network, live-checkpointed) --
  * this is the part unit tests exercise directly with synthetic execution data shaped like the
- * real thing confirmed in the Phase 3 spike. */
+ * real thing confirmed in the Phase 3 spike.
+ *
+ * `startCondition` is passed only for a workflow whose ContractWorkflowTrace names a
+ * StartCondition (an intake workflow, Phase 2's compiler) -- when present, every execution is
+ * treated as a new instance beginning in that StartCondition's initialState, and an
+ * 'instance_start' entry is recorded from the trigger's own correlation key. This is the fix for
+ * a real gap Phase 4 found while being built (not predicted in Phase 3): without it, an SlaSpec
+ * measured from a contract's own initial state -- Empire Homecare's own primary SLA included --
+ * has no clock-start signal anywhere in the ledger to evaluate against.
+ */
 export function extractExecutionEvidence(
   contract: ProcessContract,
   execution: RawExecutionDetail,
   n8nWorkflowId: string,
+  startCondition?: StartCondition,
 ): { outcomes: PollExecutionOutcome[]; entries: ProofLedgerEntry[] } {
   const startedAt = execution.startedAt ?? ''
   const data = execution.data as Record<string, unknown> | undefined
@@ -123,7 +134,7 @@ export function extractExecutionEvidence(
     .map(ev => ({ ev, found: extractEvidenceFields(ev, runData) }))
     .filter((x): x is { ev: EvidenceRequirement; found: FieldExtraction } => x.found !== null)
 
-  if (matches.length === 0) {
+  if (!startCondition && matches.length === 0) {
     return {
       outcomes: [{
         executionId: execution.id,
@@ -136,25 +147,45 @@ export function extractExecutionEvidence(
   }
 
   const correlationValue = extractCorrelationKeyValue(contract, runData)
-  const outcomes: PollExecutionOutcome[] = []
-  const entries: ProofLedgerEntry[] = []
   const now = new Date().toISOString()
 
-  for (const { ev, found } of matches) {
-    if (!correlationValue) {
-      outcomes.push({
-        executionId: execution.id,
-        startedAt,
-        outcome: 'unverifiable',
-        transitionId: ev.transitionId,
-        detail: `Evidence marker node found for transition "${ev.transitionId}", but the correlation key (${contract.correlationKey.fieldPath}) could not be read from this execution's trigger data -- no ledger entry written without a known promise instance.`,
-      })
-      continue
+  if (!correlationValue) {
+    const reason = `the correlation key (${contract.correlationKey.fieldPath}) could not be read from this execution's trigger data -- no ledger entry written without a known promise instance.`
+    const outcomes: PollExecutionOutcome[] = []
+    if (startCondition) {
+      outcomes.push({ executionId: execution.id, startedAt, outcome: 'unverifiable', detail: `Start-condition execution, but ${reason}` })
     }
+    for (const { ev } of matches) {
+      outcomes.push({ executionId: execution.id, startedAt, outcome: 'unverifiable', transitionId: ev.transitionId, detail: `Evidence marker node found for transition "${ev.transitionId}", but ${reason}` })
+    }
+    return { outcomes, entries: [] }
+  }
 
+  const promiseInstanceId = hashCorrelationKeyValue(correlationValue)
+  const outcomes: PollExecutionOutcome[] = []
+  const entries: ProofLedgerEntry[] = []
+
+  if (startCondition) {
+    const detail = `New ${contract.entity.name} instance began in state "${startCondition.initialState}" (${startCondition.description}).`
+    outcomes.push({ executionId: execution.id, startedAt, outcome: 'extracted', detail })
+    entries.push({
+      id: `${execution.id}:instance_start`,
+      contractId: contract.id,
+      contractVersion: contract.version,
+      promiseInstanceId,
+      correlationKeyValueHash: promiseInstanceId,
+      kind: 'instance_start',
+      initialState: startCondition.initialState,
+      observedAt: now,
+      sourceWorkflowId: n8nWorkflowId,
+      sourceExecutionId: execution.id,
+      status: 'observed',
+      detail,
+    })
+  }
+
+  for (const { ev, found } of matches) {
     const detail = buildDetail(ev, found.fields, found.missingFields)
-    const promiseInstanceId = hashCorrelationKeyValue(correlationValue)
-
     outcomes.push({
       executionId: execution.id,
       startedAt,
@@ -181,6 +212,15 @@ export function extractExecutionEvidence(
   return { outcomes, entries }
 }
 
+/** True for a ContractWorkflowTrace.sourceElements entry naming a StartCondition (Phase 2's
+ * compile.ts prefixes these exactly `startCondition:<id>`) -- the signal pollWorkflowEvidence()
+ * uses to decide whether a given registered workflow is this contract's intake workflow. */
+function findStartCondition(contract: ProcessContract, sourceElements: string[]): StartCondition | undefined {
+  const prefix = 'startCondition:'
+  const scId = sourceElements.find(s => s.startsWith(prefix))?.slice(prefix.length)
+  return scId ? contract.startConditions.find(sc => sc.id === scId) : undefined
+}
+
 /**
  * Fetches new executions for one compiled workflow since the last watermark and extracts
  * evidence from each. Read-only against n8n -- getExecutions/getExecution only, never a write.
@@ -188,6 +228,11 @@ export function extractExecutionEvidence(
  * n8n's `/executions` list is confirmed (Phase 3 spike, real execution ids returned in
  * descending order) to return most-recent-first -- relied on here, not re-derived, matching
  * fetchLatestTrace()'s own existing assumption (execution-tracer.ts) that index 0 is the latest.
+ *
+ * `sourceElements` -- the registered workflow's own ContractWorkflowTrace.sourceElements
+ * (registry.ts) -- lets this function recognize an intake workflow and record 'instance_start'
+ * entries for it (see extractExecutionEvidence()). Defaults to [] for callers (mostly tests) that
+ * don't have a registration to hand it -- meaning no instance_start entries, never a crash.
  */
 export async function pollWorkflowEvidence(
   contract: ProcessContract,
@@ -195,8 +240,10 @@ export async function pollWorkflowEvidence(
   client: PollableN8nClient,
   watermark: ContractPollWatermark | null,
   limit = 20,
+  sourceElements: string[] = [],
 ): Promise<PollContractResult> {
   const summaries = await client.getExecutions(n8nWorkflowId, { limit })
+  const startCondition = findStartCondition(contract, sourceElements)
 
   const isNew = (s: { id: string; startedAt: string | null }): boolean => {
     if (!watermark) return true
@@ -214,7 +261,7 @@ export async function pollWorkflowEvidence(
 
   for (const summary of ordered) {
     const detail = await client.getExecution(summary.id, { includeData: true })
-    const result = extractExecutionEvidence(contract, detail, n8nWorkflowId)
+    const result = extractExecutionEvidence(contract, detail, n8nWorkflowId, startCondition)
     outcomes.push(...result.outcomes)
     entries.push(...result.entries)
   }

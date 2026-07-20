@@ -14,6 +14,7 @@ function empireHomecare(): ProcessContract {
 }
 
 const TRANSITION_ID = 't-attempted-to-contacted' // has an EvidenceRequirement: callOutcome, callTimestamp
+const START_CONDITION = { id: 'sc-intake', description: 'A new referral arrives via the intake form or Google Sheet row', trigger: 'webhook', initialState: 'received' }
 
 /** Builds a synthetic n8n execution `data` object shaped exactly like the real one confirmed in
  * the Phase 3 design-verification spike: data.resultData.runData[nodeName][0].data.main[0][0].json.
@@ -148,6 +149,75 @@ describe('extractExecutionEvidence', () => {
     const { entries } = extractExecutionEvidence(contract, execution, 'wf-processing')
     expect(entries[0]!.promiseInstanceId).toBe(hashCorrelationKeyValue('555-0199'))
   })
+
+  describe('instance_start (Phase 4 addition -- gives SLA compliance a clock-start signal)', () => {
+    it('records an instance_start entry for a start-condition execution, with no marker node needed', () => {
+      const contract = empireHomecare()
+      const execution: RawExecutionDetail = {
+        id: 'exec-intake-1',
+        startedAt: '2026-07-20T09:00:00.000Z',
+        data: makeExecutionData([triggerNode('555-0100')]), // no evidence node at all -- this is the intake execution
+      }
+
+      const { outcomes, entries } = extractExecutionEvidence(contract, execution, 'wf-intake', START_CONDITION)
+
+      expect(outcomes).toEqual([{
+        executionId: 'exec-intake-1',
+        startedAt: '2026-07-20T09:00:00.000Z',
+        outcome: 'extracted',
+        detail: 'New Referral instance began in state "received" (A new referral arrives via the intake form or Google Sheet row).',
+      }])
+      expect(entries).toHaveLength(1)
+      const entry = entries[0]!
+      expect(entry.kind).toBe('instance_start')
+      expect(entry.initialState).toBe('received')
+      expect(entry.transitionId).toBeUndefined()
+      expect(entry.status).toBe('observed')
+      expect(entry.promiseInstanceId).toBe(hashCorrelationKeyValue('555-0100'))
+      expect(entry.sourceWorkflowId).toBe('wf-intake')
+    })
+
+    it('reports unverifiable, writes no entry, when a start-condition execution has no readable correlation key', () => {
+      const contract = empireHomecare()
+      const execution: RawExecutionDetail = {
+        id: 'exec-intake-2',
+        startedAt: '2026-07-20T09:00:00.000Z',
+        data: makeExecutionData([['Webhook: Intake', { headers: {} }]]),
+      }
+      const { outcomes, entries } = extractExecutionEvidence(contract, execution, 'wf-intake', START_CONDITION)
+      expect(outcomes).toEqual([{
+        executionId: 'exec-intake-2',
+        startedAt: '2026-07-20T09:00:00.000Z',
+        outcome: 'unverifiable',
+        detail: 'Start-condition execution, but the correlation key (body.phone) could not be read from this execution\'s trigger data -- no ledger entry written without a known promise instance.',
+      }])
+      expect(entries).toEqual([])
+    })
+
+    it('records both an instance_start AND an evidence entry when a single execution has both (uncommon, but not prevented)', () => {
+      const contract = empireHomecare()
+      const execution: RawExecutionDetail = {
+        id: 'exec-intake-3',
+        startedAt: '2026-07-20T09:00:00.000Z',
+        data: makeExecutionData([triggerNode('555-0100'), evidenceNode({ callOutcome: 'no_answer', callTimestamp: 't1' })]),
+      }
+      const { entries } = extractExecutionEvidence(contract, execution, 'wf-intake', START_CONDITION)
+      expect(entries.map(e => e.kind)).toEqual(['instance_start', 'evidence'])
+      expect(entries.every(e => e.promiseInstanceId === hashCorrelationKeyValue('555-0100'))).toBe(true)
+    })
+
+    it('without a startCondition, an execution with no evidence match is still just skipped (unchanged Phase 3 behavior)', () => {
+      const contract = empireHomecare()
+      const execution: RawExecutionDetail = {
+        id: 'exec-no-sc',
+        startedAt: '2026-07-20T09:00:00.000Z',
+        data: makeExecutionData([triggerNode('555-0100')]),
+      }
+      const { outcomes, entries } = extractExecutionEvidence(contract, execution, 'wf-processing') // no startCondition arg
+      expect(outcomes[0]!.outcome).toBe('skipped')
+      expect(entries).toEqual([])
+    })
+  })
 })
 
 describe('hashCorrelationKeyValue', () => {
@@ -273,5 +343,27 @@ describe('pollWorkflowEvidence', () => {
     const result = await pollWorkflowEvidence(contract, 'wf-1', client, null)
     expect(result.outcomes.map(o => o.outcome)).toEqual(['extracted', 'unverifiable', 'skipped'])
     expect(result.entries).toHaveLength(2) // skipped never produces an entry
+  })
+
+  it('records instance_start entries when sourceElements names a StartCondition', async () => {
+    const contract = empireHomecare()
+    const client = mockClient([
+      { id: 'e1', startedAt: '2026-07-20T09:00:00.000Z', data: makeExecutionData([triggerNode('555-0001')]) },
+    ])
+
+    const result = await pollWorkflowEvidence(contract, 'wf-intake', client, null, 20, ['startCondition:sc-intake', 'state:received', 'correlationKey'])
+    expect(result.entries).toHaveLength(1)
+    expect(result.entries[0]!.kind).toBe('instance_start')
+  })
+
+  it('never records instance_start entries when sourceElements is omitted or has no StartCondition', async () => {
+    const contract = empireHomecare()
+    const client = mockClient([
+      { id: 'e1', startedAt: '2026-07-20T09:00:00.000Z', data: makeExecutionData([triggerNode('555-0001')]) },
+    ])
+
+    const result = await pollWorkflowEvidence(contract, 'wf-processing', client, null, 20, ['transition:t-received-to-attempted'])
+    expect(result.entries).toEqual([])
+    expect(result.outcomes[0]!.outcome).toBe('skipped')
   })
 })

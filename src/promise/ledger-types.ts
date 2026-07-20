@@ -34,13 +34,23 @@ export interface ProofLedgerEntry {
    * persisted -- only ever held in memory during a single extraction. */
   correlationKeyValueHash: string
 
-  /** v0's poller only ever produces 'evidence' entries (kind: 'event' is reserved for a later
-   * phase that classifies raw ProcessEvent occurrences, not just EvidenceRequirement
-   * extractions -- not built here). */
-  kind: 'evidence'
-  /** Which EvidenceRequirement.transitionId this entry was extracted for -- always present for
-   * kind: 'evidence', the actual key the poller extracts by (see ledger.ts). */
-  transitionId: string
+  /** 'evidence' -- extracted from an EvidenceRequirement's marker node (Phase 3). 'instance_start'
+   * -- added in Phase 4: the first time a correlation key is seen on a workflow whose
+   * ContractWorkflowTrace names a StartCondition, recorded automatically (no marker node needed
+   * -- an intake workflow's own trigger already fires exactly once per new instance by
+   * construction, confirmed in Phase 2's real checkpoint). Solves a real gap Phase 4's compliance
+   * checker found while being built, not predicted in advance: without SOME evidence of when an
+   * instance entered its StartCondition.initialState, an SlaSpec measured from that state (e.g.
+   * Empire Homecare's own primary 4-business-hour SLA) has no clock-start signal to evaluate
+   * against at all. A plain 'event' kind (an earlier design-doc sketch, §6.2) is deliberately not
+   * used for this -- 'instance_start' names the specific, narrow thing it actually represents. */
+  kind: 'evidence' | 'instance_start'
+  /** Which EvidenceRequirement.transitionId this entry was extracted for -- present only for
+   * kind: 'evidence'. */
+  transitionId?: string
+  /** Which ProcessState.id (a StartCondition.initialState) this instance began in -- present
+   * only for kind: 'instance_start'. */
+  initialState?: string
 
   /** When Kairos itself recorded this entry -- its own clock, always present. */
   observedAt: string
