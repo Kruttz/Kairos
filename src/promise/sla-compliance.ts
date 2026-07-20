@@ -42,7 +42,7 @@ export interface PromiseComplianceFinding {
   evidenceQuality?: 'specific' | 'generic'
 }
 
-interface StateReachSignal {
+export interface StateReachSignal {
   observedAt: string
   confidence: 'specific' | 'generic'
 }
@@ -52,8 +52,11 @@ interface StateReachSignal {
  * initial state, or an evidence entry whose transition's toState is it (direct entry evidence).
  * 'generic' -- an evidence entry whose transition's fromState is it (the instance must have
  * passed through it to fire that transition, but the exact entry time isn't separately evidenced
- * -- this entry's own timestamp is used as a conservative upper bound). Sorted earliest-first. */
-function stateReachSignals(contract: ProcessContract, entries: ProofLedgerEntry[], stateId: string): StateReachSignal[] {
+ * -- this entry's own timestamp is used as a conservative upper bound). Sorted earliest-first.
+ *
+ * Exported (Phase 5) so report.ts can reuse the exact same terminal-state-reachability logic for
+ * per-instance kept/missed/unverifiable classification, rather than a second copy of it. */
+export function stateReachSignals(contract: ProcessContract, entries: ProofLedgerEntry[], stateId: string): StateReachSignal[] {
   const signals: StateReachSignal[] = []
   for (const e of entries) {
     if (e.kind === 'instance_start' && e.initialState === stateId) {
