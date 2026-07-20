@@ -85,6 +85,18 @@ describe('invokeOnDriftHook', () => {
     expect(result.exitCode).not.toBe(0)
   })
 
+  it('does not crash or leave an unhandled error when the child never reads stdin at all (2026-07-19 closeout finding)', async () => {
+    // Unlike the other tests above (which all pipe through `cat > /dev/null`, draining stdin),
+    // this command exits immediately without ever reading its input -- the write below can hit
+    // a real EPIPE on the child's stdin stream once the pipe's read end is gone. Found live as
+    // an occasional stray, unattributed EPIPE log during a full-suite run; this forces the race
+    // deterministically rather than relying on timing luck to reproduce it. The real assertion
+    // is that this resolves cleanly at all -- an unhandled 'error' event on the stream would
+    // otherwise surface outside this test's own pass/fail result, exactly as it did live.
+    const result = await invokeOnDriftHook('exit 0', makeDriftingResult())
+    expect(result.invoked).toBe(true)
+  })
+
   it('times out a hanging command rather than waiting indefinitely', async () => {
     const start = Date.now()
     const result = await invokeOnDriftHook('cat > /dev/null; sleep 30', makeDriftingResult(), 200)

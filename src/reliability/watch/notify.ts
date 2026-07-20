@@ -64,6 +64,16 @@ export function invokeOnDriftHook(command: string, result: WatchTickResult, time
     const child = spawn(command, { shell: true, stdio: ['pipe', 'ignore', 'ignore'] })
     child.on('error', (err) => settle({ invoked: false, exitCode: null, error: String(err) }))
     child.on('exit', (code) => settle({ invoked: true, exitCode: code }))
+    // A fast-exiting child (e.g. a "command not found" shell resolution, routed through
+    // exit(127) rather than the 'error' event above -- see the module comment on the
+    // shell:true finding) can close its end of this pipe before or during the write below,
+    // which Node reports as an EPIPE 'error' event on the stdin stream itself, not on `child`.
+    // Left unhandled, that's an unhandled stream error -- found live (2026-07-19 closeout) as
+    // an occasional stray EPIPE log outside any single test's own pass/fail result. The
+    // process's own outcome is already fully handled by the 'error'/'exit' listeners above;
+    // this only needs to stop the write from crashing, matching this function's own stated
+    // contract ("its own failure is reported, never thrown").
+    child.stdin.on('error', () => {})
     child.stdin.write(JSON.stringify(result))
     child.stdin.end()
   })
