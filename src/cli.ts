@@ -37,6 +37,10 @@ Usage:
   kairos contract validate <file.json> [--json]
   kairos ledger poll <contract-id> --client-id <slug> [--limit <n>] [--json]
   kairos ledger show <contract-id> [--instance <promise-instance-id>] [--json]
+  kairos exceptions list <contract-id> [--status <status>] [--json]
+  kairos exceptions show <contract-id> <item-id> [--json]
+  kairos exceptions ack <contract-id> <item-id> [--reason <text>] [--json]
+  kairos exceptions resolve <contract-id> <item-id> [--reason <text>] [--json]
   kairos drift baseline <n8n-workflow-id> [--json]
   kairos drift check <n8n-workflow-id> [--live] [--original-build-hash <hash>] [--json]
   kairos sandbox up [--port <n>]
@@ -48,6 +52,7 @@ Usage:
   kairos chaos audit <n8n-workflow-id> [--json]
   kairos chaos run <n8n-workflow-id> [--json]
   kairos watch --workflows <ids|all> [--interval <s>] [--on-drift <cmd>] [--once] [--json]
+  kairos watch --contracts <contract-id>[,...] --client-id <slug> [--on-exception <cmd>] [--once] [--json]
   kairos repair propose <n8n-workflow-id> --client-id <slug> [--json]
   kairos repair apply <n8n-workflow-id> --client-id <slug> [--yes] [--auto] [--json]
   kairos rollback <n8n-workflow-id> [--to <iso-timestamp>] [--yes] [--json]
@@ -165,8 +170,21 @@ Ledger options (ProofLedger v0, Phase 3 -- see docs/plans/process-contract-promi
   ledger show <contract-id>      Reads back stored ProofLedger entries for a contract -- purely
     [--instance <id>]            local, no network calls. Optionally filtered to one promise
                                   instance (the hashed correlation key value).
-  No ExceptionDesk yet, no dashboard, no autonomous business decisions -- ProofLedger v0 only
-  ever records what n8n's own execution data can prove; it never acts on it.
+  SLA compliance + ExceptionDesk (Phase 4) run only inside kairos watch --contracts (see
+  kairos watch with no args, and ExceptionDesk options below). No dashboard, no autonomous
+  business decisions anywhere in this arc -- Kairos only ever records and reports what evidence
+  can prove.
+
+ExceptionDesk options (v0, Phase 4 -- see docs/plans/process-contract-promise-engine-plan.md §7):
+  exceptions list <contract-id>  Human resolution ONLY -- ack/resolve are the ONLY way an item's
+    [--status <status>]          status ever changes. Items are opened/refreshed automatically,
+  exceptions show <id> <item>    only inside kairos watch --contracts, never by any exceptions
+  exceptions ack <id> <item>     subcommand. No auto-resolution, no workflow edits, ever. Each
+    [--reason <text>]            item carries owner/nextAction (from the contract's own
+  exceptions resolve <id> <item> OwnerAssignment/ExceptionRule, never invented), reason, evidence,
+    [--reason <text>]            contract id, hashed correlation key (promiseInstanceId), the
+                                  triggering SLA/expiration-rule/transition id, and a full
+                                  status-change history (actor: 'auto' only for the opening event).
 
 Sessions options:
   --limit <n>     Number of recent sessions to show (default: 20)
@@ -1879,7 +1897,128 @@ async function handleLedger(positional: string[], flags: Record<string, string |
   console.error('read-only, polling-based evidence tracking. poll fetches new n8n executions for')
   console.error('every workflow registered against a contract and extracts only whitelisted')
   console.error('evidence fields; show reads back what has already been recorded locally.')
-  console.error('No autonomous business decisions, no ExceptionDesk, no dashboard yet.')
+  console.error('SLA compliance + ExceptionDesk (Phase 4) run only inside `kairos watch --contracts`')
+  console.error('-- see "kairos exceptions" for reading/resolving what it opens.')
+  process.exit(1)
+}
+
+async function handleExceptionsList(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const contractId = positional[1]
+  if (!contractId) {
+    console.error('Usage: kairos exceptions list <contract-id> [--status open|acknowledged|resolved] [--json]')
+    process.exit(1)
+  }
+
+  const { loadExceptionDeskItems } = await import('./promise/exception-store.js')
+  let items = await loadExceptionDeskItems(contractId)
+  const statusFilter = typeof flags['status'] === 'string' ? flags['status'] : undefined
+  if (statusFilter) items = items.filter(i => i.status === statusFilter)
+
+  if (flags['json'] === true) {
+    console.log(JSON.stringify(items, null, 2))
+    return
+  }
+
+  if (items.length === 0) {
+    console.log(`No exception items${statusFilter ? ` with status "${statusFilter}"` : ''} for contract "${contractId}".`)
+    return
+  }
+
+  console.log(`\nExceptionDesk — ${contractId} (${items.length} item(s))`)
+  console.log('─'.repeat(50))
+  for (const item of items) {
+    const icon = item.status === 'open' ? '⚠' : item.status === 'acknowledged' ? '·' : '✓'
+    console.log(`  ${icon} [${item.status}] ${item.kind}  ${item.id}`)
+    console.log(`     Instance: ${item.promiseInstanceId.slice(0, 16)}...  Owner: ${item.owner}`)
+    console.log(`     ${item.reason}`)
+  }
+}
+
+async function handleExceptionsShow(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const contractId = positional[1]
+  const itemId = positional[2]
+  if (!contractId || !itemId) {
+    console.error('Usage: kairos exceptions show <contract-id> <item-id> [--json]')
+    process.exit(1)
+  }
+
+  const { loadExceptionDeskItems } = await import('./promise/exception-store.js')
+  const items = await loadExceptionDeskItems(contractId)
+  const item = items.find(i => i.id === itemId)
+  if (!item) {
+    console.error(`No exception item "${itemId}" found for contract "${contractId}".`)
+    process.exit(1)
+  }
+
+  if (flags['json'] === true) {
+    console.log(JSON.stringify(item, null, 2))
+    return
+  }
+
+  console.log(`\n${item.id}`)
+  console.log('─'.repeat(50))
+  console.log(`Kind: ${item.kind}      Status: ${item.status}`)
+  console.log(`Contract: ${item.contractId}      Instance: ${item.promiseInstanceId}`)
+  if (item.slaId) console.log(`SLA: ${item.slaId}`)
+  if (item.expirationRuleId) console.log(`Expiration rule: ${item.expirationRuleId}`)
+  console.log(`Owner: ${item.owner}`)
+  console.log(`Next action: ${item.nextAction}`)
+  console.log(`\nReason: ${item.reason}`)
+  if (item.evidence.length > 0) {
+    console.log(`\nEvidence:`)
+    for (const e of item.evidence) console.log(`  - ${e}`)
+  }
+  console.log(`\nHistory:`)
+  for (const h of item.history) {
+    console.log(`  ${h.ts}  ${h.from ?? '(none)'} → ${h.to}  [${h.actor}]${h.reason ? `  ${h.reason}` : ''}`)
+  }
+}
+
+async function handleExceptionsSetStatus(positional: string[], flags: Record<string, string | boolean>, to: 'acknowledged' | 'resolved'): Promise<void> {
+  const contractId = positional[1]
+  const itemId = positional[2]
+  if (!contractId || !itemId) {
+    console.error(`Usage: kairos exceptions ${to === 'acknowledged' ? 'ack' : 'resolve'} <contract-id> <item-id> [--reason <text>] [--json]`)
+    process.exit(1)
+  }
+
+  const { loadExceptionDeskItems, saveExceptionDeskItem } = await import('./promise/exception-store.js')
+  const { applyHumanStatusChange } = await import('./promise/exception-desk.js')
+  const items = await loadExceptionDeskItems(contractId)
+  const item = items.find(i => i.id === itemId)
+  if (!item) {
+    console.error(`No exception item "${itemId}" found for contract "${contractId}".`)
+    process.exit(1)
+  }
+
+  const reason = typeof flags['reason'] === 'string' ? flags['reason'] : undefined
+  const updated = applyHumanStatusChange(item, to, new Date(), reason)
+  await saveExceptionDeskItem(contractId, updated)
+
+  if (flags['json'] === true) {
+    console.log(JSON.stringify(updated, null, 2))
+    return
+  }
+  console.log(`${item.id}: ${item.status} → ${updated.status}${reason ? ` (${reason})` : ''}`)
+}
+
+async function handleExceptions(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const subcommand = positional[0]
+
+  if (subcommand === 'list') return handleExceptionsList(positional, flags)
+  if (subcommand === 'show') return handleExceptionsShow(positional, flags)
+  if (subcommand === 'ack') return handleExceptionsSetStatus(positional, flags, 'acknowledged')
+  if (subcommand === 'resolve') return handleExceptionsSetStatus(positional, flags, 'resolved')
+
+  console.error('Usage: kairos exceptions list <contract-id> [--status <status>] [--json]')
+  console.error('       kairos exceptions show <contract-id> <item-id> [--json]')
+  console.error('       kairos exceptions ack <contract-id> <item-id> [--reason <text>] [--json]')
+  console.error('       kairos exceptions resolve <contract-id> <item-id> [--reason <text>] [--json]')
+  console.error('')
+  console.error('ExceptionDesk v0 (Phase 4, docs/plans/process-contract-promise-engine-plan.md §7):')
+  console.error('human resolution only -- ack/resolve are the ONLY way an item\'s status ever')
+  console.error('changes; items are opened/refreshed automatically, only inside')
+  console.error('`kairos watch --contracts`, never here. No auto-resolution, no workflow edits.')
   process.exit(1)
 }
 
@@ -2284,16 +2423,114 @@ async function handleChaos(positional: string[], flags: Record<string, string | 
 // tightened later from real usage data, not guessed tighter now.
 const DEFAULT_WATCH_INTERVAL_SECONDS = 300
 
+/**
+ * One contract's compliance tick (Phase 4): poll new evidence for every registered workflow,
+ * evaluate SLA/expiration-rule compliance over the full local ledger, open/refresh exception
+ * items for any 'drifting' finding, print a report, and alert (stdout + optional --on-exception
+ * hook) for anything newly opened. Read-only against n8n (reuses pollWorkflowEvidence()
+ * unchanged); the only writes are to Kairos's own local ledger/exception storage. Per Codex's
+ * explicit scope: "Integrate with kairos watch only as detect/report/notify, not repair" -- this
+ * function never proposes or applies anything, and never edits a workflow.
+ */
+async function runContractComplianceTick(
+  contractId: string,
+  clientId: string,
+  n8nBaseUrl: string,
+  n8nApiKey: string,
+  asJson: boolean,
+  onExceptionCommand: string | undefined,
+): Promise<void> {
+  const { loadProcessContract } = await import('./promise/store.js')
+  const contract = await loadProcessContract(clientId, contractId)
+  if (!contract) {
+    console.error(`[contracts] No ProcessContract found for client "${clientId}" with id "${contractId}" -- skipping this tick.`)
+    return
+  }
+
+  const { loadContractWorkflowRegistration } = await import('./promise/registry.js')
+  const registration = await loadContractWorkflowRegistration(clientId, contractId)
+  if (!registration || registration.workflows.length === 0) {
+    console.error(`[contracts] No workflows registered for contract "${contractId}" -- skipping this tick. Run "kairos contract compile <file.json> --build" first.`)
+    return
+  }
+
+  const { N8nApiClient } = await import('./providers/n8n/api-client.js')
+  const client = new N8nApiClient(n8nBaseUrl, n8nApiKey, CLI_LOGGER)
+  const { pollWorkflowEvidence } = await import('./promise/ledger.js')
+  const { loadContractPollWatermark, saveContractPollWatermark, appendProofLedgerEntries, getProofLedgerEntries } = await import('./promise/ledger-store.js')
+
+  for (const wf of registration.workflows) {
+    const watermark = await loadContractPollWatermark(contractId, wf.n8nWorkflowId)
+    const result = await pollWorkflowEvidence(contract, wf.n8nWorkflowId, client, watermark, 20, wf.sourceElements)
+    await appendProofLedgerEntries(contractId, result.entries)
+    await saveContractPollWatermark(result.newWatermark)
+  }
+
+  const { checkSlaCompliance } = await import('./promise/sla-compliance.js')
+  const { updateExceptionDesk } = await import('./promise/exception-desk.js')
+  const { loadExceptionDeskItems, upsertExceptionDeskItems } = await import('./promise/exception-store.js')
+
+  const entries = await getProofLedgerEntries(contractId, 1000)
+  const findings = checkSlaCompliance(contract, entries)
+  const existingItems = await loadExceptionDeskItems(contractId)
+  const { opened, refreshed } = updateExceptionDesk(contract, findings, existingItems)
+  await upsertExceptionDeskItems(contractId, [...opened, ...refreshed])
+
+  const verdict = findings.some(f => f.status === 'drifting') ? 'DRIFTING' : 'HEALTHY'
+
+  if (asJson) {
+    console.log(JSON.stringify({ contractId, verdict, findings, openedExceptions: opened, refreshedExceptions: refreshed }, null, 2))
+  } else {
+    console.log(`\n[contracts] ${contract.name} (${contractId}) -- ${verdict}`)
+    const reportable = findings.filter(f => f.status !== 'insufficient_data' && f.status !== 'not_applicable')
+    if (reportable.length === 0) {
+      console.log('  No SLA/expiration findings with real data yet.')
+    }
+    for (const f of reportable) {
+      const icon = f.status === 'drifting' ? '⚠' : '✓'
+      const label = f.kind === 'sla' ? `SLA ${f.slaId}` : `Expiration ${f.expirationRuleId}`
+      console.log(`  ${icon} [${f.status}] ${label} (instance ${f.promiseInstanceId.slice(0, 12)}...) -- ${f.summary}`)
+    }
+  }
+
+  for (const item of opened) {
+    console.log(`\n[EXCEPTION OPENED] ${item.kind} -- contract ${item.contractId}, instance ${item.promiseInstanceId.slice(0, 12)}...`)
+    console.log(`  Owner: ${item.owner}`)
+    console.log(`  Next action: ${item.nextAction}`)
+    console.log(`  Reason: ${item.reason}`)
+
+    if (onExceptionCommand) {
+      const { invokeOnDriftHook } = await import('./reliability/watch/notify.js')
+      await invokeOnDriftHook(onExceptionCommand, item)
+    }
+  }
+}
+
 async function handleWatch(_positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const workflowsFlag = typeof flags['workflows'] === 'string' ? flags['workflows'] : undefined
-  if (!workflowsFlag) {
+  const contractsFlag = typeof flags['contracts'] === 'string' ? flags['contracts'] : undefined
+  const clientId = typeof flags['client-id'] === 'string' ? flags['client-id'] : undefined
+
+  if (!workflowsFlag && !contractsFlag) {
     console.error('Usage: kairos watch --workflows <ids|all> [--interval <s>] [--on-drift <cmd>] [--once] [--json]')
+    console.error('       kairos watch --contracts <contract-id>[,...] --client-id <slug> [--interval <s>] [--on-exception <cmd>] [--once] [--json]')
     console.error('')
-    console.error('Detect -> diagnose -> notify -> audit only -- no propose/apply/rollback (Phase 3,')
-    console.error('not built yet). Runs a foreground loop by default (Ctrl-C to stop); --once runs a')
-    console.error('single tick and exits, for cron/launchd. --workflows all watches every deployed')
-    console.error('library entry; a comma-separated list of n8n workflow IDs watches only those.')
-    console.error('Every tick is appended to ~/.kairos/reliability-audit.jsonl regardless of verdict.')
+    console.error('Detect -> diagnose -> notify -> audit only -- no propose/apply/rollback. Runs a')
+    console.error('foreground loop by default (Ctrl-C to stop); --once runs a single tick and')
+    console.error('exits, for cron/launchd. --workflows all watches every deployed library entry;')
+    console.error('a comma-separated list of n8n workflow IDs watches only those. Every workflow')
+    console.error('tick is appended to ~/.kairos/reliability-audit.jsonl regardless of verdict.')
+    console.error('')
+    console.error('--contracts (Phase 4) runs SLA/promise compliance instead: polls new evidence')
+    console.error('for every workflow registered against each named contract, evaluates')
+    console.error('SLA/expiration-rule compliance, and opens/refreshes ExceptionDesk items for any')
+    console.error('drifting finding -- detect/report/notify only, never repair, never a workflow')
+    console.error('edit. Both flags may be given together in one watch loop.')
+    process.exit(1)
+  }
+
+  if (contractsFlag && !clientId) {
+    console.error('--client-id is required when using --contracts.')
     process.exit(1)
   }
 
@@ -2310,16 +2547,15 @@ async function handleWatch(_positional: string[], flags: Record<string, string |
 
   const intervalSeconds = typeof flags['interval'] === 'string' ? parseInt(flags['interval'], 10) : DEFAULT_WATCH_INTERVAL_SECONDS
   const onDriftCommand = typeof flags['on-drift'] === 'string' ? flags['on-drift'] : undefined
+  const onExceptionCommand = typeof flags['on-exception'] === 'string' ? flags['on-exception'] : undefined
   const once = flags['once'] === true
   const asJson = flags['json'] === true
-
-  const { runWatchTick, formatWatchTickForHumans } = await import('./reliability/watch/loop.js')
-  const { notifyTick } = await import('./reliability/watch/notify.js')
 
   const lib = createLibrary()
   await lib.initialize()
 
-  const requestedIds = workflowsFlag === 'all' ? null : workflowsFlag.split(',').map(s => s.trim())
+  const requestedIds = workflowsFlag === 'all' ? null : workflowsFlag?.split(',').map(s => s.trim()) ?? null
+  const contractIds = contractsFlag ? contractsFlag.split(',').map(s => s.trim()) : []
 
   async function resolveTargets(): Promise<Array<{ libraryId: string; n8nWorkflowId: string; workflowName?: string; existingTraces: import('./library/types.js').ExecutionTrace[] }>> {
     const all = await lib.list()
@@ -2334,21 +2570,27 @@ async function handleWatch(_positional: string[], flags: Record<string, string |
   }
 
   async function runOnce(): Promise<void> {
-    const targets = await resolveTargets()
-    if (targets.length === 0) {
-      console.error('No deployed workflows match --workflows. Nothing to check this tick.')
-      return
+    if (workflowsFlag) {
+      const { runWatchTick, formatWatchTickForHumans } = await import('./reliability/watch/loop.js')
+      const { notifyTick } = await import('./reliability/watch/notify.js')
+
+      const targets = await resolveTargets()
+      if (targets.length === 0) {
+        console.error('No deployed workflows match --workflows. Nothing to check this tick.')
+      } else {
+        const results = await runWatchTick(lib, targets, n8nBaseUrl, n8nApiKey)
+        if (asJson) {
+          console.log(JSON.stringify(results, null, 2))
+        } else {
+          console.log(formatWatchTickForHumans(results))
+        }
+        await notifyTick(results, onDriftCommand ? { onDriftCommand } : {})
+      }
     }
 
-    const results = await runWatchTick(lib, targets, n8nBaseUrl, n8nApiKey)
-
-    if (asJson) {
-      console.log(JSON.stringify(results, null, 2))
-    } else {
-      console.log(formatWatchTickForHumans(results))
+    for (const contractId of contractIds) {
+      await runContractComplianceTick(contractId, clientId!, n8nBaseUrl, n8nApiKey, asJson, onExceptionCommand)
     }
-
-    await notifyTick(results, onDriftCommand ? { onDriftCommand } : {})
   }
 
   if (once) {
@@ -2910,6 +3152,9 @@ async function main(): Promise<void> {
       break
     case 'ledger':
       await handleLedger(positional, flags)
+      break
+    case 'exceptions':
+      await handleExceptions(positional, flags)
       break
     case 'drift':
       await handleDrift(positional, flags)

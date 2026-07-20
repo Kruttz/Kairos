@@ -960,6 +960,19 @@ kairos ledger poll <contract-id> --client-id acme --json   # full per-workflow p
 kairos ledger show <contract-id>                            # read back what's already recorded, purely local
 kairos ledger show <contract-id> --instance <hashed-key>    # filter to one promise instance
 
+# ExceptionDesk v0 (Phase 4): human resolution ONLY -- ack/resolve are the ONLY way an item's
+# status ever changes. Items are opened/refreshed automatically, but only inside
+# `kairos watch --contracts` (below), never by any exceptions subcommand itself. No
+# auto-resolution, no workflow edits, ever. Each item carries owner/nextAction (from the
+# contract's own OwnerAssignment/ExceptionRule, never invented), a reason, evidence, the
+# contract id, the hashed correlation key (promiseInstanceId), the triggering
+# SLA/expiration-rule id, and a full status-change history.
+kairos exceptions list <contract-id>
+kairos exceptions list <contract-id> --status open
+kairos exceptions show <contract-id> <item-id>
+kairos exceptions ack <contract-id> <item-id> --reason "Looking into it"
+kairos exceptions resolve <contract-id> <item-id> --reason "Called and scheduled."
+
 # Report what Kairos currently knows for this workflow -- which of the 9 named drift checks
 # have real data to evaluate ("captured") vs. which don't yet or structurally can't
 # ("skipped"), and why. Does not compute a verdict -- see "drift check" for that.
@@ -1049,6 +1062,17 @@ kairos watch --workflows all --once                                   # single t
 kairos watch --workflows wf-1,wf-2 --interval 300                     # foreground loop, Ctrl-C to stop
 kairos watch --workflows all --on-drift './notify-slack.sh' --once    # delegate alert delivery
 kairos watch --workflows all --once --json                            # exact structured tick result
+
+# --contracts (Phase 4) runs SLA/promise compliance instead of workflow drift: polls new n8n
+# evidence for every workflow registered against each named contract (see
+# `kairos contract compile --build`), evaluates SLA/expiration-rule compliance over ProofLedger,
+# and opens/refreshes ExceptionDesk items for any drifting finding -- detect/report/notify only,
+# same as workflow drift; never repairs, never edits a workflow. Both flags can run together in
+# one watch loop. --on-exception mirrors --on-drift's own delegate-the-alert pattern, just for
+# exception items instead of drift findings -- promise failure is never conflated with workflow
+# drift, so it gets its own hook rather than reusing --on-drift's.
+kairos watch --contracts empire-homecare-referral-intake --client-id acme --once
+kairos watch --contracts contract-a,contract-b --client-id acme --on-exception './page-oncall.sh'
 
 # Check a workflow for D9 (build-vs-live structural) drift and, if found, propose a restore --
 # rationale, diff, an explicit three-way hash comparison (stored Kairos version / live version /
