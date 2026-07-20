@@ -1,0 +1,133 @@
+{
+  "id": "northwind-cloud-p1-incident-response",
+  "version": 1,
+  "clientId": "northwind-cloud",
+  "name": "P1 Incident Response",
+  "description": "Every P1 incident is acknowledged within 15 minutes (24/7), updated at least every 30 minutes while open, and followed by a post-incident report within 3 business days of resolution.",
+
+  "entity": {
+    "name": "Incident",
+    "description": "A P1 (critical severity) production incident raised in the on-call paging system"
+  },
+  "correlationKey": {
+    "fieldPath": "body.incidentId",
+    "description": "The unique incident ID assigned by the paging system (e.g. PagerDuty) when the incident is created"
+  },
+  "promise": {
+    "text": "Every P1 incident is acknowledged within 15 minutes, updated every 30 minutes while open, and followed by a post-incident report within 3 business days of resolution."
+  },
+
+  "startConditions": [
+    {
+      "id": "sc-p1-raised",
+      "description": "A P1-severity incident is raised in the paging system",
+      "trigger": "PagerDuty incident.trigger webhook, filtered to severity=P1",
+      "initialState": "raised"
+    }
+  ],
+
+  "states": [
+    { "id": "raised", "name": "Raised", "description": "A P1 incident has been created and is awaiting acknowledgment.", "terminal": false },
+    { "id": "acknowledged", "name": "Acknowledged", "description": "An on-call engineer has acknowledged the incident.", "terminal": false },
+    { "id": "open_updating", "name": "Open (Updating)", "description": "The incident is open; status updates are being posted on a recurring cadence.", "terminal": false },
+    { "id": "resolved", "name": "Resolved", "description": "The incident is resolved; a post-incident report is still owed.", "terminal": false },
+    { "id": "postmortem_complete", "name": "Postmortem Complete", "description": "The post-incident report has been submitted.", "terminal": true },
+    { "id": "downgraded", "name": "Downgraded", "description": "Severity dropped below P1 before resolution; this contract's scope no longer applies.", "terminal": true }
+  ],
+
+  "events": [
+    { "id": "ack_received", "name": "Acknowledged", "description": "An on-call engineer acknowledged the incident." },
+    { "id": "status_update_posted", "name": "Status Update Posted", "description": "A status update was posted to the incident channel." },
+    { "id": "incident_resolved", "name": "Incident Resolved", "description": "The incident was marked resolved." },
+    { "id": "severity_downgraded", "name": "Severity Downgraded", "description": "The incident's severity was downgraded below P1." },
+    { "id": "postmortem_submitted", "name": "Postmortem Submitted", "description": "A post-incident report was submitted." }
+  ],
+
+  "transitions": [
+    { "id": "t-raised-to-ack", "fromState": "raised", "event": "ack_received", "toState": "acknowledged" },
+    { "id": "t-ack-to-updating", "fromState": "acknowledged", "event": "status_update_posted", "toState": "open_updating" },
+    { "id": "t-updating-self-loop", "fromState": "open_updating", "event": "status_update_posted", "toState": "open_updating" },
+    { "id": "t-updating-to-resolved", "fromState": "open_updating", "event": "incident_resolved", "toState": "resolved" },
+    { "id": "t-updating-to-downgraded", "fromState": "open_updating", "event": "severity_downgraded", "toState": "downgraded" },
+    { "id": "t-resolved-to-postmortem", "fromState": "resolved", "event": "postmortem_submitted", "toState": "postmortem_complete" }
+  ],
+
+  "terminalOutcomes": [
+    { "state": "postmortem_complete", "outcome": "success", "description": "The incident was fully handled, including the post-incident report." },
+    { "state": "downgraded", "outcome": "acceptable", "description": "No longer a P1 -- this contract's obligations no longer apply." }
+  ],
+
+  "owners": [
+    { "state": "raised", "owner": "on-call engineer" },
+    { "state": "acknowledged", "owner": "on-call engineer" },
+    { "state": "open_updating", "owner": "on-call engineer" },
+    { "state": "resolved", "owner": "incident commander" }
+  ],
+
+  "sla": [
+    {
+      "id": "sla-ack",
+      "measuredFrom": { "state": "raised" },
+      "expectedBy": { "state": "acknowledged" },
+      "duration": { "amount": 15, "unit": "minutes" }
+    },
+    {
+      "id": "sla-status-updates",
+      "measuredFrom": { "event": "status_update_posted" },
+      "expectedBy": { "state": "open_updating" },
+      "duration": { "amount": 30, "unit": "minutes" },
+      "recurring": { "whileInState": "open_updating" }
+    },
+    {
+      "id": "sla-postmortem",
+      "measuredFrom": { "state": "resolved" },
+      "expectedBy": { "state": "postmortem_complete" },
+      "duration": { "amount": 3, "unit": "business_days" }
+    }
+  ],
+
+  "businessCalendar": {
+    "timezone": "America/Los_Angeles",
+    "weeklyHours": [
+      { "day": "mon", "start": "09:00", "end": "18:00" },
+      { "day": "tue", "start": "09:00", "end": "18:00" },
+      { "day": "wed", "start": "09:00", "end": "18:00" },
+      { "day": "thu", "start": "09:00", "end": "18:00" },
+      { "day": "fri", "start": "09:00", "end": "18:00" }
+    ]
+  },
+
+  "exceptions": [
+    {
+      "id": "exc-missed-ack",
+      "condition": "No acknowledgment 15 minutes after the incident was raised",
+      "owner": "on-call engineer",
+      "suggestedAction": "Acknowledge the incident and begin response immediately; this SLA breach may trigger secondary on-call escalation per your paging policy."
+    }
+  ],
+
+  "evidenceRequirements": [
+    {
+      "transitionId": "t-raised-to-ack",
+      "requiredFields": ["acknowledgedBy", "acknowledgedAt"],
+      "description": "Who acknowledged the incident and when."
+    },
+    {
+      "transitionId": "t-updating-self-loop",
+      "requiredFields": ["updateText", "postedAt"],
+      "description": "The status update text and when it was posted."
+    }
+  ],
+
+  "assumptions": [
+    { "type": "safe", "text": "Assumed the ack and status-update SLAs run 24/7 (not business-hours-limited), matching real incident-response practice." }
+  ],
+
+  "provenance": {
+    "kairosVersion": "0.11.0",
+    "authoredBy": "human",
+    "createdAt": "2026-07-19T00:00:00.000Z",
+    "updatedAt": "2026-07-19T00:00:00.000Z"
+  },
+  "status": "draft"
+}

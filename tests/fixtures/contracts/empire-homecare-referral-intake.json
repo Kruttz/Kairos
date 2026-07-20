@@ -1,0 +1,121 @@
+{
+  "id": "empire-homecare-referral-intake",
+  "version": 1,
+  "clientId": "empire-homecare",
+  "name": "Referral Intake & Contact",
+  "description": "Every referral is contacted within 4 business hours of intake, and the outcome is logged. If a referral has not been reached after 3 attempts within 24 business hours, it is escalated to a human.",
+
+  "entity": {
+    "name": "Referral",
+    "description": "A person referred to Empire Homecare for DME services"
+  },
+  "correlationKey": {
+    "fieldPath": "body.phone",
+    "description": "The referral's phone number, as submitted on the intake form"
+  },
+  "promise": {
+    "text": "Every referral is contacted within 4 business hours of intake, and the outcome is logged."
+  },
+
+  "startConditions": [
+    {
+      "id": "sc-intake",
+      "description": "A new referral arrives via the intake form or Google Sheet row",
+      "trigger": "New row in the referral intake Google Sheet / webhook POST from the intake form",
+      "initialState": "received"
+    }
+  ],
+
+  "states": [
+    { "id": "received", "name": "Received", "description": "The referral has arrived and is awaiting first contact.", "terminal": false },
+    { "id": "contact_attempted", "name": "Contact Attempted", "description": "At least one call attempt has been logged.", "terminal": false },
+    { "id": "contacted", "name": "Contacted", "description": "The referral was reached; awaiting an outcome.", "terminal": false },
+    { "id": "scheduled", "name": "Scheduled", "description": "An appointment was scheduled.", "terminal": true },
+    { "id": "declined", "name": "Declined", "description": "The referral declined services.", "terminal": true },
+    { "id": "no_answer", "name": "No Answer (Expired)", "description": "Three attempts made, never reached, SLA window expired.", "terminal": true }
+  ],
+
+  "events": [
+    { "id": "call_attempted", "name": "Call Attempted", "description": "A call attempt was logged, regardless of outcome." },
+    { "id": "call_answered", "name": "Call Answered", "description": "The referral answered the call." },
+    { "id": "call_no_answer", "name": "Call No Answer", "description": "The call was not answered." },
+    { "id": "customer_declined", "name": "Customer Declined", "description": "The referral declined services." },
+    { "id": "appointment_scheduled", "name": "Appointment Scheduled", "description": "An appointment was booked." }
+  ],
+
+  "transitions": [
+    { "id": "t-received-to-attempted", "fromState": "received", "event": "call_attempted", "toState": "contact_attempted" },
+    { "id": "t-attempted-to-contacted", "fromState": "contact_attempted", "event": "call_answered", "toState": "contacted" },
+    { "id": "t-contacted-to-scheduled", "fromState": "contacted", "event": "appointment_scheduled", "toState": "scheduled" },
+    { "id": "t-contacted-to-declined", "fromState": "contacted", "event": "customer_declined", "toState": "declined" }
+  ],
+
+  "terminalOutcomes": [
+    { "state": "scheduled", "outcome": "success", "description": "The referral was contacted and scheduled an appointment." },
+    { "state": "declined", "outcome": "acceptable", "description": "The promise to attempt contact was kept even though the referral declined." },
+    { "state": "no_answer", "outcome": "failure", "description": "The referral was never reached within the SLA window." }
+  ],
+
+  "owners": [
+    { "state": "received", "owner": "intake coordinator" },
+    { "state": "contact_attempted", "owner": "on-call rep" }
+  ],
+
+  "sla": [
+    {
+      "id": "sla-first-contact",
+      "measuredFrom": { "state": "received" },
+      "expectedBy": { "state": "contact_attempted" },
+      "duration": { "amount": 4, "unit": "business_hours" }
+    }
+  ],
+
+  "businessCalendar": {
+    "timezone": "America/Denver",
+    "weeklyHours": [
+      { "day": "mon", "start": "08:00", "end": "17:00" },
+      { "day": "tue", "start": "08:00", "end": "17:00" },
+      { "day": "wed", "start": "08:00", "end": "17:00" },
+      { "day": "thu", "start": "08:00", "end": "17:00" },
+      { "day": "fri", "start": "08:00", "end": "17:00" }
+    ]
+  },
+
+  "expirationRules": [
+    {
+      "id": "exp-no-answer",
+      "state": "contact_attempted",
+      "after": { "amount": 24, "unit": "business_hours" },
+      "expiresTo": "no_answer"
+    }
+  ],
+
+  "exceptions": [
+    {
+      "id": "exc-missed-first-contact",
+      "condition": "No contact-attempt evidence 4 business hours after intake",
+      "owner": "intake coordinator",
+      "suggestedAction": "Call the referral immediately and log the outcome."
+    }
+  ],
+
+  "evidenceRequirements": [
+    {
+      "transitionId": "t-attempted-to-contacted",
+      "requiredFields": ["callOutcome", "callTimestamp"],
+      "description": "The call log entry recording the attempt's result."
+    }
+  ],
+
+  "assumptions": [
+    { "type": "needs_confirmation", "text": "Assumed a 3-attempt cap before expiring to no_answer -- confirm this matches Empire's real call policy." }
+  ],
+
+  "provenance": {
+    "kairosVersion": "0.11.0",
+    "authoredBy": "human",
+    "createdAt": "2026-07-19T00:00:00.000Z",
+    "updatedAt": "2026-07-19T00:00:00.000Z"
+  },
+  "status": "draft"
+}
