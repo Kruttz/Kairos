@@ -35,6 +35,8 @@ Usage:
   kairos contract plan "<business description>" --client-id <slug> [--json]
   kairos contract compile <file.json> [--build] [--dry-run] [--json]
   kairos contract validate <file.json> [--json]
+  kairos ledger poll <contract-id> --client-id <slug> [--limit <n>] [--json]
+  kairos ledger show <contract-id> [--instance <promise-instance-id>] [--json]
   kairos drift baseline <n8n-workflow-id> [--json]
   kairos drift check <n8n-workflow-id> [--live] [--original-build-hash <hash>] [--json]
   kairos sandbox up [--port <n>]
@@ -133,18 +135,38 @@ Contract options (ProcessContract v0, Phase 0+1+2 -- see docs/plans/process-cont
                                   from. Without --build, only prints the plan. With --build, feeds
                                   it into the same PackBuilder/Kairos.build() machinery
                                   build-pack uses -- full generation, validation, and (unless --dry-run)
-                                  deployment. Refuses to compile at all (exit 2, no plan) if the
-                                  contract fails validation or still has a blocking assumption.
-                                  Does not attempt to prove the built workflows fulfill the
-                                  contract -- that is ProofLedger, a later, unstarted phase.
+                                  deployment, and (unless --dry-run) registers the real deployed
+                                  workflow ids against this contract for "kairos ledger poll".
+                                  Refuses to compile at all (exit 2, no plan) if the contract
+                                  fails validation or still has a blocking assumption. Does not
+                                  attempt to prove the built workflows fulfill the contract --
+                                  that is ProofLedger's job (see Ledger options below).
   contract validate <file.json>  Validate a ProcessContract JSON file against the deterministic
                                   contract validator (reachability, terminal-state consistency,
                                   dangling references, business-calendar consistency). Fully
                                   offline. ProcessContract is deliberately separate from PackPlan
                                   (a contract describes a business promise; a pack describes
                                   workflows to build) -- a contract compiles into a PackPlan, it
-                                  does not extend one. No ProofLedger, no ExceptionDesk, no
-                                  workflow reporting/listener, no autonomous business decisions yet.
+                                  does not extend one.
+
+Ledger options (ProofLedger v0, Phase 3 -- see docs/plans/process-contract-promise-engine-plan.md §6):
+  ledger poll <contract-id>      Polls n8n execution data (read-only -- GET only, never a write)
+    --client-id <slug>           for every workflow registered against this contract, extracts
+    [--limit <n>]                evidence ONLY from the exact fields each EvidenceRequirement
+                                  whitelists, from the exact node compile.ts's evidence-marker
+                                  convention names, and appends observed/unverifiable entries to
+                                  the local ProofLedger. Never re-reads an execution already
+                                  covered by the stored per-workflow watermark, and never claims
+                                  more than the evidence in n8n's own execution data supports --
+                                  a marker node with fields missing is "unverifiable", not
+                                  silently rounded up to "observed". No new hosted service, no
+                                  listener -- decided by a real design-verification spike against
+                                  live production execution data, not assumed (§6.0).
+  ledger show <contract-id>      Reads back stored ProofLedger entries for a contract -- purely
+    [--instance <id>]            local, no network calls. Optionally filtered to one promise
+                                  instance (the hashed correlation key value).
+  No ExceptionDesk yet, no dashboard, no autonomous business decisions -- ProofLedger v0 only
+  ever records what n8n's own execution data can prove; it never acts on it.
 
 Sessions options:
   --limit <n>     Number of recent sessions to show (default: 20)
@@ -1614,6 +1636,32 @@ async function handleContractCompile(positional: string[], flags: Record<string,
   await writeFile(packPath, JSON.stringify(buildResult, null, 2), 'utf-8')
   console.error(`\nPack saved to: ${packPath}`)
 
+  // Real deployed workflow ids only exist once built for real -- a dry run never has anything
+  // to register, and a blocked build (escalation) never built anything either. Without this
+  // registration, `kairos ledger poll` has no way to know which n8n workflow ids implement this
+  // contract at all (the Phase 3 design spike's own named gap, plan doc §6.0).
+  if (!isDryRun && !buildResult.escalation) {
+    const registeredWorkflows = buildResult.workflows
+      .filter((w): w is typeof w & { workflowId: string } => w.workflowId !== null && !w.error)
+      .map(w => ({
+        n8nWorkflowId: w.workflowId,
+        workflowName: w.name,
+        sourceElements: result.traceability.find(t => t.workflowName === w.name)?.sourceElements ?? [],
+      }))
+
+    if (registeredWorkflows.length > 0) {
+      const { saveContractWorkflowRegistration } = await import('./promise/registry.js')
+      const { path: registrationPath } = await saveContractWorkflowRegistration({
+        contractId: contract.id,
+        contractVersion: contract.version,
+        clientId: contract.clientId,
+        workflows: registeredWorkflows,
+        registeredAt: new Date().toISOString(),
+      })
+      console.error(`Registered ${registeredWorkflows.length} workflow(s) for evidence polling ("kairos ledger poll"): ${registrationPath}`)
+    }
+  }
+
   if (buildResult.escalation) process.exit(2)
 }
 
@@ -1696,6 +1744,143 @@ async function handleContract(positional: string[], flags: Record<string, string
   }
 
   if (errors.length > 0) process.exit(1)
+}
+
+async function handleLedgerPoll(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const contractId = positional[1]
+  const clientId = typeof flags['client-id'] === 'string' ? flags['client-id'] : undefined
+
+  if (!contractId || !clientId) {
+    console.error('Usage: kairos ledger poll <contract-id> --client-id <slug> [--limit <n>] [--json]')
+    console.error('')
+    console.error('Polls n8n execution data (read-only -- GET only, never a write) for every')
+    console.error('workflow registered against this contract (see "kairos contract compile')
+    console.error('--build"), extracts evidence only from the exact fields each')
+    console.error('EvidenceRequirement whitelists, and appends observed/unverifiable entries to')
+    console.error('the local ProofLedger. Never re-processes an execution already covered by the')
+    console.error('stored watermark; --limit controls how many recent executions are fetched per')
+    console.error('workflow per run (default 20).')
+    process.exit(1)
+  }
+
+  const { loadProcessContract } = await import('./promise/store.js')
+  const contract = await loadProcessContract(clientId, contractId)
+  if (!contract) {
+    console.error(`No ProcessContract found for client "${clientId}" with id "${contractId}".`)
+    process.exit(1)
+  }
+
+  const { loadContractWorkflowRegistration } = await import('./promise/registry.js')
+  const registration = await loadContractWorkflowRegistration(clientId, contractId)
+  if (!registration || registration.workflows.length === 0) {
+    console.error('No workflows registered for this contract yet.')
+    console.error('Run "kairos contract compile <file.json> --build" (without --dry-run) first --')
+    console.error('registration happens automatically once a real build succeeds.')
+    process.exit(1)
+  }
+
+  const n8nBaseUrl = getEnvOrExit('N8N_BASE_URL')
+  const n8nApiKey = getEnvOrExit('N8N_API_KEY')
+  const { N8nApiClient } = await import('./providers/n8n/api-client.js')
+  const client = new N8nApiClient(n8nBaseUrl, n8nApiKey, CLI_LOGGER)
+
+  const { pollWorkflowEvidence } = await import('./promise/ledger.js')
+  const { loadContractPollWatermark, saveContractPollWatermark, appendProofLedgerEntries } = await import('./promise/ledger-store.js')
+
+  const limit = typeof flags['limit'] === 'string' ? parseInt(flags['limit'], 10) : 20
+
+  const results: Array<{ workflowName: string } & Awaited<ReturnType<typeof pollWorkflowEvidence>>> = []
+  for (const wf of registration.workflows) {
+    const watermark = await loadContractPollWatermark(contractId, wf.n8nWorkflowId)
+    const result = await pollWorkflowEvidence(contract, wf.n8nWorkflowId, client, watermark, limit)
+    await appendProofLedgerEntries(contractId, result.entries)
+    await saveContractPollWatermark(result.newWatermark)
+    results.push({ workflowName: wf.workflowName, ...result })
+  }
+
+  if (flags['json'] === true) {
+    console.log(JSON.stringify(results, null, 2))
+    return
+  }
+
+  console.log(`\n${contract.name} — Evidence Poll`)
+  console.log('─'.repeat(50))
+  for (const r of results) {
+    const extracted = r.outcomes.filter(o => o.outcome === 'extracted').length
+    const unverifiable = r.outcomes.filter(o => o.outcome === 'unverifiable').length
+    const skipped = r.outcomes.filter(o => o.outcome === 'skipped').length
+
+    console.log(`\n${r.workflowName} (${r.n8nWorkflowId})`)
+    console.log(`  Checked: ${r.executionsChecked} execution(s) -- extracted: ${extracted}, unverifiable: ${unverifiable}, skipped: ${skipped}`)
+    if (r.possibleGap) {
+      console.log(`  ⚠ Every fetched execution was new -- the poll window may be smaller than the real gap since the last check. Consider --limit or polling more often.`)
+    }
+    for (const o of r.outcomes) {
+      if (o.outcome === 'skipped') continue
+      const icon = o.outcome === 'extracted' ? '✓' : '⚠'
+      console.log(`    ${icon} [${o.outcome}] exec ${o.executionId}${o.transitionId ? ` (${o.transitionId})` : ''}: ${o.detail}`)
+    }
+  }
+}
+
+async function handleLedgerShow(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const contractId = positional[1]
+  if (!contractId) {
+    console.error('Usage: kairos ledger show <contract-id> [--instance <promise-instance-id>] [--limit <n>] [--json]')
+    console.error('')
+    console.error('Reads back stored ProofLedger entries for a contract -- purely local, no')
+    console.error('n8n/Anthropic calls. Run "kairos ledger poll" first to populate it.')
+    process.exit(1)
+  }
+
+  const { getProofLedgerEntries } = await import('./promise/ledger-store.js')
+  const limit = typeof flags['limit'] === 'string' ? parseInt(flags['limit'], 10) : 200
+  let entries = await getProofLedgerEntries(contractId, limit)
+
+  const instanceFilter = typeof flags['instance'] === 'string' ? flags['instance'] : undefined
+  if (instanceFilter) entries = entries.filter(e => e.promiseInstanceId === instanceFilter)
+
+  if (flags['json'] === true) {
+    console.log(JSON.stringify(entries, null, 2))
+    return
+  }
+
+  if (entries.length === 0) {
+    console.log(`No ProofLedger entries found${instanceFilter ? ` for instance "${instanceFilter}"` : ''}.`)
+    console.log('Run "kairos ledger poll <contract-id> --client-id <slug>" first.')
+    return
+  }
+
+  console.log(`\nProofLedger — ${contractId}${instanceFilter ? ` (instance ${instanceFilter})` : ''}`)
+  console.log('─'.repeat(50))
+  for (const e of entries) {
+    const icon = e.status === 'observed' ? '✓' : e.status === 'unverifiable' ? '⚠' : '?'
+    console.log(`  ${icon} [${e.status}] ${e.observedAt}  transition=${e.transitionId}  instance=${e.promiseInstanceId.slice(0, 12)}...`)
+    console.log(`     ${e.detail}`)
+  }
+}
+
+async function handleLedger(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const subcommand = positional[0]
+
+  if (subcommand === 'poll') {
+    await handleLedgerPoll(positional, flags)
+    return
+  }
+  if (subcommand === 'show') {
+    await handleLedgerShow(positional, flags)
+    return
+  }
+
+  console.error('Usage: kairos ledger poll <contract-id> --client-id <slug> [--limit <n>] [--json]')
+  console.error('       kairos ledger show <contract-id> [--instance <promise-instance-id>] [--json]')
+  console.error('')
+  console.error('ProofLedger v0 (Phase 3, docs/plans/process-contract-promise-engine-plan.md §6):')
+  console.error('read-only, polling-based evidence tracking. poll fetches new n8n executions for')
+  console.error('every workflow registered against a contract and extracts only whitelisted')
+  console.error('evidence fields; show reads back what has already been recorded locally.')
+  console.error('No autonomous business decisions, no ExceptionDesk, no dashboard yet.')
+  process.exit(1)
 }
 
 async function handleDrift(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
@@ -2722,6 +2907,9 @@ async function main(): Promise<void> {
       break
     case 'contract':
       await handleContract(positional, flags)
+      break
+    case 'ledger':
+      await handleLedger(positional, flags)
       break
     case 'drift':
       await handleDrift(positional, flags)

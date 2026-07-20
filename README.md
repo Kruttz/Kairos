@@ -930,10 +930,12 @@ kairos contract plan "..." --client-id acme --json  # full PlanContractResult as
 # and traceability from every compiled workflow back to the exact contract element ids it came
 # from (e.g. which startCondition/transition/sla produced it). Without --build, only prints the
 # plan. With --build, feeds it into the exact same PackBuilder/Kairos.build() machinery
-# `kairos build-pack` uses -- full generation, validation, and (unless --dry-run) deployment.
-# Refuses to compile at all (exit 2, no plan produced) if the contract fails validation or still
-# has a blocking assumption. Deliberately does not attempt to prove the built workflows fulfill
-# the contract -- that verification is ProofLedger's job, a later, unstarted phase.
+# `kairos build-pack` uses -- full generation, validation, and (unless --dry-run) deployment, plus
+# (unless --dry-run) automatically registering the real deployed workflow ids against this
+# contract so `kairos ledger poll` knows what to poll. Refuses to compile at all (exit 2, no plan
+# produced) if the contract fails validation or still has a blocking assumption. Deliberately
+# does not attempt to prove the built workflows fulfill the contract -- that verification is
+# ProofLedger's job (see `kairos ledger poll` below).
 kairos contract compile <file.json>                       # print the compiled plan only
 kairos contract compile <file.json> --build --dry-run     # also generate + validate the workflows, skip deployment
 kairos contract compile <file.json> --json                # full CompileToPackPlanResult as JSON
@@ -943,6 +945,20 @@ kairos contract compile <file.json> --json                # full CompileToPackPl
 # consistency. Fully offline, no LLM call.
 kairos contract validate <file.json>
 kairos contract validate <file.json> --json  # exact structured issues, not rendered text
+
+# ProofLedger v0 (Phase 3): poll n8n execution data (read-only -- GET only, never a write) for
+# every workflow registered against a contract, extract evidence ONLY from the exact fields each
+# EvidenceRequirement whitelists (from the exact node compile.ts's "Kairos Evidence: <id>" marker
+# convention names), and append observed/unverifiable entries to a local, append-only-JSONL
+# ledger. Never re-reads an execution already covered by the stored per-workflow watermark, and
+# never claims more than n8n's own execution data actually supports -- a marker node with a
+# required field missing is recorded "unverifiable", never silently rounded up to "observed". No
+# new hosted service, no listener -- this was a real design-verification spike's decision (§6.0
+# of the plan doc), verified against live production execution data, not assumed.
+kairos ledger poll <contract-id> --client-id acme          # requires N8N_BASE_URL/N8N_API_KEY
+kairos ledger poll <contract-id> --client-id acme --json   # full per-workflow poll results as JSON
+kairos ledger show <contract-id>                            # read back what's already recorded, purely local
+kairos ledger show <contract-id> --instance <hashed-key>    # filter to one promise instance
 
 # Report what Kairos currently knows for this workflow -- which of the 9 named drift checks
 # have real data to evaluate ("captured") vs. which don't yet or structurally can't
