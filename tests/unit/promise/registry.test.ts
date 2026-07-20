@@ -1,0 +1,67 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { mkdtemp, rm, stat } from 'node:fs/promises'
+import { tmpdir, homedir } from 'node:os'
+import { join } from 'node:path'
+import { saveContractWorkflowRegistration, loadContractWorkflowRegistration, type ContractWorkflowRegistration } from '../../../src/promise/registry.js'
+
+function makeRegistration(overrides: Partial<ContractWorkflowRegistration> = {}): ContractWorkflowRegistration {
+  return {
+    contractId: 'empire-homecare-referral-intake',
+    contractVersion: 1,
+    clientId: 'empire-homecare',
+    workflows: [
+      { n8nWorkflowId: 'wf-intake', workflowName: 'Referral Intake', sourceElements: ['startCondition:sc-intake', 'state:received', 'correlationKey'] },
+      { n8nWorkflowId: 'wf-processing', workflowName: 'Referral Processing & Outcome Logging', sourceElements: ['transition:t-attempted-to-contacted'] },
+    ],
+    registeredAt: '2026-07-20T09:00:00.000Z',
+    ...overrides,
+  }
+}
+
+let scratchHome: string
+const ORIGINAL_HOME = homedir()
+
+beforeEach(async () => {
+  scratchHome = await mkdtemp(join(tmpdir(), 'kairos-registry-test-'))
+  process.env['HOME'] = scratchHome
+})
+
+afterEach(async () => {
+  process.env['HOME'] = ORIGINAL_HOME
+  await rm(scratchHome, { recursive: true, force: true })
+})
+
+describe('saveContractWorkflowRegistration / loadContractWorkflowRegistration', () => {
+  it('round-trips a registration', async () => {
+    const saved = await saveContractWorkflowRegistration(makeRegistration())
+    expect(saved.path).toContain('empire-homecare')
+    expect(saved.path).toContain('empire-homecare-referral-intake-workflows.json')
+
+    const loaded = await loadContractWorkflowRegistration('empire-homecare', 'empire-homecare-referral-intake')
+    expect(loaded).toEqual(makeRegistration())
+  })
+
+  it('returns null, not a throw, when nothing was ever registered', async () => {
+    expect(await loadContractWorkflowRegistration('nobody', 'nothing')).toBeNull()
+  })
+
+  it('re-saving overwrites (matches store.ts\'s own no-versioning precedent)', async () => {
+    await saveContractWorkflowRegistration(makeRegistration())
+    await saveContractWorkflowRegistration(makeRegistration({ workflows: [{ n8nWorkflowId: 'wf-new', workflowName: 'New One', sourceElements: [] }] }))
+    const loaded = await loadContractWorkflowRegistration('empire-homecare', 'empire-homecare-referral-intake')
+    expect(loaded!.workflows).toEqual([{ n8nWorkflowId: 'wf-new', workflowName: 'New One', sourceElements: [] }])
+  })
+
+  it('is scoped per clientId', async () => {
+    await saveContractWorkflowRegistration(makeRegistration({ clientId: 'client-a' }))
+    const loadedForOther = await loadContractWorkflowRegistration('client-b', 'empire-homecare-referral-intake')
+    expect(loadedForOther).toBeNull()
+  })
+
+  it('the saved file is chmod 600', async () => {
+    await saveContractWorkflowRegistration(makeRegistration())
+    const path = join(scratchHome, '.kairos', 'contracts', 'empire-homecare', 'empire-homecare-referral-intake-workflows.json')
+    const stats = await stat(path)
+    expect(stats.mode & 0o777).toBe(0o600)
+  })
+})
