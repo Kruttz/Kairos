@@ -184,7 +184,13 @@ function derivePackName(businessContext: string): string {
   return slugifyWorkflowName(businessContext)
 }
 
-function normalizeAssumptions(raw: unknown[]): TypedAssumption[] {
+/** Exported so src/promise/plan.ts (ProcessContract's own LLM-assisted authoring, Phase 1 of
+ * docs/plans/process-contract-promise-engine-plan.md) can reuse this exact normalization rather
+ * than duplicating it -- Codex's own instruction was to reuse PackBuilder's
+ * assumptions/blocking-escalation pattern "where appropriate," and a second, drifted copy of
+ * the same three-tier coercion logic is exactly the kind of duplication that instruction is
+ * meant to avoid. */
+export function normalizeAssumptions(raw: unknown[]): TypedAssumption[] {
   const validTypes = new Set<string>(['safe', 'needs_confirmation', 'blocking'])
   return raw.map((a): TypedAssumption => {
     if (typeof a === 'string') {
