@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { compileToPackPlan } from '../../../src/promise/compile.js'
+import { compileToPackPlan, evidenceNodeName } from '../../../src/promise/compile.js'
 import type { ProcessContract } from '../../../src/promise/types.js'
 
 const FIXTURES_DIR = join(__dirname, '../../fixtures/contracts')
@@ -50,6 +50,13 @@ describe('compileToPackPlan', () => {
       expect(processing.description).toContain('callTimestamp')
       expect(processing.description).toContain('scheduled')
       expect(processing.description).toContain('declined')
+    })
+
+    it('instructs the generator to name the evidence-capturing node using the Kairos Evidence marker convention', () => {
+      const result = compileToPackPlan(empireHomecare())
+      const processing = result.plan.workflows.find(w => w.name === 'Referral Processing & Outcome Logging')!
+      expect(processing.description).toContain(evidenceNodeName('t-attempted-to-contacted'))
+      expect(evidenceNodeName('t-attempted-to-contacted')).toBe('Kairos Evidence: t-attempted-to-contacted')
     })
 
     it('the escalation workflow description covers the SLA, expiration rule, and exception', () => {

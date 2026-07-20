@@ -73,6 +73,21 @@ function lookupState(contract: ProcessContract, id: string) {
   return contract.states.find(s => s.id === id)
 }
 
+/**
+ * Evidence-node marker convention -- Phase 3's first named prerequisite (Codex, 2026-07-20):
+ * "compiled workflows need predictable node names/markers so Kairos knows where to extract
+ * evidence." The compiled description instructs the LLM-based codegen to name the exact node
+ * that sets a given EvidenceRequirement's fields using this convention, so ProofLedger's poller
+ * (src/promise/ledger.ts) can find it deterministically by name in a real execution's runData,
+ * rather than guessing from field names -- nothing about a generated workflow's structure
+ * otherwise guarantees a stable name (the Phase 3 design spike's Finding 6, plan doc §6.0).
+ * Exported so ledger.ts imports this exact format rather than a second, driftable copy of the
+ * same string.
+ */
+export function evidenceNodeName(transitionId: string): string {
+  return `Kairos Evidence: ${transitionId}`
+}
+
 function buildIntakeWorkflow(
   contract: ProcessContract,
   sc: StartCondition,
@@ -126,7 +141,9 @@ function buildProcessingWorkflow(contract: ProcessContract): { workflow: Workflo
 
   for (const ev of contract.evidenceRequirements) {
     const t = contract.transitions.find(x => x.id === ev.transitionId)
-    lines.push(`For transition "${t?.id ?? ev.transitionId}", log these exact fields as evidence: ${ev.requiredFields.join(', ')} -- ${ev.description}`)
+    lines.push(
+      `For transition "${t?.id ?? ev.transitionId}", the node that sets these exact fields as evidence (${ev.requiredFields.join(', ')} -- ${ev.description}) MUST be named exactly "${evidenceNodeName(ev.transitionId)}" (a Set/Edit Fields node right after the fields are known is usually the right choice) so this evidence can be located programmatically later. Do not rename, skip, or merge this node with another one.`
+    )
   }
 
   const relevantOwners = contract.owners.filter(o => touchedStates.has(o.state))
