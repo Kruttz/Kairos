@@ -56,4 +56,16 @@ describe('provenance-versions', () => {
   it('getKairosVersion is cached (repeated calls return the same value)', () => {
     expect(getKairosVersion()).toBe(getKairosVersion())
   })
+
+  it('getKairosVersion has a process.argv[1] fallback for when import.meta.url is unavailable', () => {
+    // Regression guard, not a runtime behavior test -- this specific bug (dist/cli.cjs reporting
+    // 'unknown' instead of a real version) is invisible to any test running against source,
+    // since vitest always executes real ESM with a real import.meta.url; only tsup's bundled
+    // CJS output shims import.meta to a bare `{}` (confirmed directly in dist/cli.cjs, found via
+    // a real Phase 5 checkpoint -- see the function's own doc comment). Structural check that
+    // the fallback path still exists, matching the reliability-suite closeout's own precedent
+    // for guarding a dist-only bug a source-tree test can't otherwise see.
+    const source = readFileSync(new URL('../../../src/validation/provenance-versions.ts', import.meta.url), 'utf-8')
+    expect(source).toContain('process.argv[1]')
+  })
 })
