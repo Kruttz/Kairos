@@ -32,6 +32,7 @@ Usage:
   kairos validate-pack <name>
   kairos preflight <name> [--live] [--bundle-dir <dir>] [--client-id <slug>] [--json]
   kairos trace record <n8n-workflow-id>
+  kairos contract plan "<business description>" --client-id <slug> [--json]
   kairos contract validate <file.json> [--json]
   kairos drift baseline <n8n-workflow-id> [--json]
   kairos drift check <n8n-workflow-id> [--live] [--original-build-hash <hash>] [--json]
@@ -117,16 +118,23 @@ Patterns ingest/sync (community pattern library, EXPERIMENTAL -- see docs/plans/
                              see it (clearly marked [EXPERIMENTAL COMMUNITY]) in 'kairos patterns'
                              output; unset it (the default) to fully disable the display.
 
-Contract options (ProcessContract v0, Phase 0 only -- see docs/plans/process-contract-promise-engine-plan.md):
+Contract options (ProcessContract v0, Phase 0+1 -- see docs/plans/process-contract-promise-engine-plan.md):
+  contract plan "<description>"  Draft a ProcessContract from a plain-language business
+    --client-id <slug>           description via an LLM (requires ANTHROPIC_API_KEY). Always run
+                                  through the deterministic validator before being returned;
+                                  always saved to ~/.kairos/contracts/<client-id>/<id>.json for
+                                  human review, even when it needs review -- never withheld. Exits
+                                  2 (not 1) when the draft has a validation error or a blocking
+                                  assumption, distinguishing "needs a human" from a hard failure.
   contract validate <file.json>  Validate a ProcessContract JSON file against the deterministic
                                   contract validator (reachability, terminal-state consistency,
                                   dangling references, business-calendar consistency). Fully
-                                  offline. contract plan/compile are later phases, not built yet
-                                  -- ProcessContract is deliberately separate from PackPlan
+                                  offline. ProcessContract is deliberately separate from PackPlan
                                   (a contract describes a business promise; a pack describes
-                                  workflows to build), and this phase ships the schema +
-                                  validator only, no LLM authoring, no compilation, no
-                                  ProofLedger, no ExceptionDesk, no workflow reporting/listener.
+                                  workflows to build). contract compile (Phase 2, PackPlan
+                                  compilation) is not built yet -- no ProofLedger, no
+                                  ExceptionDesk, no workflow reporting/listener, no autonomous
+                                  business decisions.
 
 Sessions options:
   --limit <n>     Number of recent sessions to show (default: 20)
@@ -1406,23 +1414,101 @@ async function handleValidatePack(positional: string[]): Promise<void> {
   if (errors.length > 0) process.exit(1)
 }
 
+async function handleContractPlan(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const description = positional[1]
+  const clientId = typeof flags['client-id'] === 'string' ? flags['client-id'] : undefined
+
+  if (!description || !clientId) {
+    console.error('Usage: kairos contract plan "<business description>" --client-id <slug> [--json]')
+    console.error('')
+    console.error('Drafts a ProcessContract from a plain-language description of a business')
+    console.error('promise (e.g. "every referral gets contacted within 4 business hours,')
+    console.error('outcome logged, escalated after 3 failed attempts"). The draft is always run')
+    console.error("through Kairos's deterministic contract validator (`kairos contract")
+    console.error('validate`) before being returned. If the draft has a validation error or a')
+    console.error('blocking assumption, it is still saved and shown in full -- never withheld --')
+    console.error('but flagged as needing human review rather than treated as ready to use.')
+    console.error('No compilation, no deployment: this only produces a reviewable draft.')
+    process.exit(1)
+  }
+
+  const anthropicApiKey = getEnvOrExit('ANTHROPIC_API_KEY')
+
+  const { planProcessContract } = await import('./promise/plan.js')
+  const { saveProcessContract } = await import('./promise/store.js')
+
+  console.error('Drafting ProcessContract...\n')
+  const result = await planProcessContract({ description, clientId, anthropicApiKey })
+  const { path } = await saveProcessContract(result.contract)
+
+  if (flags['json'] === true) {
+    console.log(JSON.stringify({ ...result, savedTo: path }, null, 2))
+    if (!result.readyToProceed) process.exit(2)
+    return
+  }
+
+  const { contract, validationIssues, readyToProceed } = result
+  console.log(`\n${contract.name}`)
+  console.log('─'.repeat(50))
+  console.log(contract.description)
+  console.log('')
+  console.log(`Entity: ${contract.entity.name}`)
+  console.log(`States: ${contract.states.length}   Transitions: ${contract.transitions.length}   SLAs: ${contract.sla.length}`)
+
+  const errors = validationIssues.filter(i => i.severity === 'error')
+  const warnings = validationIssues.filter(i => i.severity === 'warn')
+  if (validationIssues.length > 0) {
+    console.log(`\nValidator: ${errors.length} error(s), ${warnings.length} warning(s)`)
+    for (const issue of errors) console.log(`  ✗ [error] [Rule ${issue.rule}] ${issue.message}${issue.path ? ` (${issue.path})` : ''}`)
+    for (const issue of warnings) console.log(`  ⚠ [warn]  [Rule ${issue.rule}] ${issue.message}${issue.path ? ` (${issue.path})` : ''}`)
+  } else {
+    console.log('\nValidator: passed, no issues')
+  }
+
+  const blocking = contract.assumptions.filter(a => a.type === 'blocking')
+  const needsConfirmation = contract.assumptions.filter(a => a.type === 'needs_confirmation')
+  if (blocking.length > 0) {
+    console.log(`\nBlocking Issues (resolve before this contract is usable)`)
+    for (const a of blocking) console.log(`  ✗ ${a.text}`)
+  }
+  if (needsConfirmation.length > 0) {
+    console.log(`\nNeeds Confirmation`)
+    for (const a of needsConfirmation) console.log(`  ? ${a.text}`)
+  }
+
+  console.log(`\nSaved to: ${path}`)
+  console.log(readyToProceed ? '\n✓ Ready for human review -- no blocking issues.' : '\n⚠ Needs human review before this contract can be trusted.')
+
+  if (!readyToProceed) process.exit(2)
+}
+
 async function handleContract(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const subcommand = positional[0]
 
-  if (subcommand === 'plan' || subcommand === 'compile') {
-    console.error(`kairos contract ${subcommand} is not built yet -- Phase 0 (docs/plans/process-contract-promise-engine-plan.md) ships the schema and validator only.`)
-    console.error('Run "kairos contract validate <file.json>" against a hand-authored contract instead.')
+  if (subcommand === 'plan') {
+    await handleContractPlan(positional, flags)
+    return
+  }
+
+  if (subcommand === 'compile') {
+    console.error(`kairos contract ${subcommand} is not built yet -- Phase 0/1 (docs/plans/process-contract-promise-engine-plan.md) ship the schema, validator, and LLM-assisted authoring only.`)
+    console.error('Run "kairos contract plan" to draft a contract, or "kairos contract validate <file.json>" against a hand-authored one.')
     process.exit(1)
   }
 
   if (subcommand !== 'validate') {
-    console.error('Usage: kairos contract validate <file.json> [--json]')
+    console.error('Usage: kairos contract plan "<business description>" --client-id <slug> [--json]')
+    console.error('       kairos contract validate <file.json> [--json]')
     console.error('')
-    console.error("Validates a ProcessContract JSON file against Kairos's deterministic")
+    console.error('plan drafts a ProcessContract from a plain-language description via an LLM,')
+    console.error('then always runs it through the deterministic validator before returning it.')
+    console.error('')
+    console.error("validate checks a ProcessContract JSON file against Kairos's deterministic")
     console.error('contract validator -- reachability, terminal-state consistency, dangling')
     console.error('references, business-calendar consistency, and more. Fully offline: no')
-    console.error('Anthropic/n8n API calls, no credentials required. Phase 0 only -- there is')
-    console.error('no `kairos contract plan`/`compile` yet (docs/plans/')
+    console.error('Anthropic/n8n API calls, no credentials required.')
+    console.error('')
+    console.error('Phase 0/1 only -- there is no `kairos contract compile` yet (docs/plans/')
     console.error('process-contract-promise-engine-plan.md).')
     process.exit(1)
   }

@@ -913,14 +913,22 @@ kairos pack export my-pack --impact-notes
 # Record a deployed workflow's latest n8n execution into the library (improves retrieval)
 kairos trace record <n8n-workflow-id>
 
+# Draft a ProcessContract from a plain-language business description via an LLM (requires
+# ANTHROPIC_API_KEY). ProcessContract v0 is a separate, later-stage arc
+# (docs/plans/process-contract-promise-engine-plan.md) that turns Kairos from "did the workflow
+# behave" into "was the business promise kept" -- deliberately separate from PackPlan, since a
+# contract describes a business promise (entities, states, SLAs, terminal outcomes) and a pack
+# describes workflows to build. The draft is always run through the deterministic validator
+# before being returned, and always saved to ~/.kairos/contracts/<client-id>/<id>.json for human
+# review -- even when it needs review, it is never withheld. Exits 2 (not 1) when the draft has
+# a validation error or a blocking assumption, so scripts can tell "needs a human" apart from a
+# hard failure. No compilation to a real pack yet, no ProofLedger, no ExceptionDesk.
+kairos contract plan "every referral gets contacted within 4 business hours, outcome logged" --client-id acme
+kairos contract plan "..." --client-id acme --json  # full PlanContractResult as JSON
+
 # Validate a ProcessContract JSON file against the deterministic contract validator --
 # reachability, terminal-state consistency, dangling references, business-calendar
-# consistency. Fully offline, no LLM call. ProcessContract v0 is Phase 0 of a separate,
-# later-stage arc (docs/plans/process-contract-promise-engine-plan.md) that turns Kairos from
-# "did the workflow behave" into "was the business promise kept" -- deliberately separate from
-# PackPlan, since a contract describes a business promise (entities, states, SLAs, terminal
-# outcomes) and a pack describes workflows to build. Schema + validator only in this phase --
-# no LLM authoring, no compilation to a real pack, no ProofLedger, no ExceptionDesk.
+# consistency. Fully offline, no LLM call.
 kairos contract validate <file.json>
 kairos contract validate <file.json> --json  # exact structured issues, not rendered text
 
