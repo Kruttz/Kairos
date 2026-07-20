@@ -940,6 +940,14 @@ kairos drift check <n8n-workflow-id> --json  # exact structured findings/diagnos
 # [kairos-sandbox]). First boot downloads and provisions n8n (a few minutes); later boots
 # reuse the existing instance (seconds). "up" is optional -- "replay run" boots it automatically
 # if it isn't already running.
+#
+# IMPORTANT: `replay run --live` and `chaos run` each boot their OWN sandbox internally,
+# separate from whatever N8N_BASE_URL points at. N8N_BASE_URL must be a genuinely different
+# host (your real n8n instance) -- if it happens to be a Kairos-managed sandbox itself (e.g. a
+# local test/demo setup where you pointed N8N_BASE_URL at `kairos sandbox up`'s own instance),
+# both commands correctly refuse rather than risk confusing "production" with a sandbox. This
+# is safe, intentional behavior, not a bug -- but it means these two commands specifically
+# cannot run in a fully self-contained single-instance local demo.
 kairos sandbox up
 kairos sandbox status
 kairos sandbox down

@@ -1581,6 +1581,12 @@ async function handleReplay(positional: string[], flags: Record<string, string |
     console.error('run replays every captured payload against both the currently-deployed workflow and a')
     console.error('  candidate file, in an isolated sandbox -- never against production.')
     console.error('purge deletes every captured payload for a workflow (the revocation path).')
+    console.error('')
+    console.error('run --live boots its OWN sandbox internally, separate from whatever N8N_BASE_URL')
+    console.error('points at. If N8N_BASE_URL happens to be a Kairos-managed sandbox itself (a local')
+    console.error('test/demo setup), it refuses rather than risk confusing "production" with a')
+    console.error('sandbox -- N8N_BASE_URL must be a genuinely different host (your real n8n) for')
+    console.error('--live to run.')
     process.exit(1)
   }
 
@@ -1718,6 +1724,12 @@ async function handleChaos(positional: string[], flags: Record<string, string | 
     console.error('SILENT_MISBEHAVIOR/BLOCKED_AT_CREDENTIAL per variant. Exits 1 for any confirmed')
     console.error('crash or incomplete result -- never for blocked-at-credential or silent')
     console.error('misbehavior, which require human judgment.')
+    console.error('')
+    console.error('run boots its OWN sandbox internally, separate from whatever N8N_BASE_URL points')
+    console.error('at. If N8N_BASE_URL happens to be a Kairos-managed sandbox itself (a local')
+    console.error('test/demo setup), it refuses rather than risk confusing "production" with a')
+    console.error('sandbox -- N8N_BASE_URL must be a genuinely different host (your real n8n) for')
+    console.error('run to execute.')
     process.exit(1)
   }
 
