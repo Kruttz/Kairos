@@ -35,6 +35,7 @@ Usage:
   kairos contract plan "<business description>" --client-id <slug> [--json]
   kairos contract compile <file.json> [--build] [--dry-run] [--json]
   kairos contract validate <file.json> [--json]
+  kairos contract report <contract-id> --client-id <slug> [--from <date>] [--to <date>] [--bundle <dir>] [--json]
   kairos ledger poll <contract-id> --client-id <slug> [--limit <n>] [--json]
   kairos ledger show <contract-id> [--instance <promise-instance-id>] [--json]
   kairos exceptions list <contract-id> [--status <status>] [--json]
@@ -126,7 +127,7 @@ Patterns ingest/sync (community pattern library, EXPERIMENTAL -- see docs/plans/
                              see it (clearly marked [EXPERIMENTAL COMMUNITY]) in 'kairos patterns'
                              output; unset it (the default) to fully disable the display.
 
-Contract options (ProcessContract v0, Phase 0+1+2 -- see docs/plans/process-contract-promise-engine-plan.md):
+Contract options (ProcessContract v0, Phase 0+1+2+5 -- see docs/plans/process-contract-promise-engine-plan.md):
   contract plan "<description>"  Draft a ProcessContract from a plain-language business
     --client-id <slug>           description via an LLM (requires ANTHROPIC_API_KEY). Always run
                                   through the deterministic validator before being returned;
@@ -153,6 +154,18 @@ Contract options (ProcessContract v0, Phase 0+1+2 -- see docs/plans/process-cont
                                   (a contract describes a business promise; a pack describes
                                   workflows to build) -- a contract compiles into a PackPlan, it
                                   does not extend one.
+  contract report <contract-id>  Client-facing promise report (Phase 5) from this contract's own
+    --client-id <slug>           ProofLedger + ExceptionDesk data -- purely local, no network
+    [--from/--to <date>]         calls. Counts kept/at-risk/missed/unverifiable/in-progress
+    [--bundle <dir>]             instances (never counts unverifiable as kept), open/acknowledged/
+                                  resolved exceptions, an evidence-quality breakdown, and an
+                                  owner/action summary for open exceptions. Always states plainly
+                                  when evidence is incomplete -- no fake ROI math, no raw PII
+                                  beyond the hashed correlation key, no dashboard, no autonomous
+                                  decisions. Without --bundle, prints only; with --bundle <dir>,
+                                  also writes promise-report.md + a manifest there, reusing the
+                                  same Delivery Bundle artifact/manifest pattern pack export
+                                  --bundle already uses.
 
 Ledger options (ProofLedger v0, Phase 3 -- see docs/plans/process-contract-promise-engine-plan.md §6):
   ledger poll <contract-id>      Polls n8n execution data (read-only -- GET only, never a write)
@@ -1683,6 +1696,61 @@ async function handleContractCompile(positional: string[], flags: Record<string,
   if (buildResult.escalation) process.exit(2)
 }
 
+async function handleContractReport(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const contractId = positional[1]
+  const clientId = typeof flags['client-id'] === 'string' ? flags['client-id'] : undefined
+
+  if (!contractId || !clientId) {
+    console.error('Usage: kairos contract report <contract-id> --client-id <slug> [--from <iso-date>] [--to <iso-date>] [--bundle <dir>] [--json]')
+    console.error('')
+    console.error('Generates a client-facing promise report from this contract\'s own ProofLedger')
+    console.error('and ExceptionDesk data -- purely local, no network calls. Counts kept/at-risk/')
+    console.error('missed/unverifiable/in-progress instances (never counts unverifiable as kept),')
+    console.error('open/acknowledged/resolved exceptions, an evidence-quality breakdown, and an')
+    console.error('owner/action summary for open exceptions. Always states plainly when evidence')
+    console.error('is incomplete -- no fake ROI math, no raw PII beyond the hashed correlation')
+    console.error('key, no dashboard, no autonomous decisions. Without --bundle, only prints to')
+    console.error('stdout; with --bundle <dir>, also writes promise-report.md + a manifest there,')
+    console.error("reusing the same Delivery Bundle artifact/manifest pattern kairos pack export's")
+    console.error('--bundle already uses.')
+    process.exit(1)
+  }
+
+  const { loadProcessContract } = await import('./promise/store.js')
+  const contract = await loadProcessContract(clientId, contractId)
+  if (!contract) {
+    console.error(`No ProcessContract found for client "${clientId}" with id "${contractId}".`)
+    process.exit(1)
+  }
+
+  const { getProofLedgerEntries } = await import('./promise/ledger-store.js')
+  const { loadExceptionDeskItems } = await import('./promise/exception-store.js')
+  const { buildPromiseReportData, generatePromiseReport } = await import('./promise/report.js')
+
+  const entries = await getProofLedgerEntries(contractId, 10000)
+  const exceptions = await loadExceptionDeskItems(contractId)
+  const window = {
+    ...(typeof flags['from'] === 'string' ? { from: flags['from'] } : {}),
+    ...(typeof flags['to'] === 'string' ? { to: flags['to'] } : {}),
+  }
+  const data = buildPromiseReportData(contract, entries, exceptions, window)
+
+  const bundleDir = typeof flags['bundle'] === 'string' ? flags['bundle'] : undefined
+  if (bundleDir) {
+    const { writePromiseReport } = await import('./promise/report-bundle.js')
+    const manifest = await writePromiseReport(data, bundleDir)
+    console.error(`\nPromise report written to: ${manifest.files[0]!.path}`)
+    console.error(`Manifest: ${bundleDir}/promise-report-manifest.json`)
+  }
+
+  if (flags['json'] === true) {
+    console.log(JSON.stringify(data, null, 2))
+    return
+  }
+
+  console.log(generatePromiseReport(data))
+}
+
 async function handleContract(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const subcommand = positional[0]
 
@@ -1696,10 +1764,16 @@ async function handleContract(positional: string[], flags: Record<string, string
     return
   }
 
+  if (subcommand === 'report') {
+    await handleContractReport(positional, flags)
+    return
+  }
+
   if (subcommand !== 'validate') {
     console.error('Usage: kairos contract plan "<business description>" --client-id <slug> [--json]')
     console.error('       kairos contract compile <file.json> [--build] [--dry-run] [--json]')
     console.error('       kairos contract validate <file.json> [--json]')
+    console.error('       kairos contract report <contract-id> --client-id <slug> [--from <date>] [--to <date>] [--bundle <dir>] [--json]')
     console.error('')
     console.error('plan drafts a ProcessContract from a plain-language description via an LLM,')
     console.error('then always runs it through the deterministic validator before returning it.')
@@ -1712,6 +1786,9 @@ async function handleContract(positional: string[], flags: Record<string, string
     console.error('contract validator -- reachability, terminal-state consistency, dangling')
     console.error('references, business-calendar consistency, and more. Fully offline: no')
     console.error('Anthropic/n8n API calls, no credentials required.')
+    console.error('')
+    console.error('report generates a client-facing promise-report.md from ProofLedger +')
+    console.error('ExceptionDesk data -- see "kairos contract report" with no args for detail.')
     process.exit(1)
   }
 

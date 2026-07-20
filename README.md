@@ -973,6 +973,23 @@ kairos exceptions show <contract-id> <item-id>
 kairos exceptions ack <contract-id> <item-id> --reason "Looking into it"
 kairos exceptions resolve <contract-id> <item-id> --reason "Called and scheduled."
 
+# Promise Report v0 (Phase 5) -- the final piece of the Promise Engine's own loop: contract ->
+# compile -> workflows -> ledger -> SLA monitor -> exceptions -> report. A client-facing report
+# generated purely from this contract's own ProofLedger + ExceptionDesk data, no network calls.
+# Counts kept/at-risk/missed/unverifiable/in-progress promise instances -- 'unverifiable' is
+# never counted as 'kept', even when the underlying evidence looks superficially positive (e.g. a
+# terminal state reached only through an indirect, inferred signal) -- plus open/acknowledged/
+# resolved exceptions, an evidence-quality breakdown, and an owner/action summary for every open
+# exception. Always states plainly when evidence is incomplete or the window has nothing to show.
+# No fake ROI math, no raw PII beyond the hashed correlation key, no dashboard (a markdown file,
+# nothing live), no autonomous decisions. Without --bundle, prints only; with --bundle <dir>, also
+# writes promise-report.md + a manifest there, reusing the same Delivery Bundle artifact/manifest
+# pattern `kairos pack export --bundle` already uses.
+kairos contract report <contract-id> --client-id acme
+kairos contract report <contract-id> --client-id acme --from 2026-07-01 --to 2026-07-31
+kairos contract report <contract-id> --client-id acme --bundle ./deliverables
+kairos contract report <contract-id> --client-id acme --json  # full PromiseReportData as JSON
+
 # Report what Kairos currently knows for this workflow -- which of the 9 named drift checks
 # have real data to evaluate ("captured") vs. which don't yet or structurally can't
 # ("skipped"), and why. Does not compute a verdict -- see "drift check" for that.
