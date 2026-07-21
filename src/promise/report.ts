@@ -80,12 +80,36 @@ export function classifyPromiseInstance(
   // kept/missed numbers while ignoring pauses" -- so this instance's own classification must not
   // confidently claim 'kept' (or 'missed' from a suppressed drift) either, once at least one of
   // its findings couldn't be confidently determined.
-  const pauseAffected = findings.filter(f => f.status === 'unverifiable')
+  //
+  // P0-2 fix (2026-07-21): renamed from `pauseAffected` -- a second, independent cause of a
+  // 'unverifiable' PromiseComplianceFinding now exists (checkSlaForInstance() etc. returning
+  // 'unverifiable' when the only evidence for a clock-start/clock-end/state-entry is marked
+  // status: 'unverifiable', not just the pause-rule caveat). The two branches below that read
+  // this array no longer assume "pause rules" as the cause -- they quote each finding's own
+  // `summary`, which already names the real reason precisely, whichever one it is.
+  const unverifiableFindings = findings.filter(f => f.status === 'unverifiable')
 
   for (const outcome of contract.terminalOutcomes) {
     const signals = stateReachSignals(contract, instanceEntries, outcome.state)
     if (signals.length === 0) continue
-    const confidence = signals[0]!.confidence
+    const best = signals[0]!
+    const confidence = best.confidence
+
+    // P0-2 measurement-integrity fix (2026-07-21, found live by the Contract Harness's own
+    // missing_data scenario -- roadmap item 6): stateReachSignals()/compareSignals() already
+    // prefer a verifiable signal over an unverifiable one when both exist, so this only fires
+    // when NO verifiable evidence of reaching "${outcome.state}" exists at all -- the entry
+    // marked status: 'unverifiable' (a required field genuinely missing) is the ONLY evidence.
+    // Applied uniformly to every outcome type, not just success/acceptable: a confidently wrong
+    // 'missed' built on unconfirmed evidence is just as dishonest as a confidently wrong 'kept'.
+    // Before this fix, entry.status was never consulted here -- an unverifiable entry produced
+    // the exact same confident classification a complete one would have.
+    if (!best.verifiable) {
+      return {
+        status: 'unverifiable',
+        detail: `Reached terminal state "${outcome.state}" (${outcome.outcome}) only via evidence marked unverifiable (a required field was genuinely missing) -- cannot confidently confirm the promise's real outcome.`,
+      }
+    }
 
     if (outcome.outcome === 'failure') {
       return { status: 'missed', detail: `Reached terminal state "${outcome.state}" (${outcome.outcome}): ${outcome.description}`, evidenceQuality: confidence }
@@ -97,10 +121,10 @@ export function classifyPromiseInstance(
         evidenceQuality: 'specific',
       }
     }
-    if (pauseAffected.length > 0) {
+    if (unverifiableFindings.length > 0) {
       return {
         status: 'unverifiable',
-        detail: `Reached terminal state "${outcome.state}" (${outcome.outcome}), but this contract declares pause rule(s) that Kairos's SLA compliance checking does not yet account for in v0 -- cannot confidently confirm the promise's timing commitments were met along the way: ${pauseAffected[0]!.summary}`,
+        detail: `Reached terminal state "${outcome.state}" (${outcome.outcome}), but at least one SLA/expiration finding along the way could not be confidently determined -- cannot confirm the promise's timing commitments were met: ${unverifiableFindings[0]!.summary}`,
       }
     }
     if (confidence === 'generic') {
@@ -118,10 +142,10 @@ export function classifyPromiseInstance(
     return { status: 'missed', detail: worst.summary, evidenceQuality: worst.evidenceQuality ?? 'specific' }
   }
 
-  if (pauseAffected.length > 0) {
+  if (unverifiableFindings.length > 0) {
     return {
       status: 'unverifiable',
-      detail: `This instance has SLA/expiration finding(s) affected by this contract's declared pause rule(s), which Kairos's SLA compliance checking does not yet account for in v0: ${pauseAffected[0]!.summary}`,
+      detail: `This instance has at least one SLA/expiration finding that could not be confidently determined: ${unverifiableFindings[0]!.summary}`,
     }
   }
 

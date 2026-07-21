@@ -60,10 +60,36 @@ export interface StateReachSignal {
    * mistakes this for "when Kairos found out" -- it is deliberately the opposite of that. */
   eventTime: string
   confidence: 'specific' | 'generic'
+  /** P0-2 measurement-integrity fix (2026-07-21, found live by the Contract Harness's own
+   * missing_data scenario -- roadmap item 6): false only when EVERY entry contributing this
+   * signal is marked status: 'unverifiable' (ledger.ts's own real outcome for a marker node
+   * found with a required field genuinely missing). Always true for instance_start (recorded
+   * automatically, no marker-node/required-fields concept to be incomplete about) and for an
+   * 'observed'/'asserted'/'verified' evidence entry. Before this fix, entry.status was never
+   * consulted anywhere in this file at all -- an unverifiable entry counted identically to a
+   * complete one throughout every downstream SLA/exception/classification computation, letting
+   * incomplete evidence silently produce a confident 'kept'/'healthy' result. Orthogonal to
+   * `confidence` (which is about HOW an entry implies reach -- direct vs. inferred), not a
+   * replacement for it -- an entry can be `confidence: 'specific'` (a direct toState match) and
+   * still `verifiable: false` (that same entry's own required fields were incomplete). */
+  verifiable: boolean
 }
 
 function entryEventTime(e: ProofLedgerEntry): string {
   return e.eventTime ?? e.observedAt
+}
+
+/** Sorts signals so index [0] is always "the best available evidence of reach": verifiable
+ * signals sort before unverifiable ones regardless of timing, and within the same
+ * verifiability tier, earliest first (preserving this module's original "as soon as we have
+ * evidence, that's the confirmed reach time" semantics). A caller that only ever reads
+ * `signals[0]` therefore never has an unverifiable entry silently shadow a genuinely confirmed
+ * one that happens to be later -- and `signals[0]!.verifiable === false` is then a precise,
+ * sufficient test for "the ONLY evidence available is unverifiable," not just "some entry
+ * happened to be unverifiable." */
+function compareSignals(a: StateReachSignal, b: StateReachSignal): number {
+  if (a.verifiable !== b.verifiable) return a.verifiable ? -1 : 1
+  return a.eventTime.localeCompare(b.eventTime)
 }
 
 /** Every real-world signal this instance's ledger entries give for "this instance was in state
@@ -71,7 +97,8 @@ function entryEventTime(e: ProofLedgerEntry): string {
  * initial state, or an evidence entry whose transition's toState is it (direct entry evidence).
  * 'generic' -- an evidence entry whose transition's fromState is it (the instance must have
  * passed through it to fire that transition, but the exact entry time isn't separately evidenced
- * -- this entry's own timestamp is used as a conservative upper bound). Sorted earliest-first.
+ * -- this entry's own timestamp is used as a conservative upper bound). Sorted by compareSignals()
+ * above (verifiable first, then earliest-first).
  *
  * Exported (Phase 5) so report.ts can reuse the exact same terminal-state-reachability logic for
  * per-instance kept/missed/unverifiable classification, rather than a second copy of it. */
@@ -79,15 +106,16 @@ export function stateReachSignals(contract: ProcessContract, entries: ProofLedge
   const signals: StateReachSignal[] = []
   for (const e of entries) {
     if (e.kind === 'instance_start' && e.initialState === stateId) {
-      signals.push({ eventTime: entryEventTime(e), confidence: 'specific' })
+      signals.push({ eventTime: entryEventTime(e), confidence: 'specific', verifiable: true })
     } else if (e.kind === 'evidence' && e.transitionId) {
       const t = contract.transitions.find(x => x.id === e.transitionId)
       if (!t) continue
-      if (t.toState === stateId) signals.push({ eventTime: entryEventTime(e), confidence: 'specific' })
-      else if (t.fromState === stateId) signals.push({ eventTime: entryEventTime(e), confidence: 'generic' })
+      const verifiable = e.status !== 'unverifiable'
+      if (t.toState === stateId) signals.push({ eventTime: entryEventTime(e), confidence: 'specific', verifiable })
+      else if (t.fromState === stateId) signals.push({ eventTime: entryEventTime(e), confidence: 'generic', verifiable })
     }
   }
-  return signals.sort((a, b) => a.eventTime.localeCompare(b.eventTime))
+  return signals.sort(compareSignals)
 }
 
 /** Signals for "this instance experienced event `eventId`" -- evidence entries whose transition
@@ -99,9 +127,9 @@ function eventSignals(contract: ProcessContract, entries: ProofLedgerEntry[], ev
   for (const e of entries) {
     if (e.kind !== 'evidence' || !e.transitionId) continue
     const t = contract.transitions.find(x => x.id === e.transitionId)
-    if (t?.event === eventId) signals.push({ eventTime: entryEventTime(e), confidence: 'specific' })
+    if (t?.event === eventId) signals.push({ eventTime: entryEventTime(e), confidence: 'specific', verifiable: e.status !== 'unverifiable' })
   }
-  return signals.sort((a, b) => a.eventTime.localeCompare(b.eventTime))
+  return signals.sort(compareSignals)
 }
 
 function measuredFromSignals(contract: ProcessContract, entries: ProofLedgerEntry[], measuredFrom: SlaSpec['measuredFrom']): StateReachSignal[] {
@@ -130,10 +158,37 @@ function checkSlaForInstance(
     }
   }
   const clockStart = startSignals[0]!
+  // P0-2 fix (2026-07-21): the ONLY evidence of clock-start is marked unverifiable -- every
+  // downstream elapsed-time computation would rest on a timestamp we cannot actually confirm,
+  // so this must not proceed to a confident healthy/drifting verdict at all, the same honesty
+  // standard already applied to the clock-END check just below.
+  if (!clockStart.verifiable) {
+    return {
+      ...base,
+      status: 'unverifiable',
+      summary: `SLA "${sla.id}": the only evidence of this instance's clock-start condition is marked unverifiable (a required field was genuinely missing) -- cannot confidently determine compliance.`,
+      evidence: {},
+    }
+  }
 
   const endSignals = stateReachSignals(contract, instanceEntries, sla.expectedBy.state)
   if (endSignals.length > 0) {
     const clockEnd = endSignals[0]!
+    // P0-2 fix (2026-07-21, found live by the Contract Harness's own missing_data scenario --
+    // roadmap item 6): an evidence entry marked status: 'unverifiable' (a required field
+    // genuinely missing) was previously treated identically to a complete 'observed' entry here
+    // -- letting incomplete evidence silently satisfy this SLA as confidently 'healthy'. The
+    // sort in stateReachSignals()/compareSignals() already prefers a verifiable signal over an
+    // unverifiable one when both exist; this only fires when NO verifiable evidence of reaching
+    // "${sla.expectedBy.state}" exists at all.
+    if (!clockEnd.verifiable) {
+      return {
+        ...base,
+        status: 'unverifiable',
+        summary: `SLA "${sla.id}": the only evidence that "${sla.expectedBy.state}" was reached is marked unverifiable (a required field was genuinely missing) -- cannot confidently determine compliance.`,
+        evidence: { measuredFromAt: clockStart.eventTime },
+      }
+    }
     const elapsed = elapsedInDurationUnits(clockStart.eventTime, clockEnd.eventTime, sla.duration.unit, contract.businessCalendar)
     const met = elapsed <= sla.duration.amount
     const confidence: 'specific' | 'generic' = clockStart.confidence === 'generic' || clockEnd.confidence === 'generic' ? 'generic' : 'specific'
@@ -184,11 +239,24 @@ function checkRecurringSlaForInstance(
   if (enterSignals.length === 0) {
     return { ...base, status: 'insufficient_data', summary: `No evidence yet this instance entered "${whileInState}", where SLA "${sla.id}" recurs.`, evidence: {} }
   }
+  // P0-2 fix (2026-07-21): the only evidence of entering whileInState is unverifiable -- cannot
+  // confidently start the recurring cadence clock from a timestamp we can't actually confirm.
+  if (!enterSignals[0]!.verifiable) {
+    return {
+      ...base,
+      status: 'unverifiable',
+      summary: `Recurring SLA "${sla.id}": the only evidence this instance entered "${whileInState}" is marked unverifiable (a required field was genuinely missing) -- cannot confidently determine compliance.`,
+      evidence: {},
+    }
+  }
 
   // Same "already moved on" rule as expiration-rule checking: a real transition OUT of
-  // whileInState means the recurring obligation no longer applies to this instance.
+  // whileInState means the recurring obligation no longer applies to this instance. P0-2 fix
+  // (2026-07-21): only a VERIFIABLE exit entry counts -- an unverifiable one shouldn't
+  // confidently declare the recurring obligation over any more than it should confidently
+  // declare anything else was reached.
   const exited = instanceEntries.some(e => {
-    if (e.kind !== 'evidence' || !e.transitionId) return false
+    if (e.kind !== 'evidence' || !e.transitionId || e.status === 'unverifiable') return false
     const t = contract.transitions.find(x => x.id === e.transitionId)
     return t?.fromState === whileInState
   })
@@ -198,10 +266,13 @@ function checkRecurringSlaForInstance(
 
   // D6's own cadence-drift pattern, reused directly: the most recent evidence timestamp for
   // this state is the last known "heartbeat"; if too much time has passed since it, that's a
-  // cadence miss even with no single missing entry to point to.
+  // cadence miss even with no single missing entry to point to. P0-2 fix (2026-07-21): only a
+  // VERIFIABLE entry counts as a real heartbeat -- an unverifiable one shouldn't reset the
+  // cadence clock any more than it should confirm anything else. Falls back to enterSignals[0]
+  // (already confirmed verifiable above) when no verifiable heartbeat exists yet.
   const stateEntries = instanceEntries.filter(e => {
     if (e.kind === 'instance_start') return e.initialState === whileInState
-    if (e.kind === 'evidence' && e.transitionId) {
+    if (e.kind === 'evidence' && e.transitionId && e.status !== 'unverifiable') {
       const t = contract.transitions.find(x => x.id === e.transitionId)
       return t?.toState === whileInState || t?.fromState === whileInState
     }
@@ -236,9 +307,22 @@ function checkExpirationRuleForInstance(
     return { ...base, status: 'insufficient_data', summary: `No evidence yet this instance entered state "${rule.state}".`, evidence: {} }
   }
   const enteredAt = enterSignals[0]!
+  // P0-2 fix (2026-07-21): the only evidence of entering rule.state is unverifiable -- cannot
+  // confidently start the expiration clock from a timestamp we can't actually confirm.
+  if (!enteredAt.verifiable) {
+    return {
+      ...base,
+      status: 'unverifiable',
+      summary: `Expiration rule "${rule.id}": the only evidence this instance entered "${rule.state}" is marked unverifiable (a required field was genuinely missing) -- cannot confidently determine compliance.`,
+      evidence: {},
+    }
+  }
 
+  // P0-2 fix (2026-07-21): only a VERIFIABLE exit entry counts -- an unverifiable one shouldn't
+  // confidently declare this expiration rule no longer applies any more than it should
+  // confidently declare anything else was reached.
   const exited = instanceEntries.some(e => {
-    if (e.kind !== 'evidence' || !e.transitionId) return false
+    if (e.kind !== 'evidence' || !e.transitionId || e.status === 'unverifiable') return false
     const t = contract.transitions.find(x => x.id === e.transitionId)
     return t?.fromState === rule.state
   })

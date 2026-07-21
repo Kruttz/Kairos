@@ -33,7 +33,7 @@ function instanceStart(id: string, observedAt: string): ProofLedgerEntry {
   }
 }
 
-function evidence(id: string, transitionId: string, observedAt: string): ProofLedgerEntry {
+function evidence(id: string, transitionId: string, observedAt: string, status: 'observed' | 'unverifiable' = 'observed'): ProofLedgerEntry {
   return {
     id: `${id}:${transitionId}:${observedAt}`,
     contractId: 'empire-homecare-referral-intake',
@@ -45,7 +45,7 @@ function evidence(id: string, transitionId: string, observedAt: string): ProofLe
     observedAt,
     sourceWorkflowId: 'wf-processing',
     sourceExecutionId: `exec-${id}-${transitionId}`,
-    status: 'observed',
+    status,
     detail: 'evidence',
   }
 }
@@ -284,6 +284,78 @@ describe('classifyPromiseInstance', () => {
       const result = classifyPromiseInstance(contract, entries, [], new Date(MON_10AM))
       expect(result.status).not.toBe('unverifiable')
     })
+  })
+})
+
+// P0-2 measurement-integrity fix (2026-07-21) -- found live by the Contract Harness's own
+// missing_data scenario (roadmap item 6): before this fix, classifyPromiseInstance()'s
+// terminal-outcome loop never checked whether the signal proving a terminal state was reached
+// came from an entry marked status: 'unverifiable' (a required field genuinely missing) --
+// producing a confident 'kept' for evidence that was explicitly recorded as incomplete. These
+// tests prove the fix directly against classifyPromiseInstance(), complementing the
+// sla-compliance.test.ts-level tests for the underlying stateReachSignals()/checkSlaForInstance()
+// primitives this function itself calls.
+describe('classifyPromiseInstance -- P0-2 fix: an unverifiable-only signal for a terminal state never confidently classifies', () => {
+  it('a success terminal reached only via an unverifiable entry classifies as unverifiable, never kept', () => {
+    const contract = empireHomecare()
+    const entries = [
+      instanceStart('i1', MON_8AM),
+      evidence('i1', 't-received-to-attempted', MON_10AM),
+      evidence('i1', 't-attempted-to-contacted', MON_10AM),
+      evidence('i1', 't-contacted-to-scheduled', MON_10AM, 'unverifiable'), // the ONLY evidence of "scheduled" is incomplete
+    ]
+    const result = classifyPromiseInstance(contract, entries, [], new Date(MON_10AM))
+    expect(result.status).toBe('unverifiable')
+    expect(result.status).not.toBe('kept')
+    expect(result.detail).toContain('unverifiable')
+  })
+
+  it('applies the same honesty standard to a failure terminal -- an unverifiable-only "missed" is not confidently claimed either', () => {
+    const contract = empireHomecare()
+    contract.transitions.push({ id: 't-attempted-to-noanswer', fromState: 'contact_attempted', event: 'call_no_answer', toState: 'no_answer' })
+    const entries = [
+      instanceStart('i1', MON_8AM),
+      evidence('i1', 't-received-to-attempted', MON_10AM),
+      evidence('i1', 't-attempted-to-noanswer', TUE_8AM, 'unverifiable'), // the ONLY evidence of "no_answer" is incomplete
+    ]
+    const result = classifyPromiseInstance(contract, entries, [], new Date(TUE_8AM))
+    expect(result.status).toBe('unverifiable')
+    expect(result.status).not.toBe('missed')
+  })
+
+  it('a LATER verifiable entry for the same terminal state is preferred over an earlier unverifiable one -- kept, not shadowed into unverifiable', () => {
+    const contract = empireHomecare()
+    const entries = [
+      instanceStart('i1', MON_8AM),
+      evidence('i1', 't-received-to-attempted', MON_10AM),
+      evidence('i1', 't-attempted-to-contacted', MON_10AM),
+      evidence('i1', 't-contacted-to-scheduled', MON_10AM, 'unverifiable'), // incomplete first attempt
+      evidence('i1', 't-contacted-to-scheduled', TUE_8AM, 'observed'), // later, complete -- e.g. a correction/retry
+    ]
+    const result = classifyPromiseInstance(contract, entries, [], new Date(TUE_8AM))
+    expect(result.status).toBe('kept')
+  })
+
+  it('an "observed" (complete) entry reaching a terminal state is completely unaffected by the fix', () => {
+    const contract = empireHomecare()
+    const entries = [
+      instanceStart('i1', MON_8AM),
+      evidence('i1', 't-received-to-attempted', MON_10AM),
+      evidence('i1', 't-attempted-to-contacted', MON_10AM),
+      evidence('i1', 't-contacted-to-scheduled', MON_10AM, 'observed'),
+    ]
+    const result = classifyPromiseInstance(contract, entries, [], new Date(MON_10AM))
+    expect(result.status).toBe('kept')
+    expect(result.evidenceQuality).toBe('specific')
+  })
+
+  it('the outer fallback (no terminal reached at all) also honestly reports unverifiable, not a confident in_progress, when the only SLA-relevant evidence is unverifiable -- and the message no longer falsely blames pause rules', () => {
+    const contract = empireHomecare() // no pauseRules declared
+    const entries = [instanceStart('i1', MON_8AM), evidence('i1', 't-received-to-attempted', MON_10AM, 'unverifiable')]
+    const result = classifyPromiseInstance(contract, entries, [], new Date(MON_10AM))
+    expect(result.status).toBe('unverifiable')
+    expect(result.detail).not.toContain('pause rule')
+    expect(result.detail).toContain('could not be confidently determined')
   })
 })
 

@@ -376,3 +376,116 @@ describe('checkSlaCompliance -- pause rules downgrade healthy/drifting to unveri
     ])).toBe('DRIFTING')
   })
 })
+
+// P0-2 measurement-integrity fix (2026-07-21) -- found live by the Contract Harness's own
+// missing_data scenario (roadmap item 6): before this fix, entry.status was never consulted
+// anywhere in stateReachSignals()/checkSlaForInstance()/checkRecurringSlaForInstance()/
+// checkExpirationRuleForInstance() at all -- an entry marked status: 'unverifiable' (ledger.ts's
+// own real outcome for a marker node found with a required field genuinely missing) counted
+// identically to a complete 'observed' entry everywhere, letting incomplete evidence silently
+// produce a confident 'healthy'/'kept'. These tests prove the fix: unverifiable-only evidence
+// now produces 'unverifiable', a later verifiable entry is preferred over an earlier
+// unverifiable one (never silently shadowed), and 'observed' entries are completely unaffected.
+describe('checkSlaCompliance -- P0-2 fix: unverifiable-status entries no longer count as confirmed evidence', () => {
+  it('checkSlaForInstance: clock-end reached only via an unverifiable entry -> unverifiable, not healthy', () => {
+    const contract = empireHomecare()
+    const entries = [instanceStart(MON_8AM), evidence('t-received-to-attempted', MON_10AM, 'unverifiable')]
+    const findings = checkSlaCompliance(contract, entries, new Date(MON_10AM))
+    const finding = findings.find(f => f.slaId === 'sla-first-contact')!
+    expect(finding.status).toBe('unverifiable')
+    expect(finding.status).not.toBe('healthy')
+    expect(finding.summary).toContain('unverifiable')
+  })
+
+  it('checkSlaForInstance: a later VERIFIABLE entry is preferred over an earlier unverifiable one for the same state -- never silently shadowed', () => {
+    const contract = empireHomecare()
+    const entries = [
+      instanceStart(MON_8AM),
+      evidence('t-received-to-attempted', MON_10AM, 'unverifiable'), // 2 business hours in, but incomplete
+      evidence('t-received-to-attempted', MON_1030AM, 'observed'), // 2.5 business hours in, complete
+    ]
+    const findings = checkSlaCompliance(contract, entries, new Date(MON_1030AM))
+    const finding = findings.find(f => f.slaId === 'sla-first-contact')!
+    // The real, later, complete entry is used -- still comfortably within the 4-business-hour
+    // window, so this is confidently 'healthy', not 'unverifiable'.
+    expect(finding.status).toBe('healthy')
+    expect(finding.evidence['expectedByAt']).toBe(MON_1030AM)
+  })
+
+  it('checkSlaForInstance: an "observed" (complete) entry behaves exactly as before the fix -- healthy when within the window', () => {
+    const contract = empireHomecare()
+    const entries = [instanceStart(MON_8AM), evidence('t-received-to-attempted', MON_10AM, 'observed')]
+    const findings = checkSlaCompliance(contract, entries, new Date(MON_10AM))
+    const finding = findings.find(f => f.slaId === 'sla-first-contact')!
+    expect(finding.status).toBe('healthy')
+  })
+
+  it('checkSlaForInstance: an "observed" entry past the deadline still drifts normally -- the fix does not affect complete evidence', () => {
+    const contract = empireHomecare()
+    const entries = [instanceStart(MON_8AM), evidence('t-received-to-attempted', TUE_8AM, 'observed')]
+    const findings = checkSlaCompliance(contract, entries, new Date(TUE_8AM))
+    const finding = findings.find(f => f.slaId === 'sla-first-contact')!
+    expect(finding.status).toBe('drifting')
+  })
+
+  it('checkExpirationRuleForInstance: entering the ruled state only via an unverifiable entry -> unverifiable, not a confident drifting/insufficient_data', () => {
+    const contract = empireHomecare()
+    contract.evidenceRequirements.push({ transitionId: 't-received-to-attempted', requiredFields: ['x'], description: 'entry' })
+    const entries = [instanceStart(MON_8AM), evidence('t-received-to-attempted', MON_10AM, 'unverifiable')]
+    const findings = checkSlaCompliance(contract, entries, new Date('2024-01-04T18:00:00.000Z')) // well past the 24h window
+    const finding = findings.find(f => f.expirationRuleId === 'exp-no-answer')!
+    expect(finding.status).toBe('unverifiable')
+  })
+
+  it('checkExpirationRuleForInstance: an unverifiable "exit" entry does not count as a real exit -- the rule still applies', () => {
+    const contract = empireHomecare()
+    contract.evidenceRequirements.push({ transitionId: 't-received-to-attempted', requiredFields: ['x'], description: 'entry' })
+    const entries = [
+      instanceStart(MON_8AM),
+      evidence('t-received-to-attempted', MON_10AM, 'observed'), // verifiable entry into contact_attempted
+      evidence('t-attempted-to-contacted', TUE_8AM, 'unverifiable'), // UNVERIFIABLE "exit" -- must not count
+    ]
+    const findings = checkSlaCompliance(contract, entries, new Date('2024-01-04T18:00:00.000Z'))
+    const finding = findings.find(f => f.expirationRuleId === 'exp-no-answer')!
+    expect(finding.status).not.toBe('not_applicable')
+    expect(finding.status).toBe('drifting') // still genuinely stuck, since the exit was never confirmed
+  })
+
+  it('checkRecurringSlaForInstance: entering whileInState only via an unverifiable entry -> unverifiable', () => {
+    const contract = empireHomecare()
+    contract.evidenceRequirements.push({ transitionId: 't-received-to-attempted', requiredFields: ['x'], description: 'entry' })
+    contract.sla.push({
+      id: 'sla-recurring-checkin',
+      measuredFrom: { state: 'contact_attempted' },
+      expectedBy: { state: 'contacted' },
+      duration: { amount: 60, unit: 'minutes' },
+      recurring: { whileInState: 'contact_attempted' },
+    })
+    const entries = [instanceStart(MON_8AM), evidence('t-received-to-attempted', MON_10AM, 'unverifiable')]
+    const findings = checkSlaCompliance(contract, entries, new Date('2024-01-01T17:30:00.000Z'))
+    const finding = findings.find(f => f.slaId === 'sla-recurring-checkin')!
+    expect(finding.status).toBe('unverifiable')
+  })
+
+  it('checkRecurringSlaForInstance: an unverifiable "heartbeat" entry does not reset the cadence clock -- falls back to the last verifiable one', () => {
+    const contract = empireHomecare()
+    contract.evidenceRequirements.push({ transitionId: 't-received-to-attempted', requiredFields: ['x'], description: 'entry' })
+    contract.sla.push({
+      id: 'sla-recurring-checkin',
+      measuredFrom: { state: 'contact_attempted' },
+      expectedBy: { state: 'contacted' },
+      duration: { amount: 60, unit: 'minutes' },
+      recurring: { whileInState: 'contact_attempted' },
+    })
+    const entries = [
+      instanceStart(MON_8AM),
+      evidence('t-received-to-attempted', MON_10AM, 'observed'), // verifiable entry, the real last heartbeat
+      evidence('t-received-to-attempted', '2024-01-01T18:50:00.000Z', 'unverifiable'), // a later but UNVERIFIABLE "heartbeat" -- must not count as resetting the clock
+    ]
+    // 90 minutes after the verifiable MON_10AM heartbeat (> 60min cadence) -- if the unverifiable
+    // later entry incorrectly counted, this would read as healthy (only ~10 min since it).
+    const findings = checkSlaCompliance(contract, entries, new Date('2024-01-01T19:30:00.000Z'))
+    const finding = findings.find(f => f.slaId === 'sla-recurring-checkin')!
+    expect(finding.status).toBe('drifting')
+  })
+})

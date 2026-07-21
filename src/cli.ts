@@ -40,6 +40,8 @@ Usage:
   kairos contract plan "<business description>" --client-id <slug> [--json]
   kairos contract intake start --client-id <slug> [--context <file>] [--resume <session-id>] [--json]
   kairos contract intake status <session-id> --client-id <slug> [--json]
+  kairos contract scenarios generate <file.json> [--categories <list>] [--out <dir>] [--json]
+  kairos contract harness run <file.json> [--scenarios <dir-or-file>] [--json]
   kairos contract compile <file.json> [--build] [--dry-run] [--json]
   kairos contract validate <file.json> [--json]
   kairos contract import <file.json> --client-id <slug> [--confirm-version-change] [--json]
@@ -165,6 +167,35 @@ Contract options (ProcessContract v0, Phase 0+1+2+5 -- see docs/plans/process-co
   contract intake status <id>    Reports a session's progress (questions answered, pending
     --client-id <slug>           follow-ups, synthesis rounds so far, current draft name/version)
                                   without asking anything or calling the LLM -- purely local.
+  contract scenarios generate    Deterministically derives synthetic ContractScenarios from a
+    <file.json>                  valid ProcessContract (roadmap item 5, see docs/plans/
+    [--categories <list>]        intake-scenario-harness-plan.md §5) -- no LLM call. Categories:
+    [--out <dir>]                happy_path, missing_data, failure_terminal, no_response,
+                                  duplicate_correlation, after_hours, in_progress (default: all,
+                                  or a comma-separated subset via --categories). NEVER fabricates
+                                  an evidence timeline event for a transition the contract has no
+                                  EvidenceRequirement for -- real ledger.ts extraction could never
+                                  produce such an entry either. A category is skipped, with a
+                                  stated reason, rather than faked when the contract genuinely
+                                  cannot support it (e.g. no EvidenceRequirement covers any
+                                  transition into a success/acceptable terminal outcome -- a real,
+                                  confirmed gap in both checked-in Empire Homecare and SaaS
+                                  incident-response fixtures as currently authored, not a
+                                  limitation of this generator). With --out <dir>, also writes one
+                                  JSON file per generated scenario there.
+  contract harness run           Kairos Contract Harness / Node Harness v0 (roadmap item 6, see
+    <file.json>                  docs/plans/intake-scenario-harness-plan.md §6): runs
+    [--scenarios <dir-or-file>]  ContractScenarios through the REAL checkSlaCompliance()/
+                                  updateExceptionDesk()/classifyPromiseInstance() functions --
+                                  the exact same functions "kairos watch --contracts"/"kairos
+                                  contract report" call in production, never a parallel
+                                  evaluator. Purely in-memory: no n8n, no network, no LLM call,
+                                  no file writes to ~/.kairos/. Without --scenarios, generates
+                                  scenarios for every category first (equivalent to running
+                                  "contract scenarios generate" and piping its output in).
+                                  Compares each scenario's actual classification/exception
+                                  result against its own recorded expected outcome and reports
+                                  every mismatch. Exits 1 if any scenario fails to match.
   contract compile <file.json>   Deterministically compile a valid ProcessContract into a
     [--build] [--dry-run]        PackPlan -- no LLM call in this step; traceability from each
                                   compiled workflow back to the exact contract element ids it came
@@ -1828,6 +1859,164 @@ async function handleContractIntakeStatus(positional: string[], flags: Record<st
   }
 }
 
+async function readContractFile(filePath: string): Promise<import('./promise/types.js').ProcessContract> {
+  const { readFile } = await import('node:fs/promises')
+  try {
+    const content = await readFile(filePath, 'utf-8')
+    return JSON.parse(content) as import('./promise/types.js').ProcessContract
+  } catch (err) {
+    console.error(`Could not read or parse ${filePath}: ${err instanceof Error ? err.message : String(err)}`)
+    process.exit(1)
+  }
+}
+
+async function handleContractScenarios(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const subcommand = positional[0]
+  if (subcommand !== 'generate') {
+    console.error('Usage: kairos contract scenarios generate <file.json> [--categories <list>] [--out <dir>] [--json]')
+    console.error('')
+    console.error('Deterministically generates synthetic ContractScenarios from a valid')
+    console.error('ProcessContract -- no LLM call. Categories: happy_path, missing_data,')
+    console.error('failure_terminal, no_response, duplicate_correlation, after_hours,')
+    console.error('in_progress (default: all). A category is skipped, with a stated reason,')
+    console.error('rather than faked when the contract cannot support it (e.g. no')
+    console.error('EvidenceRequirement covers any transition into a success terminal outcome).')
+    process.exit(1)
+  }
+
+  const filePath = positional[1]
+  if (!filePath) {
+    console.error('Usage: kairos contract scenarios generate <file.json> [--categories <list>] [--out <dir>] [--json]')
+    process.exit(1)
+  }
+
+  const contract = await readContractFile(filePath)
+  const { generateContractScenarios, ALL_SCENARIO_CATEGORIES } = await import('./promise/scenario.js')
+
+  let categories = ALL_SCENARIO_CATEGORIES
+  const categoriesFlag = typeof flags['categories'] === 'string' ? flags['categories'] : undefined
+  if (categoriesFlag) {
+    const requested = categoriesFlag.split(',').map(c => c.trim())
+    const invalid = requested.filter(c => !(ALL_SCENARIO_CATEGORIES as string[]).includes(c))
+    if (invalid.length > 0) {
+      console.error(`Unknown categor${invalid.length === 1 ? 'y' : 'ies'}: ${invalid.join(', ')}. Valid: ${ALL_SCENARIO_CATEGORIES.join(', ')}`)
+      process.exit(1)
+    }
+    categories = requested as typeof ALL_SCENARIO_CATEGORIES
+  }
+
+  const { scenarios, skipped } = generateContractScenarios(contract, categories)
+
+  const outDir = typeof flags['out'] === 'string' ? flags['out'] : undefined
+  const written: string[] = []
+  if (outDir) {
+    const { writeFile, mkdir } = await import('node:fs/promises')
+    const { join } = await import('node:path')
+    await mkdir(outDir, { recursive: true })
+    for (const s of scenarios) {
+      const path = join(outDir, `${s.id}.json`)
+      await writeFile(path, JSON.stringify(s, null, 2) + '\n', 'utf-8')
+      written.push(path)
+    }
+  }
+
+  if (flags['json'] === true) {
+    console.log(JSON.stringify({ scenarios, skipped, ...(outDir ? { writtenTo: written } : {}) }, null, 2))
+    return
+  }
+
+  console.log(`\n${contract.name} — Generated Scenarios (${scenarios.length}, ${skipped.length} skipped)`)
+  console.log('─'.repeat(50))
+  for (const s of scenarios) {
+    console.log(`\n  [${s.category}] ${s.name}`)
+    console.log(`    ${s.description}`)
+    console.log(`    Expected: ${s.expected.reportStatus}${s.expected.evidenceQuality ? ` (${s.expected.evidenceQuality})` : ''}, ${s.expected.expectedExceptionCount} exception(s)${s.expected.expectedExceptionKinds?.length ? ` [${s.expected.expectedExceptionKinds.join(', ')}]` : ''}`)
+  }
+  if (skipped.length > 0) {
+    console.log(`\nSkipped`)
+    for (const sk of skipped) console.log(`  [${sk.category}] ${sk.reason}`)
+  }
+  if (written.length > 0) {
+    console.log(`\nWrote ${written.length} scenario file(s) to ${outDir}`)
+  }
+}
+
+async function loadScenariosFromPath(path: string): Promise<import('./promise/scenario-types.js').ContractScenario[]> {
+  const { readFile, readdir, stat } = await import('node:fs/promises')
+  const { join } = await import('node:path')
+
+  const stats = await stat(path)
+  if (stats.isDirectory()) {
+    const files = (await readdir(path)).filter(f => f.endsWith('.json'))
+    const scenarios: import('./promise/scenario-types.js').ContractScenario[] = []
+    for (const f of files) {
+      scenarios.push(JSON.parse(await readFile(join(path, f), 'utf-8')))
+    }
+    return scenarios
+  }
+
+  const content = JSON.parse(await readFile(path, 'utf-8'))
+  return Array.isArray(content) ? content : [content]
+}
+
+async function handleContractHarness(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const subcommand = positional[0]
+  if (subcommand !== 'run') {
+    console.error('Usage: kairos contract harness run <file.json> [--scenarios <dir-or-file>] [--json]')
+    console.error('')
+    console.error('Runs ContractScenarios through the REAL checkSlaCompliance()/')
+    console.error('updateExceptionDesk()/classifyPromiseInstance() functions -- purely')
+    console.error('in-memory, no n8n, no network, no LLM call. Without --scenarios, generates')
+    console.error('scenarios for every category first (same as "contract scenarios generate").')
+    console.error('Exits 1 if any scenario fails to match its own expected outcome.')
+    process.exit(1)
+  }
+
+  const filePath = positional[1]
+  if (!filePath) {
+    console.error('Usage: kairos contract harness run <file.json> [--scenarios <dir-or-file>] [--json]')
+    process.exit(1)
+  }
+
+  const contract = await readContractFile(filePath)
+  const { runContractHarness } = await import('./promise/harness.js')
+
+  let scenarios: import('./promise/scenario-types.js').ContractScenario[]
+  let skipped: import('./promise/scenario-types.js').ScenarioGenerationSkip[] = []
+  const scenariosPath = typeof flags['scenarios'] === 'string' ? flags['scenarios'] : undefined
+  if (scenariosPath) {
+    scenarios = await loadScenariosFromPath(scenariosPath)
+  } else {
+    const { generateContractScenarios } = await import('./promise/scenario.js')
+    const generated = generateContractScenarios(contract)
+    scenarios = generated.scenarios
+    skipped = generated.skipped
+  }
+
+  const result = runContractHarness(contract, scenarios)
+
+  if (flags['json'] === true) {
+    console.log(JSON.stringify({ ...result, skipped }, null, 2))
+    if (result.failCount > 0) process.exit(1)
+    return
+  }
+
+  console.log(`\n${contract.name} — Contract Harness (${result.passCount} passed, ${result.failCount} failed)`)
+  console.log('─'.repeat(50))
+  for (const r of result.scenarioResults) {
+    console.log(`\n  [${r.passed ? '✓' : '✗'}] [${r.category}] ${r.scenarioName}`)
+    if (!r.passed) {
+      for (const m of r.mismatches) console.log(`      MISMATCH: ${m}`)
+    }
+  }
+  if (skipped.length > 0) {
+    console.log(`\nSkipped (not run)`)
+    for (const sk of skipped) console.log(`  [${sk.category}] ${sk.reason}`)
+  }
+
+  if (result.failCount > 0) process.exit(1)
+}
+
 async function handleContractCompile(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const filePath = positional[1]
   if (!filePath) {
@@ -2283,10 +2472,22 @@ async function handleContract(positional: string[], flags: Record<string, string
     return
   }
 
+  if (subcommand === 'scenarios') {
+    await handleContractScenarios(positional.slice(1), flags)
+    return
+  }
+
+  if (subcommand === 'harness') {
+    await handleContractHarness(positional.slice(1), flags)
+    return
+  }
+
   if (subcommand !== 'validate') {
     console.error('Usage: kairos contract plan "<business description>" --client-id <slug> [--json]')
     console.error('       kairos contract intake start --client-id <slug> [--context <file>] [--resume <session-id>]')
     console.error('       kairos contract intake status <session-id> --client-id <slug> [--json]')
+    console.error('       kairos contract scenarios generate <file.json> [--categories <list>] [--out <dir>] [--json]')
+    console.error('       kairos contract harness run <file.json> [--scenarios <dir>] [--json]')
     console.error('       kairos contract compile <file.json> [--build] [--dry-run] [--json]')
     console.error('       kairos contract validate <file.json> [--json]')
     console.error('       kairos contract import <file.json> --client-id <slug> [--confirm-version-change] [--json]')
@@ -2302,6 +2503,16 @@ async function handleContract(positional: string[], flags: Record<string, string
     console.error('synthesis call (same validator/review-gate as plan) then drafts the contract,')
     console.error('with up to 2 bounded rounds of targeted follow-up questions if the draft has')
     console.error('blocking assumptions or validation errors. Resumable via --resume.')
+    console.error('')
+    console.error('scenarios generate deterministically derives synthetic business scenarios from')
+    console.error('a valid ProcessContract -- no LLM call. Never fabricates evidence for a')
+    console.error('transition the contract has no EvidenceRequirement for; a category is skipped')
+    console.error('(with a reason) rather than faked when the contract cannot support it.')
+    console.error('')
+    console.error('harness run executes scenarios through the REAL checkSlaCompliance()/')
+    console.error('updateExceptionDesk()/classifyPromiseInstance() functions -- the same ones')
+    console.error('production uses -- purely in-memory, no n8n, no network. Compares the result')
+    console.error('against each scenario\'s own expected outcome and reports mismatches.')
     console.error('')
     console.error('compile deterministically translates a valid ProcessContract into a PackPlan')
     console.error('(no LLM call in this step) and, with --build, feeds it into the same')

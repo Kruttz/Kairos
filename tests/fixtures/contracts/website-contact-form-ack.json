@@ -1,0 +1,66 @@
+{
+  "id": "website-contact-form-ack",
+  "version": 1,
+  "clientId": "synthetic-fixture-client",
+  "name": "Website Contact Form Acknowledgment (SYNTHETIC FIXTURE)",
+  "description": "A fully synthetic, evidence-complete contract used as a fixture for the Contract Scenario Generator and Contract Harness tests. Not a real business, not real data -- originally authored and hand-verified as a live synthetic validation contract (2026-07-21), promoted to a permanent checked-in fixture because, unlike the other two checked-in fixtures, its EvidenceRequirements fully cover every transition into every terminal outcome.",
+  "entity": { "name": "ContactFormSubmission", "description": "A single synthetic website contact-form submission." },
+  "correlationKey": { "fieldPath": "body.email", "description": "The submitter's email address (synthetic, .test TLD only)." },
+  "promise": { "text": "Every website contact form submission is acknowledged within 1 business hour, assigned to an owner, and flagged if required contact info is missing or no acknowledgment happens in time." },
+  "startConditions": [
+    { "id": "sc-submitted", "description": "A visitor submits the contact form.", "trigger": "webhook", "initialState": "received" }
+  ],
+  "states": [
+    { "id": "received", "name": "Received", "description": "Submission just arrived.", "terminal": false },
+    { "id": "acknowledged", "name": "Acknowledged", "description": "An owner acknowledged the submission.", "terminal": true },
+    { "id": "missing_info", "name": "Missing Info", "description": "Required contact info was missing from the submission.", "terminal": true },
+    { "id": "no_response", "name": "No Response", "description": "No acknowledgment happened before the expiration window.", "terminal": true }
+  ],
+  "events": [
+    { "id": "acknowledge", "name": "Acknowledge", "description": "An owner acknowledged the submission." },
+    { "id": "flag_missing_info", "name": "Flag Missing Info", "description": "Required contact info was found missing." }
+  ],
+  "transitions": [
+    { "id": "t-received-to-acknowledged", "fromState": "received", "event": "acknowledge", "toState": "acknowledged" },
+    { "id": "t-received-to-missinginfo", "fromState": "received", "event": "flag_missing_info", "toState": "missing_info" }
+  ],
+  "terminalOutcomes": [
+    { "state": "acknowledged", "outcome": "success", "description": "Submission was acknowledged in time with complete info." },
+    { "state": "missing_info", "outcome": "failure", "description": "Submission could not be actioned -- required contact info was missing." },
+    { "state": "no_response", "outcome": "failure", "description": "Submission was never acknowledged within the expiration window." }
+  ],
+  "owners": [
+    { "state": "received", "owner": "Support Team" }
+  ],
+  "sla": [
+    {
+      "id": "sla-ack-1bh",
+      "measuredFrom": { "state": "received" },
+      "expectedBy": { "state": "acknowledged" },
+      "duration": { "amount": 1, "unit": "business_hours" }
+    }
+  ],
+  "businessCalendar": {
+    "timezone": "America/New_York",
+    "weeklyHours": [
+      { "day": "mon", "start": "09:00", "end": "17:00" },
+      { "day": "tue", "start": "09:00", "end": "17:00" },
+      { "day": "wed", "start": "09:00", "end": "17:00" },
+      { "day": "thu", "start": "09:00", "end": "17:00" },
+      { "day": "fri", "start": "09:00", "end": "17:00" }
+    ]
+  },
+  "expirationRules": [
+    { "id": "exp-received-stuck", "state": "received", "after": { "amount": 4, "unit": "business_hours" }, "expiresTo": "no_response" }
+  ],
+  "exceptions": [
+    { "id": "exc-no-ack", "condition": "No acknowledgment sent within 1 business hour of submission", "owner": "Support Team", "suggestedAction": "Contact the submitter directly and log the outcome." }
+  ],
+  "evidenceRequirements": [
+    { "transitionId": "t-received-to-acknowledged", "requiredFields": ["ownerAssigned", "acknowledgedVia"], "description": "The acknowledgment record: which owner handled it and how." },
+    { "transitionId": "t-received-to-missinginfo", "requiredFields": ["missingFields"], "description": "Which required field(s) were missing from the submission." }
+  ],
+  "assumptions": [],
+  "provenance": { "kairosVersion": "0.12.0", "authoredBy": "human", "createdAt": "2026-07-21T00:00:00.000Z", "updatedAt": "2026-07-21T00:00:00.000Z" },
+  "status": "draft"
+}
