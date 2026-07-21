@@ -180,8 +180,22 @@ Contract options (ProcessContract v0, Phase 0+1+2+5 -- see docs/plans/process-co
                                   workflow registration before they have anything to find. Refuses
                                   to compile at all (exit 2, no plan) if the contract fails
                                   validation or still has a blocking assumption. Does not attempt to
-                                  prove the built workflows fulfill the contract -- that is
-                                  ProofLedger's job (see Ledger options below).
+                                  prove the built workflows fulfill the contract AT RUNTIME -- that
+                                  is ProofLedger's job (see Ledger options below) and, later, the
+                                  Replay Upgrade. A real (non-dry-run) build with at least one
+                                  deployed workflow also runs Contract Compiler Verification
+                                  (roadmap item 10, see docs/plans/intake-scenario-harness-plan.md
+                                  §10): fetches each deployed workflow back from n8n (read-only) and
+                                  statically checks it contains an evidence node ("Kairos Evidence:
+                                  <transitionId>") for every EvidenceRequirement, the correlation
+                                  key referenced somewhere, and every start condition covered by a
+                                  compiled workflow. This is structural presence only, never a claim
+                                  the wiring is correct at runtime -- but a missing evidence node
+                                  means ProofLedger will silently never see that transition's
+                                  evidence at all, so a gap here is surfaced loudly (exit 2) even
+                                  though it never blocks the registration write itself (the deployed
+                                  workflows and registration are both still real and correct; only
+                                  the affected transition's evidence tracking is broken).
   contract validate <file.json>  Validate a ProcessContract JSON file against the deterministic
                                   contract validator (reachability, terminal-state consistency,
                                   dangling references, business-calendar consistency). Fully
@@ -1827,7 +1841,14 @@ async function handleContractCompile(positional: string[], flags: Record<string,
     console.error('--dry-run) deployment. Refuses to compile at all -- exit 2, no plan produced')
     console.error('-- if the contract fails validation or still has a blocking assumption.')
     console.error('This step does not attempt to prove the built workflows fulfill the contract')
-    console.error('-- that is ProofLedger, a later, unstarted phase.')
+    console.error('at runtime -- that is ProofLedger and, later, the Replay Upgrade.')
+    console.error('A real (non-dry-run) build with at least one deployed workflow also runs')
+    console.error('Contract Compiler Verification (roadmap item 10): fetches each deployed')
+    console.error('workflow back from n8n and statically checks it contains an evidence node for')
+    console.error('every EvidenceRequirement, the correlation key referenced, and every start')
+    console.error('condition covered -- structural presence only, never a runtime-correctness')
+    console.error('proof. A gap here means ProofLedger would silently never see that evidence;')
+    console.error('surfaced loudly (exit 2) but never blocks registration itself.')
     console.error('A real (non-dry-run) rebuild that would silently stop tracking a previously')
     console.error('registered workflow (e.g. one generation failure among several) refuses (exit 2)')
     console.error('to save the new registration -- the previous one keeps being polled -- unless')
@@ -1944,6 +1965,7 @@ async function handleContractCompile(positional: string[], flags: Record<string,
   // to register, and a blocked build (escalation) never built anything either. Without this
   // registration, `kairos ledger poll` has no way to know which n8n workflow ids implement this
   // contract at all (the Phase 3 design spike's own named gap, plan doc §6.0).
+  let compilerVerificationHasGaps = false
   if (!isDryRun && !buildResult.escalation) {
     const registeredWorkflows = buildResult.workflows
       .filter((w): w is typeof w & { workflowId: string } => w.workflowId !== null && !w.error)
@@ -1954,6 +1976,51 @@ async function handleContractCompile(positional: string[], flags: Record<string,
       }))
 
     if (registeredWorkflows.length > 0) {
+      // Contract Compiler Verification (roadmap item 10, docs/plans/intake-scenario-harness-plan.md
+      // §10): fetches each just-deployed workflow's REAL JSON back from n8n (read-only GET) and
+      // statically checks it against the contract's own requirements -- an evidence node for every
+      // EvidenceRequirement, the correlation key referenced somewhere, every StartCondition
+      // covered. A real gap here means ProofLedger will silently never see evidence for that
+      // transition; surfaced loudly, but never blocks registration itself -- the deployed
+      // workflows and this registration are both still real and correct, and refusing to track
+      // them at all would throw away visibility into every OTHER evidence requirement that IS
+      // correctly wired. Sets the command's own exit code at the very end instead.
+      const n8nBaseUrl = getEnvOrExit('N8N_BASE_URL')
+      const n8nApiKey = getEnvOrExit('N8N_API_KEY')
+      const { N8nApiClient } = await import('./providers/n8n/api-client.js')
+      const { verifyCompiledWorkflows } = await import('./promise/compiler-verify.js')
+      const apiClient = new N8nApiClient(n8nBaseUrl, n8nApiKey, CLI_LOGGER)
+
+      const fetchedWorkflows: import('./promise/compiler-verify.js').CompiledWorkflowForVerification[] = []
+      const fetchErrors: string[] = []
+      for (const w of registeredWorkflows) {
+        try {
+          const real = await apiClient.getWorkflow(w.n8nWorkflowId)
+          fetchedWorkflows.push({ workflowName: w.workflowName, workflow: { nodes: real.nodes } })
+        } catch (err) {
+          fetchErrors.push(`"${w.workflowName}" (${w.n8nWorkflowId}): ${err instanceof Error ? err.message : String(err)}`)
+        }
+      }
+
+      const verification = verifyCompiledWorkflows(contract, fetchedWorkflows, result.traceability)
+      compilerVerificationHasGaps = verification.verdict === 'gaps_found'
+
+      if (flags['json'] === true) {
+        console.log(JSON.stringify({ compilerVerification: verification, fetchErrors }, null, 2))
+      } else {
+        if (fetchErrors.length > 0) {
+          console.error(`\n⚠ Could not fetch ${fetchErrors.length} workflow(s) back from n8n to verify -- skipped, not counted as a gap:`)
+          for (const e of fetchErrors) console.error(`  - ${e}`)
+        }
+        if (compilerVerificationHasGaps) {
+          console.error(`\n✗ Contract compiler verification found ${verification.findings.length} gap(s) -- ProofLedger may silently never see some evidence:`)
+          for (const f of verification.findings) console.error(`  [${f.severity}] ${f.contractElement}: ${f.message}`)
+        } else {
+          console.error(`\n✓ Contract compiler verification: every evidence node, the correlation key, and every start condition are structurally present in the deployed workflows.`)
+          console.error(`  (Structural presence only -- this does not prove the wiring behaves correctly at runtime. See "kairos ledger poll" and, later, the Replay Upgrade for that.)`)
+        }
+      }
+
       const { loadContractWorkflowRegistration, saveContractWorkflowRegistration, computeDroppedWorkflows } = await import('./promise/registry.js')
       // Finding 2 fix (supplemental measurement-integrity audit, 2026-07-20): a rebuild that
       // would silently stop tracking a previously-registered workflow -- a transient generation
@@ -1991,6 +2058,7 @@ async function handleContractCompile(positional: string[], flags: Record<string,
   }
 
   if (buildResult.escalation) process.exit(2)
+  if (compilerVerificationHasGaps) process.exit(2)
 }
 
 /**
