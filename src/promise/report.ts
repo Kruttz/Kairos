@@ -51,6 +51,27 @@ export function classifyPromiseInstance(
   instanceExceptions: ExceptionDeskItem[],
   now: Date = new Date(),
 ): PromiseInstanceClassification {
+  // Finding 3 fix (supplemental measurement-integrity audit, 2026-07-20) -- an ambiguity stopgap,
+  // not full time-windowing/re-identification (deliberately deferred, a real design decision).
+  // promiseInstanceId is a stateless hash of the raw correlation key value -- if that value is
+  // ever reused (e.g. the same phone number calling in again after a prior referral already
+  // closed), a brand-new occurrence's evidence merges into the old, already-terminal one's
+  // history under the identical instance id. More than one 'instance_start' entry is direct,
+  // structural proof this happened: an intake workflow's own trigger fires instance_start exactly
+  // once per real execution (Phase 4's own design, confirmed in ledger.ts), so a second one is
+  // never a data artifact -- it is always a second real occurrence. Checked first, unconditionally,
+  // before any other classification logic: once entries from more than one real occurrence are
+  // mixed together, no downstream signal (kept/missed/drifting/at_risk) can be trusted, since it
+  // might describe the wrong occurrence entirely -- including a confident 'missed', which would
+  // be its own false claim if it belongs to the older, unrelated occurrence.
+  const instanceStartCount = instanceEntries.filter(e => e.kind === 'instance_start').length
+  if (instanceStartCount > 1) {
+    return {
+      status: 'unverifiable',
+      detail: `This correlation key has ${instanceStartCount} separate "instance started" records in this window -- it appears to represent more than one real-world occurrence (e.g. the same phone number used for a new referral after a prior one already closed). Classification is not attempted across merged occurrences.`,
+    }
+  }
+
   const findings = checkSlaCompliance(contract, instanceEntries, now)
   const drifting = findings.filter(f => f.status === 'drifting')
   // P0 measurement-integrity fix (2026-07-20): a finding sla-compliance.ts downgraded from

@@ -1588,7 +1588,7 @@ async function handleContractPlan(positional: string[], flags: Record<string, st
 async function handleContractCompile(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const filePath = positional[1]
   if (!filePath) {
-    console.error('Usage: kairos contract compile <file.json> [--build] [--dry-run] [--activate] [--yes] [--despite-blocking] [--json]')
+    console.error('Usage: kairos contract compile <file.json> [--build] [--dry-run] [--activate] [--yes] [--despite-blocking] [--confirm-registration-drop] [--json]')
     console.error('')
     console.error('Compiles a valid ProcessContract into a PackPlan -- deterministic, no LLM call')
     console.error('in this step. Without --build, only prints the compiled plan and its')
@@ -1599,6 +1599,10 @@ async function handleContractCompile(positional: string[], flags: Record<string,
     console.error('-- if the contract fails validation or still has a blocking assumption.')
     console.error('This step does not attempt to prove the built workflows fulfill the contract')
     console.error('-- that is ProofLedger, a later, unstarted phase.')
+    console.error('A real (non-dry-run) rebuild that would silently stop tracking a previously')
+    console.error('registered workflow (e.g. one generation failure among several) refuses (exit 2)')
+    console.error('to save the new registration -- the previous one keeps being polled -- unless')
+    console.error('--confirm-registration-drop is passed.')
     process.exit(1)
   }
 
@@ -1721,7 +1725,28 @@ async function handleContractCompile(positional: string[], flags: Record<string,
       }))
 
     if (registeredWorkflows.length > 0) {
-      const { saveContractWorkflowRegistration } = await import('./promise/registry.js')
+      const { loadContractWorkflowRegistration, saveContractWorkflowRegistration, computeDroppedWorkflows } = await import('./promise/registry.js')
+      // Finding 2 fix (supplemental measurement-integrity audit, 2026-07-20): a rebuild that
+      // would silently stop tracking a previously-registered workflow -- a transient generation
+      // failure among several, or the contract's own structure no longer producing it -- used to
+      // just overwrite the registration and lose that workflow's tracking forever, with zero
+      // signal. Refuses by default; the pack itself is already built at this point (see above),
+      // only the registration write is gated.
+      const existing = await loadContractWorkflowRegistration(contract.clientId, contract.id)
+      const dropped = existing ? computeDroppedWorkflows(existing.workflows, new Set(registeredWorkflows.map(w => w.workflowName))) : []
+
+      if (dropped.length > 0 && flags['confirm-registration-drop'] !== true) {
+        if (flags['json'] === true) {
+          console.log(JSON.stringify({ ...buildResult, traceability: result.traceability, registrationRefused: true, droppedWorkflows: dropped.map(w => w.workflowName) }, null, 2))
+        } else {
+          console.error(`\n✗ Refusing to save workflow registration -- this rebuild would silently stop tracking ${dropped.length} previously-registered workflow(s):`)
+          for (const w of dropped) console.error(`  - "${w.workflowName}" (was: ${w.n8nWorkflowId})`)
+          console.error(`\nThe pack itself was built successfully above -- only the registration write is refused, so "kairos ledger poll"/"kairos contract report" keep relying on the PREVIOUS registration for ${dropped.length === 1 ? 'this workflow' : 'these workflows'} until you decide.`)
+          console.error(`Re-run with --confirm-registration-drop if you intend to stop tracking ${dropped.length === 1 ? 'it' : 'them'}.`)
+        }
+        process.exit(2)
+      }
+
       const { path: registrationPath } = await saveContractWorkflowRegistration({
         contractId: contract.id,
         contractVersion: contract.version,
@@ -1730,6 +1755,9 @@ async function handleContractCompile(positional: string[], flags: Record<string,
         registeredAt: new Date().toISOString(),
       })
       console.error(`Registered ${registeredWorkflows.length} workflow(s) for evidence polling ("kairos ledger poll"): ${registrationPath}`)
+      if (dropped.length > 0) {
+        console.error(`⚠ Stopped tracking ${dropped.length} previously-registered workflow(s) (--confirm-registration-drop was passed): ${dropped.map(w => w.workflowName).join(', ')}`)
+      }
     }
   }
 

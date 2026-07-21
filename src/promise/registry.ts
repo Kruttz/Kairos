@@ -49,3 +49,16 @@ export async function loadContractWorkflowRegistration(clientId: string, contrac
     return null
   }
 }
+
+/**
+ * Finding 2 fix (supplemental measurement-integrity audit, 2026-07-20). `saveContractWorkflowRegistration()`
+ * above is a full overwrite, no merge -- a rebuild whose registration would silently stop
+ * tracking a previously-registered workflow (a transient generation failure, or the contract's
+ * own structure no longer producing it) used to just lose that workflow's tracking with zero
+ * signal. Pure, no I/O -- cli.ts's `handleContractCompile` uses this to decide whether to refuse
+ * the save (matches by `workflowName`, the stable, deterministic identity `compile.ts` produces,
+ * not `n8nWorkflowId`, which can legitimately change across a real rebuild).
+ */
+export function computeDroppedWorkflows(existingWorkflows: RegisteredWorkflow[], newWorkflowNames: Set<string>): RegisteredWorkflow[] {
+  return existingWorkflows.filter(w => !newWorkflowNames.has(w.workflowName))
+}

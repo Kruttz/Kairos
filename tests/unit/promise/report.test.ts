@@ -216,6 +216,75 @@ describe('classifyPromiseInstance', () => {
     const result = classifyPromiseInstance(contract, entries, [], new Date(TUE_8AM))
     expect(result.status).toBe('missed')
   })
+
+  // Finding 3 fix (supplemental measurement-integrity audit, 2026-07-20) -- the ambiguity
+  // stopgap for correlation-key reuse. promiseInstanceId is a stateless hash with no time
+  // dimension: if the same real-world correlation key value (e.g. a phone number) is reused for
+  // a genuinely new occurrence after a prior one already closed, both occurrences' evidence
+  // merges under the same instance id. Before this fix, classifyPromiseInstance would silently
+  // return whichever terminal outcome stateReachSignals() found first (chronologically earliest)
+  // -- the OLD, unrelated occurrence's outcome -- for what might be a brand-new, still-open one.
+  describe('correlation-key reuse ambiguity (multiple instance_start entries)', () => {
+    it('unverifiable, not the old outcome: an old closed referral plus a newer, still-open one under the same key', () => {
+      const contract = empireHomecare()
+      const entries = [
+        // Old occurrence: started and reached a real success terminal state months ago.
+        instanceStart('i1', MON_8AM),
+        evidence('i1', 't-received-to-attempted', MON_10AM),
+        evidence('i1', 't-attempted-to-contacted', MON_10AM),
+        evidence('i1', 't-contacted-to-scheduled', MON_10AM), // success terminal (scheduled)
+        // New occurrence: the same correlation key (promiseInstanceId) used again, a second
+        // instance_start, no further evidence yet -- this is what should NOT be silently reported
+        // as the old occurrence's 'kept' outcome.
+        { ...instanceStart('i1', TUE_8AM), id: 'i1:start-2', sourceExecutionId: 'exec-i1-start-2' },
+      ]
+      const result = classifyPromiseInstance(contract, entries, [], new Date(TUE_8AM))
+      expect(result.status).toBe('unverifiable')
+      expect(result.status).not.toBe('kept')
+      expect(result.detail).toContain('more than one')
+      expect(result.evidenceQuality).toBeUndefined()
+    })
+
+    it('unverifiable even when the old occurrence would otherwise have been missed/drifting -- ambiguity wins over every other signal', () => {
+      const contract = empireHomecare()
+      const entries = [
+        instanceStart('i1', MON_8AM), // old occurrence, never reached any terminal state -- would be 'missed' alone
+        { ...instanceStart('i1', TUE_8AM), id: 'i1:start-2', sourceExecutionId: 'exec-i1-start-2' }, // new occurrence
+      ]
+      const result = classifyPromiseInstance(contract, entries, [], new Date(TUE_8AM))
+      expect(result.status).toBe('unverifiable')
+    })
+
+    it('names the exact count of instance_start records in the detail text', () => {
+      const contract = empireHomecare()
+      const entries = [
+        instanceStart('i1', MON_8AM),
+        { ...instanceStart('i1', MON_10AM), id: 'i1:start-2', sourceExecutionId: 'exec-i1-start-2' },
+        { ...instanceStart('i1', TUE_8AM), id: 'i1:start-3', sourceExecutionId: 'exec-i1-start-3' },
+      ]
+      const result = classifyPromiseInstance(contract, entries, [], new Date(TUE_8AM))
+      expect(result.detail).toContain('3 separate')
+    })
+
+    it('a single instance_start entry is completely unaffected -- normal classification proceeds exactly as before', () => {
+      const contract = empireHomecare()
+      const entries = [
+        instanceStart('i1', MON_8AM),
+        evidence('i1', 't-received-to-attempted', MON_10AM),
+        evidence('i1', 't-attempted-to-contacted', MON_10AM),
+        evidence('i1', 't-contacted-to-scheduled', MON_10AM),
+      ]
+      const result = classifyPromiseInstance(contract, entries, [], new Date(MON_10AM))
+      expect(result.status).toBe('kept')
+    })
+
+    it('zero instance_start entries (pure evidence, no start record) is also unaffected', () => {
+      const contract = empireHomecare()
+      const entries = [evidence('i1', 't-received-to-attempted', MON_10AM)]
+      const result = classifyPromiseInstance(contract, entries, [], new Date(MON_10AM))
+      expect(result.status).not.toBe('unverifiable')
+    })
+  })
 })
 
 describe('buildPromiseReportData', () => {
@@ -356,6 +425,26 @@ describe('buildPromiseReportData', () => {
     const data = buildPromiseReportData(contract, [], [], {}, new Date(MON_10AM))
     expect(data.unattributedExecutionCount).toBe(0)
     expect(data.disclaimers.some(d => d.includes('no readable correlation key'))).toBe(false)
+  })
+
+  // Finding 3 fix (supplemental measurement-integrity audit, 2026-07-20): confirms the ambiguity
+  // stopgap composes correctly at the report level with zero additional wiring -- 'unverifiable'
+  // from classifyPromiseInstance() is the same PromiseInstanceStatus already counted and
+  // disclaimed generically, so a merged-occurrence instance surfaces in instanceCounts.unverifiable
+  // and the existing "N instance(s)... are unverifiable" disclaimer, never silently as 'kept'.
+  it('an instance with a reused correlation key (multiple instance_start entries) is counted unverifiable, never kept', () => {
+    const contract = empireHomecare()
+    const entries = [
+      instanceStart('i1', MON_8AM),
+      evidence('i1', 't-received-to-attempted', MON_10AM),
+      evidence('i1', 't-attempted-to-contacted', MON_10AM),
+      evidence('i1', 't-contacted-to-scheduled', MON_10AM), // old occurrence reached a success terminal
+      { ...instanceStart('i1', TUE_8AM), id: 'i1:start-2', sourceExecutionId: 'exec-i1-start-2' }, // new occurrence begins
+    ]
+    const data = buildPromiseReportData(contract, entries, [], {}, new Date(TUE_8AM))
+    expect(data.instanceCounts.unverifiable).toBe(1)
+    expect(data.instanceCounts.kept).toBe(0)
+    expect(data.disclaimers.some(d => d.includes('unverifiable'))).toBe(true)
   })
 })
 

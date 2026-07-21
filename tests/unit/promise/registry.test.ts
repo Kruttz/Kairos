@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir, homedir } from 'node:os'
 import { join } from 'node:path'
-import { saveContractWorkflowRegistration, loadContractWorkflowRegistration, type ContractWorkflowRegistration } from '../../../src/promise/registry.js'
+import { saveContractWorkflowRegistration, loadContractWorkflowRegistration, computeDroppedWorkflows, type ContractWorkflowRegistration, type RegisteredWorkflow } from '../../../src/promise/registry.js'
 
 function makeRegistration(overrides: Partial<ContractWorkflowRegistration> = {}): ContractWorkflowRegistration {
   return {
@@ -63,5 +63,42 @@ describe('saveContractWorkflowRegistration / loadContractWorkflowRegistration', 
     const path = join(scratchHome, '.kairos', 'contracts', 'empire-homecare', 'empire-homecare-referral-intake-workflows.json')
     const stats = await stat(path)
     expect(stats.mode & 0o777).toBe(0o600)
+  })
+})
+
+// Finding 2 fix (supplemental measurement-integrity audit, 2026-07-20): a rebuild whose
+// registration would silently stop tracking a previously-registered workflow must be detectable
+// before the overwrite happens, not discovered later as a mysteriously-quiet evidence gap.
+describe('computeDroppedWorkflows', () => {
+  const wfIntake: RegisteredWorkflow = { n8nWorkflowId: 'wf-intake', workflowName: 'Referral Intake', sourceElements: [] }
+  const wfProcessing: RegisteredWorkflow = { n8nWorkflowId: 'wf-processing', workflowName: 'Referral Processing & Outcome Logging', sourceElements: [] }
+  const wfEscalation: RegisteredWorkflow = { n8nWorkflowId: 'wf-escalation', workflowName: 'Referral SLA Escalation', sourceElements: [] }
+
+  it('reports nothing dropped on a clean rebuild with the same workflow names', () => {
+    const existing = [wfIntake, wfProcessing, wfEscalation]
+    const newNames = new Set(['Referral Intake', 'Referral Processing & Outcome Logging', 'Referral SLA Escalation'])
+    expect(computeDroppedWorkflows(existing, newNames)).toEqual([])
+  })
+
+  it('reports the exact previously-registered workflow missing from a partial rebuild', () => {
+    const existing = [wfIntake, wfProcessing, wfEscalation]
+    const newNames = new Set(['Referral Intake', 'Referral SLA Escalation']) // Processing failed this build
+    const dropped = computeDroppedWorkflows(existing, newNames)
+    expect(dropped).toEqual([wfProcessing])
+  })
+
+  it('reports nothing dropped when there was no prior registration at all (first build)', () => {
+    expect(computeDroppedWorkflows([], new Set(['Referral Intake']))).toEqual([])
+  })
+
+  it('does not care about a changed n8nWorkflowId for a workflow that is still present by name', () => {
+    const existing = [wfIntake]
+    const redeployedIntake = new Set(['Referral Intake']) // same name, would-be different n8nWorkflowId this build
+    expect(computeDroppedWorkflows(existing, redeployedIntake)).toEqual([])
+  })
+
+  it('reports every previously-registered workflow dropped when none survive', () => {
+    const existing = [wfIntake, wfProcessing]
+    expect(computeDroppedWorkflows(existing, new Set())).toEqual([wfIntake, wfProcessing])
   })
 })
