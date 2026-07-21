@@ -940,7 +940,12 @@ kairos contract plan "..." --client-id acme --json  # full PlanContractResult as
 # below). IMPORTANT: `compile` only ever reads the given file -- it never saves the contract
 # itself anywhere. `kairos ledger poll`/`watch --contracts`/`contract report` all need BOTH a
 # saved contract (`kairos contract import`, below) AND a real, non-dry-run build's workflow
-# registration before they have anything to find -- neither one alone is enough.
+# registration before they have anything to find -- neither one alone is enough. A real rebuild
+# whose registration would silently stop tracking a previously-registered workflow (Finding 2 fix,
+# 2026-07-20 -- e.g. one workflow's generation failed this time, or the contract no longer
+# compiles it) refuses (exit 2) to save the new registration, naming exactly which workflow(s)
+# would be dropped -- the pack itself is still built, only the registration write is gated. Pass
+# --confirm-registration-drop if the drop is intentional.
 kairos contract compile <file.json>                       # print the compiled plan only
 kairos contract compile <file.json> --build --dry-run     # also generate + validate the workflows, skip deployment
 kairos contract compile <file.json> --json                # full CompileToPackPlanResult as JSON
@@ -1015,9 +1020,12 @@ kairos exceptions resolve <contract-id> <item-id> --client-id acme --reason "Cal
 # generated purely from this contract's own ProofLedger + ExceptionDesk data, no network calls.
 # Counts kept/at-risk/missed/unverifiable/in-progress promise instances -- 'unverifiable' is
 # never counted as 'kept', even when the underlying evidence looks superficially positive (e.g. a
-# terminal state reached only through an indirect, inferred signal, OR an SLA/expiration
+# terminal state reached only through an indirect, inferred signal; an SLA/expiration
 # determination on a contract that declares pauseRules Kairos's own SLA math doesn't yet account
-# for -- P0 measurement-integrity fix, 2026-07-20) -- plus open/acknowledged/resolved exceptions,
+# for -- P0 measurement-integrity fix, 2026-07-20; or more than one "instance started" record
+# under the same correlation key, e.g. the same phone number reused for a new referral after a
+# prior one already closed -- Finding 3 fix, 2026-07-20, a stopgap: full time-windowing/
+# re-identification is a separate, larger design decision, not attempted here) -- plus open/acknowledged/resolved exceptions,
 # an evidence-quality breakdown, and an owner/action summary for every open exception. Always
 # states plainly when evidence is incomplete or the window has nothing to show, including a
 # dedicated disclaimer whenever any executions had evidence expected but no readable correlation
