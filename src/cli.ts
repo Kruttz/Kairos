@@ -38,11 +38,11 @@ Usage:
   kairos contract import <file.json> --client-id <slug> [--confirm-version-change] [--json]
   kairos contract report <contract-id> --client-id <slug> [--from <date>] [--to <date>] [--bundle <dir>] [--json]
   kairos ledger poll <contract-id> --client-id <slug> [--limit <n>] [--json]
-  kairos ledger show <contract-id> [--instance <promise-instance-id>] [--json]
-  kairos exceptions list <contract-id> [--status <status>] [--json]
-  kairos exceptions show <contract-id> <item-id> [--json]
-  kairos exceptions ack <contract-id> <item-id> [--reason <text>] [--json]
-  kairos exceptions resolve <contract-id> <item-id> [--reason <text>] [--json]
+  kairos ledger show <contract-id> --client-id <slug> [--instance <promise-instance-id>] [--json]
+  kairos exceptions list <contract-id> --client-id <slug> [--status <status>] [--json]
+  kairos exceptions show <contract-id> <item-id> --client-id <slug> [--json]
+  kairos exceptions ack <contract-id> <item-id> --client-id <slug> [--reason <text>] [--json]
+  kairos exceptions resolve <contract-id> <item-id> --client-id <slug> [--reason <text>] [--json]
   kairos drift baseline <n8n-workflow-id> [--json]
   kairos drift check <n8n-workflow-id> [--live] [--original-build-hash <hash>] [--json]
   kairos sandbox up [--port <n>]
@@ -203,14 +203,22 @@ Ledger options (ProofLedger v0, Phase 3 -- see docs/plans/process-contract-promi
                                   listener -- decided by a real design-verification spike against
                                   live production execution data, not assumed (§6.0).
   ledger show <contract-id>      Reads back stored ProofLedger entries for a contract -- purely
-    [--instance <id>]            local, no network calls. Optionally filtered to one promise
-                                  instance (the hashed correlation key value).
+    --client-id <slug>           local, no network calls. Optionally filtered to one promise
+    [--instance <id>]            instance (the hashed correlation key value). --client-id is
+                                  required (Finding 1 fix, 2026-07-20): ProofLedger storage is
+                                  scoped per client, under ~/.kairos/promise-ledger/<client-id>/
+                                  <contract-id>/ -- this refuses rather than falling back to any
+                                  unscoped or ambiguous lookup.
   SLA compliance + ExceptionDesk (Phase 4) run only inside kairos watch --contracts (see
   kairos watch with no args, and ExceptionDesk options below). No dashboard, no autonomous
   business decisions anywhere in this arc -- Kairos only ever records and reports what evidence
   can prove.
 
 ExceptionDesk options (v0, Phase 4 -- see docs/plans/process-contract-promise-engine-plan.md §7):
+  All exceptions subcommands require --client-id <slug> (Finding 1 fix, 2026-07-20):
+  ExceptionDesk storage is scoped per client, under the same
+  ~/.kairos/promise-ledger/<client-id>/<contract-id>/ directory as the ledger above -- refuses
+  rather than falling back to any unscoped or ambiguous lookup.
   exceptions list <contract-id>  Human resolution ONLY -- ack/resolve are the ONLY way an item's
     [--status <status>]          status ever changes. Items are opened/refreshed automatically,
   exceptions show <id> <item>    only inside kairos watch --contracts, never by any exceptions
@@ -1886,8 +1894,8 @@ async function handleContractReport(positional: string[], flags: Record<string, 
   const { loadContractWorkflowRegistration } = await import('./promise/registry.js')
   const { buildPromiseReportData, generatePromiseReport } = await import('./promise/report.js')
 
-  const entries = await getProofLedgerEntries(contractId, 10000)
-  const exceptions = await loadExceptionDeskItems(contractId)
+  const entries = await getProofLedgerEntries(clientId, contractId, 10000)
+  const exceptions = await loadExceptionDeskItems(clientId, contractId)
   const window = {
     ...(typeof flags['from'] === 'string' ? { from: flags['from'] } : {}),
     ...(typeof flags['to'] === 'string' ? { to: flags['to'] } : {}),
@@ -1900,7 +1908,7 @@ async function handleContractReport(positional: string[], flags: Record<string, 
   const registration = await loadContractWorkflowRegistration(clientId, contractId)
   let unattributedExecutionCount = 0
   for (const wf of registration?.workflows ?? []) {
-    const watermark = await loadContractPollWatermark(contractId, wf.n8nWorkflowId)
+    const watermark = await loadContractPollWatermark(clientId, contractId, wf.n8nWorkflowId)
     unattributedExecutionCount += watermark?.cumulativeUnattributedCount ?? 0
   }
 
@@ -2071,10 +2079,10 @@ async function handleLedgerPoll(positional: string[], flags: Record<string, stri
 
   const results: Array<{ workflowName: string } & Awaited<ReturnType<typeof pollWorkflowEvidence>>> = []
   for (const wf of registration.workflows) {
-    const watermark = await loadContractPollWatermark(contractId, wf.n8nWorkflowId)
+    const watermark = await loadContractPollWatermark(clientId, contractId, wf.n8nWorkflowId)
     const result = await pollWorkflowEvidence(contract, wf.n8nWorkflowId, client, watermark, limit, wf.sourceElements)
-    await appendProofLedgerEntries(contractId, result.entries)
-    await saveContractPollWatermark(result.newWatermark)
+    await appendProofLedgerEntries(clientId, contractId, result.entries)
+    await saveContractPollWatermark(clientId, result.newWatermark)
     results.push({ workflowName: wf.workflowName, ...result })
   }
 
@@ -2108,17 +2116,21 @@ async function handleLedgerPoll(positional: string[], flags: Record<string, stri
 
 async function handleLedgerShow(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const contractId = positional[1]
-  if (!contractId) {
-    console.error('Usage: kairos ledger show <contract-id> [--instance <promise-instance-id>] [--limit <n>] [--json]')
+  const clientId = typeof flags['client-id'] === 'string' ? flags['client-id'] : undefined
+  if (!contractId || !clientId) {
+    console.error('Usage: kairos ledger show <contract-id> --client-id <slug> [--instance <promise-instance-id>] [--limit <n>] [--json]')
     console.error('')
     console.error('Reads back stored ProofLedger entries for a contract -- purely local, no')
     console.error('n8n/Anthropic calls. Run "kairos ledger poll" first to populate it.')
+    console.error('--client-id is required (Finding 1 fix, 2026-07-20): ProofLedger storage is')
+    console.error('scoped per client, so this refuses rather than falling back to any unscoped')
+    console.error('or ambiguous lookup.')
     process.exit(1)
   }
 
   const { getProofLedgerEntries } = await import('./promise/ledger-store.js')
   const limit = typeof flags['limit'] === 'string' ? parseInt(flags['limit'], 10) : 200
-  let entries = await getProofLedgerEntries(contractId, limit)
+  let entries = await getProofLedgerEntries(clientId, contractId, limit)
 
   const instanceFilter = typeof flags['instance'] === 'string' ? flags['instance'] : undefined
   if (instanceFilter) entries = entries.filter(e => e.promiseInstanceId === instanceFilter)
@@ -2157,7 +2169,7 @@ async function handleLedger(positional: string[], flags: Record<string, string |
   }
 
   console.error('Usage: kairos ledger poll <contract-id> --client-id <slug> [--limit <n>] [--json]')
-  console.error('       kairos ledger show <contract-id> [--instance <promise-instance-id>] [--json]')
+  console.error('       kairos ledger show <contract-id> --client-id <slug> [--instance <promise-instance-id>] [--json]')
   console.error('')
   console.error('ProofLedger v0 (Phase 3, docs/plans/process-contract-promise-engine-plan.md §6):')
   console.error('read-only, polling-based evidence tracking. poll fetches new n8n executions for')
@@ -2170,13 +2182,18 @@ async function handleLedger(positional: string[], flags: Record<string, string |
 
 async function handleExceptionsList(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const contractId = positional[1]
-  if (!contractId) {
-    console.error('Usage: kairos exceptions list <contract-id> [--status open|acknowledged|resolved] [--json]')
+  const clientId = typeof flags['client-id'] === 'string' ? flags['client-id'] : undefined
+  if (!contractId || !clientId) {
+    console.error('Usage: kairos exceptions list <contract-id> --client-id <slug> [--status open|acknowledged|resolved] [--json]')
+    console.error('')
+    console.error('--client-id is required (Finding 1 fix, 2026-07-20): ExceptionDesk storage is')
+    console.error('scoped per client, so this refuses rather than falling back to any unscoped')
+    console.error('or ambiguous lookup.')
     process.exit(1)
   }
 
   const { loadExceptionDeskItems } = await import('./promise/exception-store.js')
-  let items = await loadExceptionDeskItems(contractId)
+  let items = await loadExceptionDeskItems(clientId, contractId)
   const statusFilter = typeof flags['status'] === 'string' ? flags['status'] : undefined
   if (statusFilter) items = items.filter(i => i.status === statusFilter)
 
@@ -2203,13 +2220,18 @@ async function handleExceptionsList(positional: string[], flags: Record<string, 
 async function handleExceptionsShow(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const contractId = positional[1]
   const itemId = positional[2]
-  if (!contractId || !itemId) {
-    console.error('Usage: kairos exceptions show <contract-id> <item-id> [--json]')
+  const clientId = typeof flags['client-id'] === 'string' ? flags['client-id'] : undefined
+  if (!contractId || !itemId || !clientId) {
+    console.error('Usage: kairos exceptions show <contract-id> <item-id> --client-id <slug> [--json]')
+    console.error('')
+    console.error('--client-id is required (Finding 1 fix, 2026-07-20): ExceptionDesk storage is')
+    console.error('scoped per client, so this refuses rather than falling back to any unscoped')
+    console.error('or ambiguous lookup.')
     process.exit(1)
   }
 
   const { loadExceptionDeskItems } = await import('./promise/exception-store.js')
-  const items = await loadExceptionDeskItems(contractId)
+  const items = await loadExceptionDeskItems(clientId, contractId)
   const item = items.find(i => i.id === itemId)
   if (!item) {
     console.error(`No exception item "${itemId}" found for contract "${contractId}".`)
@@ -2243,14 +2265,19 @@ async function handleExceptionsShow(positional: string[], flags: Record<string, 
 async function handleExceptionsSetStatus(positional: string[], flags: Record<string, string | boolean>, to: 'acknowledged' | 'resolved'): Promise<void> {
   const contractId = positional[1]
   const itemId = positional[2]
-  if (!contractId || !itemId) {
-    console.error(`Usage: kairos exceptions ${to === 'acknowledged' ? 'ack' : 'resolve'} <contract-id> <item-id> [--reason <text>] [--json]`)
+  const clientId = typeof flags['client-id'] === 'string' ? flags['client-id'] : undefined
+  if (!contractId || !itemId || !clientId) {
+    console.error(`Usage: kairos exceptions ${to === 'acknowledged' ? 'ack' : 'resolve'} <contract-id> <item-id> --client-id <slug> [--reason <text>] [--json]`)
+    console.error('')
+    console.error('--client-id is required (Finding 1 fix, 2026-07-20): ExceptionDesk storage is')
+    console.error('scoped per client, so this refuses rather than falling back to any unscoped')
+    console.error('or ambiguous lookup.')
     process.exit(1)
   }
 
   const { loadExceptionDeskItems, saveExceptionDeskItem } = await import('./promise/exception-store.js')
   const { applyHumanStatusChange } = await import('./promise/exception-desk.js')
-  const items = await loadExceptionDeskItems(contractId)
+  const items = await loadExceptionDeskItems(clientId, contractId)
   const item = items.find(i => i.id === itemId)
   if (!item) {
     console.error(`No exception item "${itemId}" found for contract "${contractId}".`)
@@ -2259,7 +2286,7 @@ async function handleExceptionsSetStatus(positional: string[], flags: Record<str
 
   const reason = typeof flags['reason'] === 'string' ? flags['reason'] : undefined
   const updated = applyHumanStatusChange(item, to, new Date(), reason)
-  await saveExceptionDeskItem(contractId, updated)
+  await saveExceptionDeskItem(clientId, contractId, updated)
 
   if (flags['json'] === true) {
     console.log(JSON.stringify(updated, null, 2))
@@ -2276,10 +2303,10 @@ async function handleExceptions(positional: string[], flags: Record<string, stri
   if (subcommand === 'ack') return handleExceptionsSetStatus(positional, flags, 'acknowledged')
   if (subcommand === 'resolve') return handleExceptionsSetStatus(positional, flags, 'resolved')
 
-  console.error('Usage: kairos exceptions list <contract-id> [--status <status>] [--json]')
-  console.error('       kairos exceptions show <contract-id> <item-id> [--json]')
-  console.error('       kairos exceptions ack <contract-id> <item-id> [--reason <text>] [--json]')
-  console.error('       kairos exceptions resolve <contract-id> <item-id> [--reason <text>] [--json]')
+  console.error('Usage: kairos exceptions list <contract-id> --client-id <slug> [--status <status>] [--json]')
+  console.error('       kairos exceptions show <contract-id> <item-id> --client-id <slug> [--json]')
+  console.error('       kairos exceptions ack <contract-id> <item-id> --client-id <slug> [--reason <text>] [--json]')
+  console.error('       kairos exceptions resolve <contract-id> <item-id> --client-id <slug> [--reason <text>] [--json]')
   console.error('')
   console.error('ExceptionDesk v0 (Phase 4, docs/plans/process-contract-promise-engine-plan.md §7):')
   console.error('human resolution only -- ack/resolve are the ONLY way an item\'s status ever')
@@ -2726,21 +2753,21 @@ async function runContractComplianceTick(
   const { loadContractPollWatermark, saveContractPollWatermark, appendProofLedgerEntries, getProofLedgerEntries } = await import('./promise/ledger-store.js')
 
   for (const wf of registration.workflows) {
-    const watermark = await loadContractPollWatermark(contractId, wf.n8nWorkflowId)
+    const watermark = await loadContractPollWatermark(clientId, contractId, wf.n8nWorkflowId)
     const result = await pollWorkflowEvidence(contract, wf.n8nWorkflowId, client, watermark, 20, wf.sourceElements)
-    await appendProofLedgerEntries(contractId, result.entries)
-    await saveContractPollWatermark(result.newWatermark)
+    await appendProofLedgerEntries(clientId, contractId, result.entries)
+    await saveContractPollWatermark(clientId, result.newWatermark)
   }
 
   const { checkSlaCompliance, complianceVerdict } = await import('./promise/sla-compliance.js')
   const { updateExceptionDesk } = await import('./promise/exception-desk.js')
   const { loadExceptionDeskItems, upsertExceptionDeskItems } = await import('./promise/exception-store.js')
 
-  const entries = await getProofLedgerEntries(contractId, 1000)
+  const entries = await getProofLedgerEntries(clientId, contractId, 1000)
   const findings = checkSlaCompliance(contract, entries)
-  const existingItems = await loadExceptionDeskItems(contractId)
+  const existingItems = await loadExceptionDeskItems(clientId, contractId)
   const { opened, refreshed } = updateExceptionDesk(contract, findings, existingItems)
-  await upsertExceptionDeskItems(contractId, [...opened, ...refreshed])
+  await upsertExceptionDeskItems(clientId, contractId, [...opened, ...refreshed])
 
   const verdict = complianceVerdict(findings)
 

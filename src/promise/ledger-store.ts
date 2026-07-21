@@ -10,23 +10,26 @@ import type { ProofLedgerEntry, ContractPollWatermark } from './ledger-types.js'
  * ledger entries themselves, plus a small JSON map for watermarks (Prerequisite 2) -- not
  * append-only, since a watermark is current state, not a log of events.
  *
- * Nested under a per-contract directory rather than plan doc §6.3's original flat-file sketch
- * (`~/.kairos/promise-ledger/<contractId>.jsonl`) -- a small, deliberate refinement made during
- * implementation to make room for the watermarks file alongside the ledger, the same "revise
- * honestly when building reveals a better shape" discipline Phase 0's StartCondition.initialState
- * addition already established in this arc.
+ * Client-scoped (supplemental measurement-integrity audit, Finding 1, fixed 2026-07-20): every
+ * path is nested under `<clientId>/<contractId>/`, matching store.ts's and registry.ts's own
+ * existing convention. Before this fix, these paths were keyed by `contractId` alone -- since
+ * `contractId` is just a slug of the contract's own name (plan.ts's `deriveContractId()`), two
+ * different clients naming a contract similarly (e.g. both "Referral Intake") would have
+ * silently shared the same ledger/watermark files, mixing their data. `clientId` is now a
+ * required parameter on every exported function here -- there is no remaining code path that
+ * reads or writes unscoped storage, by construction, not just by convention.
  */
 
-function contractLedgerDir(contractId: string): string {
-  return join(homedir(), '.kairos', 'promise-ledger', contractId)
+function contractLedgerDir(clientId: string, contractId: string): string {
+  return join(homedir(), '.kairos', 'promise-ledger', clientId, contractId)
 }
 
-function ledgerPath(contractId: string): string {
-  return join(contractLedgerDir(contractId), 'ledger.jsonl')
+function ledgerPath(clientId: string, contractId: string): string {
+  return join(contractLedgerDir(clientId, contractId), 'ledger.jsonl')
 }
 
-function watermarksPath(contractId: string): string {
-  return join(contractLedgerDir(contractId), 'watermarks.json')
+function watermarksPath(clientId: string, contractId: string): string {
+  return join(contractLedgerDir(clientId, contractId), 'watermarks.json')
 }
 
 /** Best-effort by design (matches telemetry's "must never break a real result" discipline) --
@@ -36,11 +39,11 @@ function watermarksPath(contractId: string): string {
  * covers a single write() syscall -- fine for one process, not a guarantee against two `kairos
  * ledger poll` invocations for the same contract racing (e.g. a cron overlap). The lock is
  * cheap and removes any doubt, not just theoretical protection. */
-export async function appendProofLedgerEntries(contractId: string, entries: ProofLedgerEntry[]): Promise<void> {
+export async function appendProofLedgerEntries(clientId: string, contractId: string, entries: ProofLedgerEntry[]): Promise<void> {
   if (entries.length === 0) return
-  const dir = contractLedgerDir(contractId)
+  const dir = contractLedgerDir(clientId, contractId)
   await mkdir(dir, { recursive: true })
-  const path = ledgerPath(contractId)
+  const path = ledgerPath(clientId, contractId)
   const releaseLock = await acquireFileLock(`${path}.lock`)
   try {
     const lines = entries.map(e => JSON.stringify(e)).join('\n') + '\n'
@@ -59,10 +62,10 @@ export async function appendProofLedgerEntries(contractId: string, entries: Proo
  * compliance/reports then reading as "no evidence at all" instead of "all evidence except one
  * unreadable entry." Skipping per-line is strictly safer: it can only recover entries, never
  * fabricate one. */
-export async function getProofLedgerEntries(contractId: string, limit = 200): Promise<ProofLedgerEntry[]> {
+export async function getProofLedgerEntries(clientId: string, contractId: string, limit = 200): Promise<ProofLedgerEntry[]> {
   let raw: string
   try {
-    raw = await readFile(ledgerPath(contractId), 'utf-8')
+    raw = await readFile(ledgerPath(clientId, contractId), 'utf-8')
   } catch {
     return []
   }
@@ -78,17 +81,17 @@ export async function getProofLedgerEntries(contractId: string, limit = 200): Pr
   return entries.slice(-limit)
 }
 
-async function readWatermarks(contractId: string): Promise<Record<string, ContractPollWatermark>> {
+async function readWatermarks(clientId: string, contractId: string): Promise<Record<string, ContractPollWatermark>> {
   try {
-    const raw = await readFile(watermarksPath(contractId), 'utf-8')
+    const raw = await readFile(watermarksPath(clientId, contractId), 'utf-8')
     return JSON.parse(raw) as Record<string, ContractPollWatermark>
   } catch {
     return {}
   }
 }
 
-export async function loadContractPollWatermark(contractId: string, n8nWorkflowId: string): Promise<ContractPollWatermark | null> {
-  const all = await readWatermarks(contractId)
+export async function loadContractPollWatermark(clientId: string, contractId: string, n8nWorkflowId: string): Promise<ContractPollWatermark | null> {
+  const all = await readWatermarks(clientId, contractId)
   return all[n8nWorkflowId] ?? null
 }
 
@@ -97,14 +100,19 @@ export async function loadContractPollWatermark(contractId: string, n8nWorkflowI
  * the same contract would otherwise race on the shared watermarks.json, and the loser's own
  * watermark update could be silently lost, risking re-processing already-seen executions on
  * the next poll (duplicate, content-idempotent ledger entries -- not a correctness bug on its
- * own, but real storage-hygiene waste this lock removes entirely). */
-export async function saveContractPollWatermark(watermark: ContractPollWatermark): Promise<void> {
-  const dir = contractLedgerDir(watermark.contractId)
+ * own, but real storage-hygiene waste this lock removes entirely).
+ *
+ * `clientId` is a separate parameter, not a field on `ContractPollWatermark` itself (Finding 1
+ * fix, 2026-07-20) -- that type is constructed inside ledger.ts, a pure extraction module with
+ * no storage/client concept at all, and stays that way; clientId is purely a storage-layer
+ * concern, entering only here. */
+export async function saveContractPollWatermark(clientId: string, watermark: ContractPollWatermark): Promise<void> {
+  const dir = contractLedgerDir(clientId, watermark.contractId)
   await mkdir(dir, { recursive: true })
-  const path = watermarksPath(watermark.contractId)
+  const path = watermarksPath(clientId, watermark.contractId)
   const releaseLock = await acquireFileLock(`${path}.lock`)
   try {
-    const all = await readWatermarks(watermark.contractId)
+    const all = await readWatermarks(clientId, watermark.contractId)
     all[watermark.n8nWorkflowId] = watermark
     const tmpPath = `${path}.tmp`
     await writeFile(tmpPath, JSON.stringify(all, null, 2) + '\n', 'utf-8')
