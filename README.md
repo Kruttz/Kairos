@@ -4,7 +4,7 @@
 [![npm version](https://img.shields.io/npm/v/@kairos-sdk/core)](https://www.npmjs.com/package/@kairos-sdk/core)
 [![npm downloads](https://img.shields.io/npm/dw/@kairos-sdk/core)](https://www.npmjs.com/package/@kairos-sdk/core)
 
-**Kairos is a reliability engine for n8n workflows. It generates and deploys automations from a business description — and then keeps working after deploy: stress-testing them against hostile input before they ship, watching them for drift once they're live, and verifying that any change behaves like the version it replaces before that change goes out.**
+**Kairos is a reliability engine for n8n workflows, and a compiler for verifiable business promises. It generates and deploys automations from a business description — and then keeps working after deploy: stress-testing them against hostile input before they ship, watching them for drift once they're live, and verifying that any change behaves like the version it replaces before that change goes out. For processes with a real business commitment attached (an SLA, an owner, a terminal outcome), Kairos can also compile a `ProcessContract` into those same workflows and then check — from real n8n execution evidence, not from intent — whether the promise was actually kept.**
 
 ![Kairos SDK Demo](demo.gif)
 
@@ -73,6 +73,8 @@ console.log(pack.testChecklist)               // how to verify each workflow
 | Proposes and, gated + snapshot-backed + replay-verified, applies a restore for build-vs-live structural drift (`kairos repair propose`/`apply`, `kairos rollback`) | Full replacement for human review |
 | Exports your own confirmed patterns for the community, and optionally ingests others' — informational only, never influencing your local scoring (`kairos patterns share`/`ingest`/`sync`) | — |
 | Compiles a business promise (states, SLAs, owners, terminal outcomes) into workflows, tracks whether it was actually kept from real execution evidence, and opens/reports exceptions for a real miss (`kairos contract plan`/`compile`/`report`, `kairos watch --contracts`) | Autonomous business decisions — exception detection is automatic, but resolution is human-only, always, with no `--auto` mode at all |
+| Grades every promise instance from evidence: kept / at-risk / missed / unverifiable / in-progress (`kairos contract report`) — see [Promise Engine v0](#promise-engine-v0-processcontract--proofledger--exceptiondesk) | A guarantee that the promise was kept — a Promise Report is an evidence-graded evaluation against whatever n8n execution data exists, not a certification, and explicitly says so whenever evidence is incomplete |
+| Opens an ExceptionDesk item for time-based SLA/expiration drift (`kairos watch --contracts`) | An ExceptionDesk item for every miss — a fast terminal failure reached before any deadline passes (e.g. flagged "missing info" within minutes) is correctly counted in `contract report` but currently opens no ExceptionDesk item |
 | Documents assumptions, open questions, and test steps | — |
 | Syncs node types from your live instance | — |
 | Learns from prior builds and failures | — |
@@ -804,6 +806,23 @@ try {
 | `ApiError` | n8n returned a 4xx or 5xx (carries `.statusCode`) |
 | `GuardError` | Input validation failed (empty description) or `delete()` called without `{ confirm: true }` |
 | `DeployActivationError` | Workflow was deployed successfully but activation failed (carries `.workflowId` — recoverable, never auto-deleted) |
+
+---
+
+## Promise Engine v0 (ProcessContract → ProofLedger → ExceptionDesk)
+
+Everything above (build/chaos/watch/repair/replay) verifies that a *workflow* behaves correctly. The Promise Engine is a separate, later layer that verifies something different: whether a *business commitment* — "every contact form submission gets acknowledged within an hour," "every order ships within 2 business days" — was actually kept, using nothing but real n8n execution evidence.
+
+The loop: a `ProcessContract` (states, transitions, SLAs, owners, terminal outcomes — drafted from a plain-language description via `kairos contract plan`, or written by hand) deterministically compiles into a `PackPlan` (`kairos contract compile`) and, once built and registered (`kairos contract import` + a real `contract compile --build`), `kairos ledger poll` extracts evidence from n8n execution data into a local, append-only `ProofLedger`. SLA/expiration compliance runs inside `kairos watch --contracts`, which opens `ExceptionDesk` items for real drift. `kairos contract report` reads the ledger and exception data back into a client-facing Promise Report.
+
+**Read this before treating a Promise Report as authoritative:**
+
+- **Evidence-graded, not a guarantee.** Every promise instance is classified `kept` / `at_risk` / `missed` / `unverifiable` / `in_progress` from whatever n8n execution evidence actually exists. `unverifiable` is never counted as `kept`, and the report always states plainly when evidence is incomplete. This is an evaluation against available evidence, not a certification that the business process is sound.
+- **ExceptionDesk only reacts to time-based drift.** Items are opened/refreshed only inside `kairos watch --contracts`, only for SLA/expiration-rule findings that are actually drifting. A terminal outcome reached quickly — a submission flagged "missing info" within minutes, well before any deadline passes — is correctly classified in `contract report` but currently produces **no** ExceptionDesk item. Use `contract report` for the complete picture; don't rely on ExceptionDesk alone to catch every miss.
+- **n8n is the current execution substrate.** Evidence extraction, correlation, and polling all read from n8n's own execution data (`ledger poll` is read-only — GET only, never a write). There is no other data source today.
+- **Validated so far with real infrastructure and a synthetic end-to-end scenario, not yet with a real client's live production traffic.** The full contract → compile → workflows → ledger → SLA monitor → exceptions → report loop has been checkpointed against real n8n execution data and a hand-verified synthetic contact-form scenario (5 cases, a truth table written before running any code, zero mismatches). A first real shadow validation against a live business's actual event stream is still pending.
+
+Full CLI reference for `contract`/`ledger`/`exceptions` is in the [CLI](#cli) section below. Design rationale and every live-checkpoint finding: `docs/plans/process-contract-promise-engine-plan.md`.
 
 ---
 

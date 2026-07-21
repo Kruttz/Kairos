@@ -8,7 +8,7 @@
 3. Chaos testing (pre-deploy adversarial hardening)
 4. Replay/shadow testing (safe-change verification)
 
-Explicitly out of scope for this whole arc (see §14 for the full deferred list): intake interview, automation P&L, self-tuning flywheel, platform-agnostic (Zapier/Make) layer, and three product concepts named by Jordan at this arc's closeout — Process Contract, Proof Ledger, Exception Desk — that were never part of this arc's committed scope and have no design/detail in this repo yet.
+Explicitly out of scope for this whole arc (see §14 for the full deferred list): intake interview, automation P&L, self-tuning flywheel, platform-agnostic (Zapier/Make) layer, and three product concepts named by Jordan at this arc's closeout — Process Contract, Proof Ledger, Exception Desk — that were never part of this arc's committed scope. **Update, 2026-07-19/20:** these three concepts were designed and shipped as their own follow-up arc, Promise Engine v0, immediately after this arc's closeout — see `docs/plans/process-contract-promise-engine-plan.md` for the full record. Left un-edited below (this doc stays a historical record of what this specific arc actually shipped).
 
 **This plan doc is now a historical record of a completed arc**, not a forward-looking plan — every phase section below carries real commit-level detail and live-checkpoint findings rather than a pre-build sketch. Kept in place (not archived) since it remains the authoritative source for *why* each design decision was made, useful for any future extension (5b's ingestion in particular was deliberately kept small — see §10.4 — and is the most likely place a future session picks back up).
 

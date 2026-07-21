@@ -1,7 +1,7 @@
 {
   "name": "@kairos-sdk/core",
   "version": "0.12.0",
-  "description": "LLM-powered n8n workflow generation — use as an SDK or MCP server",
+  "description": "LLM-powered n8n workflow generation with a post-deploy reliability suite (drift detection, chaos testing, self-healing, replay) and a Promise Engine that compiles business commitments into workflows and verifies from real execution evidence whether they were kept — use as an SDK, CLI, or MCP server",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -58,7 +58,12 @@
     "kairos",
     "no-code",
     "mcp",
-    "model-context-protocol"
+    "model-context-protocol",
+    "reliability",
+    "drift-detection",
+    "chaos-testing",
+    "sla-monitoring",
+    "process-contract"
   ],
   "repository": {
     "type": "git",

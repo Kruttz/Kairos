@@ -21,7 +21,12 @@ import type { NodeRegistry } from './validation/registry.js'
 import { getCatalogCachePath, readCatalogCache, writeCatalogCache } from './utils/node-catalog-cache.js'
 
 const HELP = `
-Kairos SDK — LLM-powered n8n workflow generation
+Kairos SDK — n8n workflow generation, a post-deploy reliability suite (drift
+detection, chaos testing, self-healing, replay), and a Promise Engine that
+compiles business commitments (ProcessContract) into workflows and checks
+from real execution evidence whether they were actually kept. Promise
+Reports are evidence-graded evaluations (kept/missed/unverifiable/in_progress),
+never a guarantee. n8n is the current execution substrate throughout.
 
 Usage:
   kairos init                         First-time setup wizard
@@ -228,6 +233,14 @@ ExceptionDesk options (v0, Phase 4 -- see docs/plans/process-contract-promise-en
     [--reason <text>]            contract id, hashed correlation key (promiseInstanceId), the
                                   triggering SLA/expiration-rule/transition id, and a full
                                   status-change history (actor: 'auto' only for the opening event).
+                                  IMPORTANT: ExceptionDesk only opens/refreshes items for
+                                  time-based SLA/expiration drift findings. A terminal outcome
+                                  reached quickly (e.g. a submission flagged "missing info" within
+                                  minutes, well before any SLA/expiration deadline has passed)
+                                  is correctly classified in 'contract report' but produces NO
+                                  ExceptionDesk item -- this is a real system boundary, not a bug.
+                                  Do not rely on ExceptionDesk alone to catch every miss; use
+                                  'contract report' for the complete picture.
 
 Sessions options:
   --limit <n>     Number of recent sessions to show (default: 20)
