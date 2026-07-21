@@ -982,10 +982,19 @@ kairos contract import <file.json> --client-id acme --confirm-version-change  # 
 # produces no ledger entry (there is no instance to attach it to) -- surfaced explicitly as a
 # warning here and counted cumulatively for `contract report` to warn about too, rather than
 # silently vanishing (P0 measurement-integrity fix, 2026-07-20).
+#
+# ProofLedger storage is client-scoped (~/.kairos/promise-ledger/<client-id>/<contract-id>/) --
+# supplemental measurement-integrity audit, Finding 1, fixed 2026-07-20. --client-id is required
+# on every command below that reads or writes it; each refuses clearly (exit 1) rather than
+# falling back to any unscoped or ambiguous lookup. Before this fix, storage was keyed by
+# contractId alone, which had no cross-client uniqueness guarantee (contractId is just a slug of
+# the contract's own name) -- two clients naming a contract similarly could have silently shared
+# ledger/exception data. No auto-migration for any data written under the old unscoped path by a
+# pre-fix build -- it is left in place, untouched, simply no longer read by any command.
 kairos ledger poll <contract-id> --client-id acme          # requires N8N_BASE_URL/N8N_API_KEY
 kairos ledger poll <contract-id> --client-id acme --json   # full per-workflow poll results as JSON
-kairos ledger show <contract-id>                            # read back what's already recorded, purely local
-kairos ledger show <contract-id> --instance <hashed-key>    # filter to one promise instance
+kairos ledger show <contract-id> --client-id acme                          # read back what's already recorded, purely local
+kairos ledger show <contract-id> --client-id acme --instance <hashed-key>  # filter to one promise instance
 
 # ExceptionDesk v0 (Phase 4): human resolution ONLY -- ack/resolve are the ONLY way an item's
 # status ever changes. Items are opened/refreshed automatically, but only inside
@@ -993,12 +1002,13 @@ kairos ledger show <contract-id> --instance <hashed-key>    # filter to one prom
 # auto-resolution, no workflow edits, ever. Each item carries owner/nextAction (from the
 # contract's own OwnerAssignment/ExceptionRule, never invented), a reason, evidence, the
 # contract id, the hashed correlation key (promiseInstanceId), the triggering
-# SLA/expiration-rule id, and a full status-change history.
-kairos exceptions list <contract-id>
-kairos exceptions list <contract-id> --status open
-kairos exceptions show <contract-id> <item-id>
-kairos exceptions ack <contract-id> <item-id> --reason "Looking into it"
-kairos exceptions resolve <contract-id> <item-id> --reason "Called and scheduled."
+# SLA/expiration-rule id, and a full status-change history. --client-id is required on every
+# subcommand below (Finding 1 fix, 2026-07-20) -- same client-scoped storage as ProofLedger above.
+kairos exceptions list <contract-id> --client-id acme
+kairos exceptions list <contract-id> --client-id acme --status open
+kairos exceptions show <contract-id> <item-id> --client-id acme
+kairos exceptions ack <contract-id> <item-id> --client-id acme --reason "Looking into it"
+kairos exceptions resolve <contract-id> <item-id> --client-id acme --reason "Called and scheduled."
 
 # Promise Report v0 (Phase 5) -- the final piece of the Promise Engine's own loop: contract ->
 # compile -> workflows -> ledger -> SLA monitor -> exceptions -> report. A client-facing report
