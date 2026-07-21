@@ -38,6 +38,8 @@ Usage:
   kairos preflight <name> [--live] [--bundle-dir <dir>] [--client-id <slug>] [--json]
   kairos trace record <n8n-workflow-id>
   kairos contract plan "<business description>" --client-id <slug> [--json]
+  kairos contract intake start --client-id <slug> [--context <file>] [--resume <session-id>] [--json]
+  kairos contract intake status <session-id> --client-id <slug> [--json]
   kairos contract compile <file.json> [--build] [--dry-run] [--json]
   kairos contract validate <file.json> [--json]
   kairos contract import <file.json> --client-id <slug> [--confirm-version-change] [--json]
@@ -141,6 +143,28 @@ Contract options (ProcessContract v0, Phase 0+1+2+5 -- see docs/plans/process-co
                                   human review, even when it needs review -- never withheld. Exits
                                   2 (not 1) when the draft has a validation error or a blocking
                                   assumption, distinguishing "needs a human" from a hard failure.
+  contract intake start          Guided alternative to plan (roadmap item 4, see
+    --client-id <slug>           docs/plans/intake-scenario-harness-plan.md §4): 11 focused,
+    [--context <file>]           fixed-order questions (trigger, done states, branches,
+    [--resume <session-id>]      exceptions, owners, SLAs, evidence, handoffs, missing data,
+                                  duplicates, what to never automate), answered interactively --
+                                  no LLM call per question. Once answered, a single synthesis call
+                                  reuses contract plan's own prompt and validator/review gate
+                                  unchanged (the transcript IS the description). Up to 2 further
+                                  bounded rounds of targeted follow-up questions run automatically
+                                  if the draft still has blocking assumptions or validation
+                                  errors; never more than that -- the draft is always saved and
+                                  shown in full even if issues remain, exactly like plan's own
+                                  "never withheld" rule. Saves progress after every single answer,
+                                  so Ctrl-C is always safe -- resume with --resume <session-id>.
+                                  --context <file> includes a plain-text file verbatim as extra
+                                  synthesis context (capped ~8000 chars) -- no chunking, no
+                                  embeddings, no document-ingestion/RAG system, just literal
+                                  inclusion. Saved to the same
+                                  ~/.kairos/contracts/<client-id>/<id>.json path plan uses.
+  contract intake status <id>    Reports a session's progress (questions answered, pending
+    --client-id <slug>           follow-ups, synthesis rounds so far, current draft name/version)
+                                  without asking anything or calling the LLM -- purely local.
   contract compile <file.json>   Deterministically compile a valid ProcessContract into a
     [--build] [--dry-run]        PackPlan -- no LLM call in this step; traceability from each
                                   compiled workflow back to the exact contract element ids it came
@@ -1598,6 +1622,198 @@ async function handleContractPlan(positional: string[], flags: Record<string, st
   if (!readyToProceed) process.exit(2)
 }
 
+async function handleContractIntake(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const subcommand = positional[0]
+
+  if (subcommand === 'status') {
+    await handleContractIntakeStatus(positional, flags)
+    return
+  }
+
+  if (subcommand !== 'start') {
+    console.error('Usage: kairos contract intake start --client-id <slug> [--context <file>] [--resume <session-id>] [--json]')
+    console.error('       kairos contract intake status <session-id> --client-id <slug> [--json]')
+    process.exit(1)
+  }
+
+  await handleContractIntakeStart(positional, flags)
+}
+
+/** Formats one question for the terminal, including a plain 1-of-N progress indicator when it's
+ * a fixed-bank question -- never shown for a generated follow-up, since there's no fixed total
+ * for those (a bounded, but not pre-known, count). */
+function formatIntakeQuestionPrompt(question: import('./promise/intake-types.js').IntakeQuestion, allQuestions: import('./promise/intake-types.js').IntakeQuestion[]): string {
+  const idx = allQuestions.findIndex(q => q.id === question.id)
+  const label = idx >= 0 ? `[${idx + 1}/${allQuestions.length}] ` : '[follow-up] '
+  return `\n${label}${question.text}\n> `
+}
+
+async function handleContractIntakeStart(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const clientId = typeof flags['client-id'] === 'string' ? flags['client-id'] : undefined
+  if (!clientId) {
+    console.error('Usage: kairos contract intake start --client-id <slug> [--context <file>] [--resume <session-id>] [--json]')
+    console.error('')
+    console.error('A guided, multi-turn interview that produces a ProcessContract draft --')
+    console.error('11 focused questions (what starts it, what counts as done, branches,')
+    console.error('exceptions, owners, SLAs, evidence, handoffs, missing data, duplicates, what')
+    console.error('to never automate), answered interactively at the terminal, then one')
+    console.error('synthesis call (same deterministic validator + human-review gate as')
+    console.error('`contract plan`) drafts the contract -- with up to 2 further bounded rounds of')
+    console.error('targeted follow-up questions if the draft has blocking assumptions or')
+    console.error('validation errors. Saves progress after every answer -- safe to interrupt and')
+    console.error('resume with --resume <session-id>. --context <file> includes a plain-text')
+    console.error('file (e.g. an existing SOP snippet) verbatim as extra context for synthesis --')
+    console.error('no document ingestion, chunking, or retrieval, just literal inclusion.')
+    process.exit(1)
+  }
+
+  const anthropicApiKey = getEnvOrExit('ANTHROPIC_API_KEY')
+  const { createIntakeSession, runIntakeToCompletion, INTAKE_QUESTIONS } = await import('./promise/intake.js')
+  const { saveIntakeSession, loadIntakeSession } = await import('./promise/intake-store.js')
+  const { saveProcessContract } = await import('./promise/store.js')
+
+  const resumeId = typeof flags['resume'] === 'string' ? flags['resume'] : undefined
+  let session: import('./promise/intake-types.js').IntakeSession
+  if (resumeId) {
+    const existing = await loadIntakeSession(clientId, resumeId)
+    if (!existing) {
+      console.error(`No intake session ${resumeId} found for client ${clientId}.`)
+      process.exit(1)
+    }
+    if (existing.status !== 'in_progress') {
+      console.error(`Session ${resumeId} is already ${existing.status} -- nothing to resume. Run 'kairos contract intake status ${resumeId} --client-id ${clientId}' to see it.`)
+      process.exit(1)
+    }
+    session = existing
+    console.error(`Resuming session ${session.id} (${session.turns.length} answer(s) so far)...\n`)
+  } else {
+    session = createIntakeSession(clientId)
+    console.error(`Starting intake session ${session.id}. Ctrl-C at any time is safe -- resume later with --resume ${session.id}.\n`)
+  }
+
+  let contextText: string | undefined
+  const contextPath = typeof flags['context'] === 'string' ? flags['context'] : undefined
+  if (contextPath) {
+    const { readFile } = await import('node:fs/promises')
+    try {
+      contextText = await readFile(contextPath, 'utf-8')
+    } catch (err) {
+      console.error(`Could not read --context file ${contextPath}: ${err instanceof Error ? err.message : String(err)}`)
+      process.exit(1)
+    }
+  }
+
+  const readline = await import('node:readline')
+  const rl = readline.createInterface({ input: process.stdin, output: process.stderr })
+  const askQuestion = (question: import('./promise/intake-types.js').IntakeQuestion): Promise<string> =>
+    new Promise<string>(resolve => rl.question(formatIntakeQuestionPrompt(question, INTAKE_QUESTIONS), resolve))
+
+  const finalSession = await runIntakeToCompletion(
+    session,
+    { clientId, anthropicApiKey, ...(contextText !== undefined ? { contextText } : {}) },
+    {
+      askQuestion,
+      persistSession: async s => {
+        await saveIntakeSession(s)
+      },
+      onSynthesisStart: round => {
+        console.error(`\nDrafting from your answers${round > 1 ? ` (refinement round ${round})` : ''}... this typically takes 60-90 seconds.\n`)
+      },
+    },
+  )
+  rl.close()
+
+  if (!finalSession.draftContract) {
+    console.error('\nIntake ended with no draft contract -- this should not happen; please report it.')
+    process.exit(1)
+  }
+
+  const existingVersion = await checkContractVersionConflict(clientId, finalSession.draftContract)
+  const { path } = await saveProcessContract(finalSession.draftContract)
+
+  const readyToProceed = finalSession.status === 'ready_for_review'
+  const lastAttempt = finalSession.synthesisAttempts[finalSession.synthesisAttempts.length - 1]
+
+  if (flags['json'] === true) {
+    console.log(JSON.stringify({ session: finalSession, savedTo: path, ...(existingVersion !== null ? { overwroteVersion: existingVersion } : {}) }, null, 2))
+    if (!readyToProceed) process.exit(2)
+    return
+  }
+
+  const contract = finalSession.draftContract
+  console.log(`\n${contract.name}`)
+  console.log('─'.repeat(50))
+  console.log(contract.description)
+  console.log('')
+  console.log(`Entity: ${contract.entity.name}`)
+  console.log(`States: ${contract.states.length}   Transitions: ${contract.transitions.length}   SLAs: ${contract.sla.length}`)
+  console.log(`Synthesis rounds: ${finalSession.synthesisAttempts.length}`)
+
+  if (lastAttempt) {
+    const errors = lastAttempt.validationIssues.filter(i => i.severity === 'error')
+    const warnings = lastAttempt.validationIssues.filter(i => i.severity === 'warn')
+    console.log(`\nValidator: ${errors.length} error(s), ${warnings.length} warning(s)`)
+    for (const issue of errors) console.log(`  ✗ [error] [Rule ${issue.rule}] ${issue.message}${issue.path ? ` (${issue.path})` : ''}`)
+    for (const issue of warnings) console.log(`  ⚠ [warn]  [Rule ${issue.rule}] ${issue.message}${issue.path ? ` (${issue.path})` : ''}`)
+  }
+
+  const blocking = contract.assumptions.filter(a => a.type === 'blocking')
+  const needsConfirmation = contract.assumptions.filter(a => a.type === 'needs_confirmation')
+  if (blocking.length > 0) {
+    console.log(`\nBlocking Issues (resolve before this contract is usable)`)
+    for (const a of blocking) console.log(`  ✗ ${a.text}`)
+  }
+  if (needsConfirmation.length > 0) {
+    console.log(`\nNeeds Confirmation`)
+    for (const a of needsConfirmation) console.log(`  ? ${a.text}`)
+  }
+
+  console.log(`\nSaved to: ${path}`)
+  if (existingVersion !== null) {
+    console.log(`⚠ Overwrote an existing contract at this id (was v${existingVersion}, now v${contract.version}). Ledger evidence recorded against the old version's own ids may no longer match this contract's current shape -- review before trusting historical reports.`)
+  }
+  console.log(readyToProceed ? '\n✓ Ready for human review -- no blocking issues.' : '\n⚠ Reached the refinement-round limit still needing review -- the draft is saved in full; resolve the issues above by hand or re-run intake with --resume.')
+
+  if (!readyToProceed) process.exit(2)
+}
+
+async function handleContractIntakeStatus(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const sessionId = positional[1]
+  const clientId = typeof flags['client-id'] === 'string' ? flags['client-id'] : undefined
+  if (!sessionId || !clientId) {
+    console.error('Usage: kairos contract intake status <session-id> --client-id <slug> [--json]')
+    process.exit(1)
+  }
+
+  const { loadIntakeSession } = await import('./promise/intake-store.js')
+  const { INTAKE_QUESTIONS } = await import('./promise/intake.js')
+  const session = await loadIntakeSession(clientId, sessionId)
+  if (!session) {
+    console.error(`No intake session ${sessionId} found for client ${clientId}.`)
+    process.exit(1)
+  }
+
+  if (flags['json'] === true) {
+    console.log(JSON.stringify(session, null, 2))
+    return
+  }
+
+  console.log(`Session ${session.id} (${session.status})`)
+  console.log(`Client: ${session.clientId}`)
+  console.log(`Fixed questions answered: ${session.turns.filter(t => t.category !== 'follow_up').length}/${INTAKE_QUESTIONS.length}`)
+  console.log(`Follow-up questions answered: ${session.turns.filter(t => t.category === 'follow_up').length}`)
+  console.log(`Pending follow-up questions: ${session.pendingFollowUpQuestions.length}`)
+  console.log(`Synthesis rounds so far: ${session.synthesisAttempts.length}`)
+  if (session.draftContract) {
+    console.log(`Current draft: "${session.draftContract.name}" (v${session.draftContract.version})`)
+  }
+  console.log(`Created: ${session.createdAt}`)
+  console.log(`Updated: ${session.updatedAt}`)
+  if (session.status === 'in_progress') {
+    console.log(`\nResume with: kairos contract intake start --client-id ${clientId} --resume ${sessionId}`)
+  }
+}
+
 async function handleContractCompile(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const filePath = positional[1]
   if (!filePath) {
@@ -1994,8 +2210,15 @@ async function handleContract(positional: string[], flags: Record<string, string
     return
   }
 
+  if (subcommand === 'intake') {
+    await handleContractIntake(positional.slice(1), flags)
+    return
+  }
+
   if (subcommand !== 'validate') {
     console.error('Usage: kairos contract plan "<business description>" --client-id <slug> [--json]')
+    console.error('       kairos contract intake start --client-id <slug> [--context <file>] [--resume <session-id>]')
+    console.error('       kairos contract intake status <session-id> --client-id <slug> [--json]')
     console.error('       kairos contract compile <file.json> [--build] [--dry-run] [--json]')
     console.error('       kairos contract validate <file.json> [--json]')
     console.error('       kairos contract import <file.json> --client-id <slug> [--confirm-version-change] [--json]')
@@ -2003,6 +2226,14 @@ async function handleContract(positional: string[], flags: Record<string, string
     console.error('')
     console.error('plan drafts a ProcessContract from a plain-language description via an LLM,')
     console.error('then always runs it through the deterministic validator before returning it.')
+    console.error('')
+    console.error('intake is a guided, multi-turn alternative to plan -- 11 focused questions')
+    console.error('(what starts it, what counts as done, branches, exceptions, owners, SLAs,')
+    console.error('evidence, handoffs, missing data, duplicates, what to never automate) instead')
+    console.error('of one free-text paragraph. Answers are collected with no LLM call; a single')
+    console.error('synthesis call (same validator/review-gate as plan) then drafts the contract,')
+    console.error('with up to 2 bounded rounds of targeted follow-up questions if the draft has')
+    console.error('blocking assumptions or validation errors. Resumable via --resume.')
     console.error('')
     console.error('compile deterministically translates a valid ProcessContract into a PackPlan')
     console.error('(no LLM call in this step) and, with --build, feeds it into the same')
