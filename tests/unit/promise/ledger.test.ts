@@ -36,6 +36,18 @@ function evidenceNode(fields: Record<string, unknown>): [string, Record<string, 
   return [evidenceNodeName(TRANSITION_ID), fields]
 }
 
+/** Same real n8n shape as makeExecutionData(), but a node can carry MULTIPLE items in its one
+ * run's main[0] branch (P0 measurement-integrity fix, 2026-07-20, fix #2) -- the real shape a
+ * batch-style trigger (e.g. "read every new Sheet row in one execution") produces. */
+function makeMultiItemExecutionData(nodes: Array<[name: string, jsons: Record<string, unknown>[]]>): unknown {
+  const runData: Record<string, unknown> = {}
+  for (const [name, jsons] of nodes) {
+    runData[name] = [{ data: { main: [jsons.map((json, i) => ({ json, pairedItem: { item: i } }))] } }]
+  }
+  return { version: 1, resultData: { runData } }
+}
+
+
 describe('extractExecutionEvidence', () => {
   it('extracts a complete evidence match as observed, with a hashed promise instance id', () => {
     const contract = empireHomecare()
@@ -53,6 +65,7 @@ describe('extractExecutionEvidence', () => {
       outcome: 'extracted',
       transitionId: TRANSITION_ID,
       detail: 'The call log entry recording the attempt\'s result. -- callOutcome=no_answer, callTimestamp=2026-07-20T09:05:00.000Z',
+      attributedToInstance: true,
     }])
     expect(entries).toHaveLength(1)
     const entry = entries[0]!
@@ -66,6 +79,34 @@ describe('extractExecutionEvidence', () => {
     expect(entry.correlationKeyValueHash).toBe(hashCorrelationKeyValue('555-0100'))
     // The raw phone number never appears anywhere in the entry.
     expect(JSON.stringify(entry)).not.toContain('555-0100')
+  })
+
+  // P0 measurement-integrity fix (2026-07-20): eventTime must come from the real n8n execution's
+  // own startedAt, not from whenever extraction happens to run (observedAt) -- the whole point of
+  // this fix is that these two can legitimately differ (a poll that runs well after the fact).
+  it('populates eventTime from the real execution.startedAt, distinct from observedAt', () => {
+    const contract = empireHomecare()
+    const execution: RawExecutionDetail = {
+      id: 'exec-1',
+      startedAt: '2026-07-20T09:00:00.000Z',
+      data: makeExecutionData([triggerNode('555-0100'), evidenceNode({ callOutcome: 'no_answer', callTimestamp: '2026-07-20T09:05:00.000Z' })]),
+    }
+    const { entries } = extractExecutionEvidence(contract, execution, 'wf-processing')
+    expect(entries[0]!.eventTime).toBe('2026-07-20T09:00:00.000Z')
+    // observedAt is Kairos's own extraction-time clock -- a real timestamp, just not the fixed
+    // execution.startedAt above, proving the two fields are independently populated.
+    expect(entries[0]!.observedAt).not.toBe('')
+  })
+
+  it('falls back eventTime to observedAt when n8n reports a null startedAt', () => {
+    const contract = empireHomecare()
+    const execution: RawExecutionDetail = {
+      id: 'exec-1',
+      startedAt: null,
+      data: makeExecutionData([triggerNode('555-0100'), evidenceNode({ callOutcome: 'no_answer', callTimestamp: '2026-07-20T09:05:00.000Z' })]),
+    }
+    const { entries } = extractExecutionEvidence(contract, execution, 'wf-processing')
+    expect(entries[0]!.eventTime).toBe(entries[0]!.observedAt)
   })
 
   it('marks a partial match unverifiable and lists exactly which fields are missing, without dropping the entry', () => {
@@ -109,6 +150,7 @@ describe('extractExecutionEvidence', () => {
       startedAt: '2026-07-20T09:00:00.000Z',
       outcome: 'skipped',
       detail: 'No evidence-marker node found in this execution -- not relevant to any EvidenceRequirement in this contract.',
+      attributedToInstance: false,
     }])
     expect(entries).toEqual([])
   })
@@ -166,6 +208,7 @@ describe('extractExecutionEvidence', () => {
         startedAt: '2026-07-20T09:00:00.000Z',
         outcome: 'extracted',
         detail: 'New Referral instance began in state "received" (A new referral arrives via the intake form or Google Sheet row).',
+        attributedToInstance: true,
       }])
       expect(entries).toHaveLength(1)
       const entry = entries[0]!
@@ -189,7 +232,8 @@ describe('extractExecutionEvidence', () => {
         executionId: 'exec-intake-2',
         startedAt: '2026-07-20T09:00:00.000Z',
         outcome: 'unverifiable',
-        detail: 'Start-condition execution, but the correlation key (body.phone) could not be read from this execution\'s trigger data -- no ledger entry written without a known promise instance.',
+        detail: 'Start-condition execution (item 0.0.0), but the correlation key (body.phone) could not be read -- no ledger entry written without a known promise instance.',
+        attributedToInstance: false,
       }])
       expect(entries).toEqual([])
     })
@@ -216,6 +260,131 @@ describe('extractExecutionEvidence', () => {
       const { outcomes, entries } = extractExecutionEvidence(contract, execution, 'wf-processing') // no startCondition arg
       expect(outcomes[0]!.outcome).toBe('skipped')
       expect(entries).toEqual([])
+    })
+  })
+
+  // P0 measurement-integrity fix (2026-07-20, fix #2 -- first-item-only extraction). Real n8n
+  // shape confirmed in the Phase 3 spike (data.resultData.runData[node][run].data.main[branch]
+  // [item].json) always had room for more than one item/run -- only the read path assumed
+  // exactly one. A batch-style trigger (e.g. a Sheets-row-batch intake, common in Kairos-
+  // generated packs) or a looped evidence node both hit this.
+  describe('multi-item / multi-run cardinality', () => {
+    it('a batch trigger with multiple items creates one instance_start entry per resolvable item, not just the first', () => {
+      const contract = empireHomecare()
+      const execution: RawExecutionDetail = {
+        id: 'exec-batch-1',
+        startedAt: '2026-07-20T09:00:00.000Z',
+        data: makeMultiItemExecutionData([
+          ['Sheets: New Rows', [
+            { body: { phone: '555-0001' } },
+            { body: { phone: '555-0002' } },
+            { body: { phone: '555-0003' } },
+          ]],
+        ]),
+      }
+      const { outcomes, entries } = extractExecutionEvidence(contract, execution, 'wf-intake', START_CONDITION)
+      expect(entries).toHaveLength(3)
+      expect(entries.every(e => e.kind === 'instance_start')).toBe(true)
+      expect(new Set(entries.map(e => e.promiseInstanceId)).size).toBe(3) // three genuinely distinct instances
+      expect(entries.map(e => e.promiseInstanceId).sort()).toEqual(
+        ['555-0001', '555-0002', '555-0003'].map(hashCorrelationKeyValue).sort()
+      )
+      expect(outcomes.filter(o => o.outcome === 'extracted')).toHaveLength(3)
+      // Every entry gets its own unique id -- no collision between items in the same execution.
+      expect(new Set(entries.map(e => e.id)).size).toBe(3)
+    })
+
+    it('a batch trigger where some items have no readable correlation key: resolvable ones still extract, others are reported unattributed', () => {
+      const contract = empireHomecare()
+      const execution: RawExecutionDetail = {
+        id: 'exec-batch-2',
+        startedAt: '2026-07-20T09:00:00.000Z',
+        data: makeMultiItemExecutionData([
+          ['Sheets: New Rows', [
+            { body: { phone: '555-0001' } },
+            { body: { headers: {} } }, // no phone at all
+            { body: { phone: '555-0003' } },
+          ]],
+        ]),
+      }
+      const { outcomes, entries } = extractExecutionEvidence(contract, execution, 'wf-intake', START_CONDITION)
+      expect(entries).toHaveLength(2) // items 0 and 2 only
+      expect(entries.map(e => e.promiseInstanceId).sort()).toEqual(
+        ['555-0001', '555-0003'].map(hashCorrelationKeyValue).sort()
+      )
+      const unattributed = outcomes.filter(o => o.outcome === 'unverifiable' && !o.attributedToInstance)
+      expect(unattributed).toHaveLength(1) // item 1's missing-key outcome, surfaced not silently dropped
+      expect(unattributed[0]!.detail).toContain('item 0.0.1')
+    })
+
+    it('a batch evidence node with multiple items, each carrying its own correlation key, produces one entry per item, correctly attributed', () => {
+      const contract = empireHomecare()
+      const execution: RawExecutionDetail = {
+        id: 'exec-batch-3',
+        startedAt: '2026-07-20T09:00:00.000Z',
+        data: makeMultiItemExecutionData([
+          // A Set/Edit Fields node processing a loop of items -- each item still carries its own
+          // original body.phone alongside the newly-set evidence fields, the normal n8n
+          // pass-through-unset-fields behavior.
+          [evidenceNodeName(TRANSITION_ID), [
+            { body: { phone: '555-0001' }, callOutcome: 'no_answer', callTimestamp: 't1' },
+            { body: { phone: '555-0002' }, callOutcome: 'contacted', callTimestamp: 't2' },
+          ]],
+        ]),
+      }
+      const { outcomes, entries } = extractExecutionEvidence(contract, execution, 'wf-processing')
+      expect(entries).toHaveLength(2)
+      const byInstance = new Map(entries.map(e => [e.promiseInstanceId, e]))
+      expect(byInstance.get(hashCorrelationKeyValue('555-0001'))?.detail).toContain('callOutcome=no_answer')
+      expect(byInstance.get(hashCorrelationKeyValue('555-0002'))?.detail).toContain('callOutcome=contacted')
+      expect(outcomes.filter(o => o.outcome === 'extracted')).toHaveLength(2)
+    })
+
+    it('falls back to the single trigger item\'s correlation key when the evidence item itself has none AND there is exactly one trigger item (single-item backward-compatible path)', () => {
+      const contract = empireHomecare()
+      const execution: RawExecutionDetail = {
+        id: 'exec-fallback-1',
+        startedAt: '2026-07-20T09:00:00.000Z',
+        // Evidence node's own item has no body.phone at all -- must fall back to the one trigger item.
+        data: makeExecutionData([triggerNode('555-0100'), evidenceNode({ callOutcome: 'no_answer', callTimestamp: 't1' })]),
+      }
+      const { entries } = extractExecutionEvidence(contract, execution, 'wf-processing')
+      expect(entries).toHaveLength(1)
+      expect(entries[0]!.promiseInstanceId).toBe(hashCorrelationKeyValue('555-0100'))
+    })
+
+    it('does NOT fall back to a trigger item when there is more than one trigger item -- reports unattributed rather than guessing', () => {
+      const contract = empireHomecare()
+      const execution: RawExecutionDetail = {
+        id: 'exec-no-fallback-1',
+        startedAt: '2026-07-20T09:00:00.000Z',
+        data: makeMultiItemExecutionData([
+          ['Sheets: New Rows', [{ body: { phone: '555-0001' } }, { body: { phone: '555-0002' } }]],
+          [evidenceNodeName(TRANSITION_ID), [{ callOutcome: 'no_answer', callTimestamp: 't1' }]], // no body.phone of its own
+        ]),
+      }
+      const { outcomes, entries } = extractExecutionEvidence(contract, execution, 'wf-processing') // no startCondition -- isolates the evidence-attribution path
+      expect(entries).toHaveLength(0) // never guesses which of the two trigger items this belongs to
+      const unattributed = outcomes.find(o => o.transitionId === TRANSITION_ID)
+      expect(unattributed?.outcome).toBe('unverifiable')
+      expect(unattributed?.attributedToInstance).toBe(false)
+    })
+
+    it('a node that ran more than once (multiple runs, e.g. inside a loop) is fully captured, not just run 0', () => {
+      const contract = empireHomecare()
+      const runData: Record<string, unknown> = {
+        'Webhook: Intake': [{ data: { main: [[{ json: { body: { phone: '555-0100' } }, pairedItem: { item: 0 } }]] } }],
+        [evidenceNodeName(TRANSITION_ID)]: [
+          { data: { main: [[{ json: { body: { phone: '555-0100' }, callOutcome: 'no_answer', callTimestamp: 't1' }, pairedItem: { item: 0 } }]] } },
+          { data: { main: [[{ json: { body: { phone: '555-0100' }, callOutcome: 'contacted', callTimestamp: 't2' }, pairedItem: { item: 0 } }]] } },
+        ],
+      }
+      const execution: RawExecutionDetail = { id: 'exec-multirun-1', startedAt: '2026-07-20T09:00:00.000Z', data: { version: 1, resultData: { runData } } }
+      const { entries } = extractExecutionEvidence(contract, execution, 'wf-processing')
+      // Both runs captured -- run 0's "no_answer" and run 1's "contacted" both become real entries.
+      expect(entries).toHaveLength(2)
+      expect(entries.map(e => e.detail).some(d => d.includes('no_answer'))).toBe(true)
+      expect(entries.map(e => e.detail).some(d => d.includes('contacted'))).toBe(true)
     })
   })
 })
@@ -257,6 +426,7 @@ describe('pollWorkflowEvidence', () => {
       lastProcessedExecutionId: 'e2',
       lastProcessedStartedAt: '2026-07-20T10:00:00.000Z',
       updatedAt: result.newWatermark.updatedAt,
+      cumulativeUnattributedCount: 0,
     })
   })
 
@@ -343,6 +513,55 @@ describe('pollWorkflowEvidence', () => {
     const result = await pollWorkflowEvidence(contract, 'wf-1', client, null)
     expect(result.outcomes.map(o => o.outcome)).toEqual(['extracted', 'unverifiable', 'skipped'])
     expect(result.entries).toHaveLength(2) // skipped never produces an entry
+  })
+
+  // P0 measurement-integrity fix (2026-07-20, fix #11 -- the invisible-failure blind spot): an
+  // execution with evidence expected but no readable correlation key produces zero ledger
+  // entries -- these must not silently vanish with no trace at all.
+  it('counts an unreadable-correlation-key outcome as unattributed, distinct from a real unverifiable entry', async () => {
+    const contract = empireHomecare()
+    const client = mockClient([
+      // Evidence marker found, but the trigger node has no body.phone at all -- no correlation
+      // key, no ledger entry, would otherwise silently vanish from every downstream count.
+      { id: 'e1', startedAt: '2026-07-20T09:00:00.000Z', data: makeExecutionData([['Webhook: Intake', { headers: {} }], evidenceNode({ callOutcome: 'no_answer', callTimestamp: 't1' })]) },
+      // A real, attributed unverifiable entry (missing field, but a real instance id) -- must
+      // NOT count toward unattributedCount.
+      { id: 'e2', startedAt: '2026-07-20T10:00:00.000Z', data: makeExecutionData([triggerNode('555-0002'), evidenceNode({ callOutcome: 'no_answer' })]) },
+    ])
+
+    const result = await pollWorkflowEvidence(contract, 'wf-1', client, null)
+    expect(result.unattributedCount).toBe(1)
+    expect(result.entries).toHaveLength(1) // only e2's real (attributed) unverifiable entry
+    expect(result.newWatermark.cumulativeUnattributedCount).toBe(1)
+  })
+
+  it('accumulates cumulativeUnattributedCount across successive polls rather than resetting each time', async () => {
+    const contract = empireHomecare()
+    const firstClient = mockClient([
+      { id: 'e1', startedAt: '2026-07-20T09:00:00.000Z', data: makeExecutionData([['Webhook: Intake', { headers: {} }], evidenceNode({ callOutcome: 'no_answer', callTimestamp: 't1' })]) },
+    ])
+    const firstResult = await pollWorkflowEvidence(contract, 'wf-1', firstClient, null)
+    expect(firstResult.newWatermark.cumulativeUnattributedCount).toBe(1)
+
+    const secondClient = mockClient([
+      { id: 'e1', startedAt: '2026-07-20T09:00:00.000Z', data: makeExecutionData([['Webhook: Intake', { headers: {} }], evidenceNode({ callOutcome: 'no_answer', callTimestamp: 't1' })]) },
+      { id: 'e2', startedAt: '2026-07-20T10:00:00.000Z', data: makeExecutionData([['Webhook: Intake', { headers: {} }], evidenceNode({ callOutcome: 'no_answer', callTimestamp: 't2' })]) },
+    ])
+    const secondResult = await pollWorkflowEvidence(contract, 'wf-1', secondClient, firstResult.newWatermark)
+    expect(secondResult.unattributedCount).toBe(1) // only e2 is new this poll
+    expect(secondResult.newWatermark.cumulativeUnattributedCount).toBe(2) // 1 (carried forward) + 1 (this poll)
+  })
+
+  it('unattributedCount is 0 when nothing is unattributed, and a legacy watermark with no field defaults to 0', async () => {
+    const contract = empireHomecare()
+    const client = mockClient([
+      { id: 'e1', startedAt: '2026-07-20T09:00:00.000Z', data: makeExecutionData([triggerNode('555-0001'), evidenceNode({ callOutcome: 'no_answer', callTimestamp: 't1' })]) },
+    ])
+    // A watermark shaped exactly like one written before this fix -- no cumulativeUnattributedCount field at all.
+    const legacyWatermark = { contractId: contract.id, n8nWorkflowId: 'wf-1', lastProcessedExecutionId: 'e0', lastProcessedStartedAt: '2026-07-20T08:00:00.000Z', updatedAt: 'x' }
+    const result = await pollWorkflowEvidence(contract, 'wf-1', client, legacyWatermark)
+    expect(result.unattributedCount).toBe(0)
+    expect(result.newWatermark.cumulativeUnattributedCount).toBe(0)
   })
 
   it('records instance_start entries when sourceElements names a StartCondition', async () => {

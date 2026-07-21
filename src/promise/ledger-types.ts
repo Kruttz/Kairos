@@ -52,8 +52,20 @@ export interface ProofLedgerEntry {
    * only for kind: 'instance_start'. */
   initialState?: string
 
-  /** When Kairos itself recorded this entry -- its own clock, always present. */
+  /** When Kairos itself recorded this entry -- its own clock, always present. This is poll time,
+   * not event time: the real-world event this entry describes may have happened well before
+   * Kairos got around to polling for it. Kept purely as "when Kairos discovered it" (P0
+   * measurement-integrity fix, 2026-07-20) -- SLA/report elapsed-time computations should prefer
+   * `eventTime` below, never this field, when both are available. */
   observedAt: string
+  /** The real n8n execution's own `startedAt` timestamp (P0 measurement-integrity fix,
+   * 2026-07-20) -- when the underlying business event actually happened, not when Kairos noticed
+   * it. Falls back to `observedAt` at extraction time only when n8n itself reports no
+   * `startedAt` (rare, but the field is nullable in n8n's own API). Optional, not required, so
+   * ledger entries written before this fix (no `eventTime` field at all on disk) still parse and
+   * degrade gracefully -- callers should read `entry.eventTime ?? entry.observedAt`, never assume
+   * this field is always present. */
+  eventTime?: string
 
   /** Which compiled n8n workflow this entry came from. */
   sourceWorkflowId: string
@@ -85,6 +97,12 @@ export interface ContractPollWatermark {
   lastProcessedExecutionId: string
   lastProcessedStartedAt: string
   updatedAt: string
+  /** Running total of `PollContractResult.unattributedCount` across every poll ever run for this
+   * (contractId, n8nWorkflowId) pair (P0 measurement-integrity fix, 2026-07-20, fix #11).
+   * Optional so watermarks written before this fix (no field at all on disk) still parse --
+   * callers should read `watermark.cumulativeUnattributedCount ?? 0`. Lets `kairos contract
+   * report` warn about invisible-failure executions without re-polling n8n. */
+  cumulativeUnattributedCount?: number
 }
 
 /** Per-execution outcome, returned to the caller (CLI/report) but never itself written to the
@@ -100,6 +118,16 @@ export interface PollExecutionOutcome {
    * matched any EvidenceRequirement in this execution at all). */
   transitionId?: string
   detail: string
+  /** True iff this outcome produced a real ProofLedgerEntry with a real promiseInstanceId (P0
+   * measurement-integrity fix, 2026-07-20, fix #11 -- the "invisible-failure blind spot").
+   * 'unverifiable' outcomes come from two structurally different causes that this field
+   * distinguishes: a real entry with some required fields missing (attributedToInstance: true --
+   * counted in every downstream compliance/report computation, same as before this fix) vs. no
+   * correlation key readable at all (attributedToInstance: false -- no instance to attach it to,
+   * so no ledger entry exists, and this execution would otherwise silently vanish from both the
+   * numerator and denominator of promise-report.md's counts with zero trace). Always false for
+   * 'skipped' -- nothing was expected from that execution in the first place. */
+  attributedToInstance: boolean
 }
 
 export interface PollContractResult {
@@ -115,6 +143,13 @@ export interface PollContractResult {
    * nothing looked wrong; this is an honest "the page was fully new" signal, not a confidence
    * claim. Always false on a contract's first-ever poll (nothing to have missed yet). */
   possibleGap: boolean
+  /** Count of this poll's own outcomes where evidence was expected (outcome !== 'skipped') but
+   * could not be attributed to any promise instance (P0 measurement-integrity fix, 2026-07-20,
+   * fix #11) -- executions that would otherwise silently vanish from promise-report.md's counts
+   * with no warning. `kairos ledger poll` surfaces this directly; the cumulative total across
+   * every poll is carried on `ContractPollWatermark.cumulativeUnattributedCount` below so
+   * `kairos contract report` can warn about it too, without needing to re-poll. */
+  unattributedCount: number
 }
 
 /** The two n8n API methods ledger.ts actually calls, typed narrowly rather than as the full

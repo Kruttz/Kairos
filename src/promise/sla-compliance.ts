@@ -22,7 +22,17 @@ import type { ProofLedgerEntry } from './ledger-types.js'
  * human just never made the call), and a workflow can drift with every promise still on track.
  */
 
-export type PromiseComplianceStatus = 'insufficient_data' | 'not_applicable' | 'healthy' | 'drifting'
+/** Five states, not the reliability suite's original four -- 'unverifiable' is a real, deliberate
+ * addition (P0 measurement-integrity fix, 2026-07-20), not part of the original D1-D9 model this
+ * module otherwise mirrors exactly. It exists for exactly one reason: `PauseRule` is a real
+ * ProcessContract schema field, but this module's own elapsed-time arithmetic
+ * (elapsedInDurationUnits) has no awareness of pauses at all -- there is no ledger-entry kind or
+ * evidence convention representing "the clock was paused" anywhere in v0. Computing a normal
+ * healthy/drifting verdict while silently ignoring a declared pause rule would be exactly the
+ * "confidently report the wrong business outcome" failure this whole fix pass exists to close --
+ * a customer who explicitly asked for a delayed callback would show up as a false SLA breach.
+ * `applyPauseRuleCaveat()` below is the single place this status is ever produced. */
+export type PromiseComplianceStatus = 'insufficient_data' | 'not_applicable' | 'healthy' | 'drifting' | 'unverifiable'
 
 export interface PromiseComplianceFinding {
   contractId: string
@@ -43,8 +53,17 @@ export interface PromiseComplianceFinding {
 }
 
 export interface StateReachSignal {
-  observedAt: string
+  /** The real-world event time this signal is anchored to (P0 measurement-integrity fix,
+   * 2026-07-20): `entry.eventTime` when the entry has one, falling back to `entry.observedAt`
+   * (poll time) only for entries written before this fix existed. Named `eventTime`, not
+   * `observedAt`, specifically so a reader of sla-compliance.ts's own elapsed-time math never
+   * mistakes this for "when Kairos found out" -- it is deliberately the opposite of that. */
+  eventTime: string
   confidence: 'specific' | 'generic'
+}
+
+function entryEventTime(e: ProofLedgerEntry): string {
+  return e.eventTime ?? e.observedAt
 }
 
 /** Every real-world signal this instance's ledger entries give for "this instance was in state
@@ -60,15 +79,15 @@ export function stateReachSignals(contract: ProcessContract, entries: ProofLedge
   const signals: StateReachSignal[] = []
   for (const e of entries) {
     if (e.kind === 'instance_start' && e.initialState === stateId) {
-      signals.push({ observedAt: e.observedAt, confidence: 'specific' })
+      signals.push({ eventTime: entryEventTime(e), confidence: 'specific' })
     } else if (e.kind === 'evidence' && e.transitionId) {
       const t = contract.transitions.find(x => x.id === e.transitionId)
       if (!t) continue
-      if (t.toState === stateId) signals.push({ observedAt: e.observedAt, confidence: 'specific' })
-      else if (t.fromState === stateId) signals.push({ observedAt: e.observedAt, confidence: 'generic' })
+      if (t.toState === stateId) signals.push({ eventTime: entryEventTime(e), confidence: 'specific' })
+      else if (t.fromState === stateId) signals.push({ eventTime: entryEventTime(e), confidence: 'generic' })
     }
   }
-  return signals.sort((a, b) => a.observedAt.localeCompare(b.observedAt))
+  return signals.sort((a, b) => a.eventTime.localeCompare(b.eventTime))
 }
 
 /** Signals for "this instance experienced event `eventId`" -- evidence entries whose transition
@@ -80,9 +99,9 @@ function eventSignals(contract: ProcessContract, entries: ProofLedgerEntry[], ev
   for (const e of entries) {
     if (e.kind !== 'evidence' || !e.transitionId) continue
     const t = contract.transitions.find(x => x.id === e.transitionId)
-    if (t?.event === eventId) signals.push({ observedAt: e.observedAt, confidence: 'specific' })
+    if (t?.event === eventId) signals.push({ eventTime: entryEventTime(e), confidence: 'specific' })
   }
-  return signals.sort((a, b) => a.observedAt.localeCompare(b.observedAt))
+  return signals.sort((a, b) => a.eventTime.localeCompare(b.eventTime))
 }
 
 function measuredFromSignals(contract: ProcessContract, entries: ProofLedgerEntry[], measuredFrom: SlaSpec['measuredFrom']): StateReachSignal[] {
@@ -115,7 +134,7 @@ function checkSlaForInstance(
   const endSignals = stateReachSignals(contract, instanceEntries, sla.expectedBy.state)
   if (endSignals.length > 0) {
     const clockEnd = endSignals[0]!
-    const elapsed = elapsedInDurationUnits(clockStart.observedAt, clockEnd.observedAt, sla.duration.unit, contract.businessCalendar)
+    const elapsed = elapsedInDurationUnits(clockStart.eventTime, clockEnd.eventTime, sla.duration.unit, contract.businessCalendar)
     const met = elapsed <= sla.duration.amount
     const confidence: 'specific' | 'generic' = clockStart.confidence === 'generic' || clockEnd.confidence === 'generic' ? 'generic' : 'specific'
     return {
@@ -124,18 +143,18 @@ function checkSlaForInstance(
       summary: met
         ? `SLA "${sla.id}" met: reached "${sla.expectedBy.state}" ${elapsed.toFixed(2)} ${sla.duration.unit} after clock start (limit ${durationLabel}).`
         : `SLA "${sla.id}" missed: reached "${sla.expectedBy.state}" ${elapsed.toFixed(2)} ${sla.duration.unit} after clock start -- over the ${durationLabel} limit.`,
-      evidence: { measuredFromAt: clockStart.observedAt, expectedByAt: clockEnd.observedAt, elapsed, limit: sla.duration.amount, unit: sla.duration.unit },
+      evidence: { measuredFromAt: clockStart.eventTime, expectedByAt: clockEnd.eventTime, elapsed, limit: sla.duration.amount, unit: sla.duration.unit },
       ...(met ? {} : { evidenceQuality: confidence }),
     }
   }
 
-  const elapsedSoFar = elapsedInDurationUnits(clockStart.observedAt, now.toISOString(), sla.duration.unit, contract.businessCalendar)
+  const elapsedSoFar = elapsedInDurationUnits(clockStart.eventTime, now.toISOString(), sla.duration.unit, contract.businessCalendar)
   if (elapsedSoFar <= sla.duration.amount) {
     return {
       ...base,
       status: 'insufficient_data',
       summary: `SLA "${sla.id}" still within its ${durationLabel} window (${elapsedSoFar.toFixed(2)} ${sla.duration.unit} elapsed so far) -- no evidence "${sla.expectedBy.state}" was reached yet, and none is expected yet either.`,
-      evidence: { measuredFromAt: clockStart.observedAt, elapsedSoFar },
+      evidence: { measuredFromAt: clockStart.eventTime, elapsedSoFar },
     }
   }
 
@@ -145,7 +164,7 @@ function checkSlaForInstance(
     ...base,
     status: 'drifting',
     summary: `SLA "${sla.id}" missed: ${elapsedSoFar.toFixed(2)} ${sla.duration.unit} have passed since clock start with no evidence "${sla.expectedBy.state}" was ever reached (limit ${durationLabel}).`,
-    evidence: { measuredFromAt: clockStart.observedAt, elapsedSoFar, limit: sla.duration.amount, unit: sla.duration.unit },
+    evidence: { measuredFromAt: clockStart.eventTime, elapsedSoFar, limit: sla.duration.amount, unit: sla.duration.unit },
     evidenceQuality: 'specific',
   }
 }
@@ -188,7 +207,7 @@ function checkRecurringSlaForInstance(
     }
     return false
   })
-  const latest = stateEntries.map(e => e.observedAt).sort().at(-1) ?? enterSignals[0]!.observedAt
+  const latest = stateEntries.map(entryEventTime).sort().at(-1) ?? enterSignals[0]!.eventTime
 
   const sinceLatest = elapsedInDurationUnits(latest, now.toISOString(), sla.duration.unit, contract.businessCalendar)
   if (sinceLatest <= sla.duration.amount) {
@@ -227,14 +246,14 @@ function checkExpirationRuleForInstance(
     return { ...base, status: 'not_applicable', summary: `Instance already left state "${rule.state}" via a real transition -- expiration rule "${rule.id}" no longer applies.`, evidence: {} }
   }
 
-  const elapsed = elapsedInDurationUnits(enteredAt.observedAt, now.toISOString(), rule.after.unit, contract.businessCalendar)
+  const elapsed = elapsedInDurationUnits(enteredAt.eventTime, now.toISOString(), rule.after.unit, contract.businessCalendar)
   const limitLabel = `${rule.after.amount} ${rule.after.unit}`
   if (elapsed <= rule.after.amount) {
     return {
       ...base,
       status: 'insufficient_data',
       summary: `Instance has been in "${rule.state}" for ${elapsed.toFixed(2)} ${rule.after.unit} -- within the ${limitLabel} expiration window.`,
-      evidence: { enteredAt: enteredAt.observedAt, elapsed },
+      evidence: { enteredAt: enteredAt.eventTime, elapsed },
     }
   }
 
@@ -242,8 +261,32 @@ function checkExpirationRuleForInstance(
     ...base,
     status: 'drifting',
     summary: `Instance appears stuck in "${rule.state}": ${elapsed.toFixed(2)} ${rule.after.unit} elapsed, past the ${limitLabel} expiration window, with no evidence it moved to "${rule.expiresTo}".`,
-    evidence: { enteredAt: enteredAt.observedAt, elapsed, expiresTo: rule.expiresTo },
+    evidence: { enteredAt: enteredAt.eventTime, elapsed, expiresTo: rule.expiresTo },
     evidenceQuality: enteredAt.confidence,
+  }
+}
+
+/** P0 measurement-integrity fix (2026-07-20). `PauseRule` is real contract schema, but nothing in
+ * this module's elapsed-time arithmetic accounts for it -- see the `PromiseComplianceStatus` doc
+ * comment above for why. Intercepts ONLY 'healthy' and 'drifting' -- the two verdicts that assert
+ * a completed, confident time-based judgment -- and downgrades them to 'unverifiable'.
+ * 'insufficient_data'/'not_applicable' pass through unchanged: they don't assert a time-based
+ * claim a missed pause could invalidate, so there's nothing to caveat. Applied uniformly to every
+ * SLA and expiration-rule finding on a contract that declares any pauseRules -- not selectively,
+ * since v0 has no way to know which specific findings a specific pause would have affected. */
+function applyPauseRuleCaveat(contract: ProcessContract, finding: PromiseComplianceFinding): PromiseComplianceFinding {
+  if (!contract.pauseRules?.length) return finding
+  if (finding.status !== 'healthy' && finding.status !== 'drifting') return finding
+
+  const label = finding.kind === 'sla' ? `SLA "${finding.slaId}"` : `Expiration rule "${finding.expirationRuleId}"`
+  // exactOptionalPropertyTypes: destructure evidenceQuality out rather than spreading it and
+  // reassigning `undefined` -- this finding's own evidenceQuality (a 'drifting' finding may carry
+  // one) doesn't apply to a caveat that isn't about evidence confidence at all.
+  const { evidenceQuality: _droppedEvidenceQuality, ...rest } = finding
+  return {
+    ...rest,
+    status: 'unverifiable',
+    summary: `${label}: cannot confidently determine compliance -- this contract declares pause rule(s) (e.g. "${contract.pauseRules[0]!.condition}"), but Kairos's SLA compliance checking does not yet account for paused time in v0. The underlying elapsed-time computation (${finding.summary}) may be wrong if the clock should have been paused for part of this window.`,
   }
 }
 
@@ -261,13 +304,13 @@ export function checkSlaCompliance(contract: ProcessContract, entries: ProofLedg
     const instanceEntries = contractEntries.filter(e => e.promiseInstanceId === instanceId)
     for (const sla of contract.sla) {
       findings.push(
-        sla.recurring
+        applyPauseRuleCaveat(contract, sla.recurring
           ? checkRecurringSlaForInstance(contract, sla as SlaSpec & { recurring: NonNullable<SlaSpec['recurring']> }, instanceEntries, instanceId, now)
-          : checkSlaForInstance(contract, sla, instanceEntries, instanceId, now)
+          : checkSlaForInstance(contract, sla, instanceEntries, instanceId, now))
       )
     }
     for (const rule of contract.expirationRules ?? []) {
-      findings.push(checkExpirationRuleForInstance(contract, rule, instanceEntries, instanceId, now))
+      findings.push(applyPauseRuleCaveat(contract, checkExpirationRuleForInstance(contract, rule, instanceEntries, instanceId, now)))
     }
   }
   return findings
@@ -277,10 +320,23 @@ export interface PromiseComplianceReport {
   contractId: string
   contractName: string
   instanceCount: number
-  /** 'DRIFTING' iff at least one finding has status 'drifting' -- mirrors DriftCheckReport's own
-   * verdict rule exactly (insufficient_data/not_applicable never contribute). */
-  verdict: 'HEALTHY' | 'DRIFTING'
+  /** 'DRIFTING' iff at least one finding has status 'drifting'; 'UNVERIFIABLE' (P0
+   * measurement-integrity fix, 2026-07-20) iff none are 'drifting' but at least one is
+   * 'unverifiable' (e.g. a pause-rule-affected finding, see applyPauseRuleCaveat) -- reporting
+   * 'HEALTHY' when a real determination couldn't be made would be its own false claim.
+   * 'HEALTHY' only when neither applies. */
+  verdict: 'HEALTHY' | 'DRIFTING' | 'UNVERIFIABLE'
   findings: PromiseComplianceFinding[]
+}
+
+/** Exported so cli.ts's `watch --contracts` tick reuses this exact rule rather than a second,
+ * driftable inline copy of it -- found necessary during the P0 measurement-integrity fix pass
+ * (2026-07-20) when cli.ts turned out to have its own separate `drifting ? 'DRIFTING' :
+ * 'HEALTHY'` computation that predated (and needed the same fix as) this one. */
+export function complianceVerdict(findings: PromiseComplianceFinding[]): PromiseComplianceReport['verdict'] {
+  if (findings.some(f => f.status === 'drifting')) return 'DRIFTING'
+  if (findings.some(f => f.status === 'unverifiable')) return 'UNVERIFIABLE'
+  return 'HEALTHY'
 }
 
 export function buildPromiseComplianceReport(contract: ProcessContract, entries: ProofLedgerEntry[], now: Date = new Date()): PromiseComplianceReport {
@@ -290,7 +346,7 @@ export function buildPromiseComplianceReport(contract: ProcessContract, entries:
     contractId: contract.id,
     contractName: contract.name,
     instanceCount: instanceIds.size,
-    verdict: findings.some(f => f.status === 'drifting') ? 'DRIFTING' : 'HEALTHY',
+    verdict: complianceVerdict(findings),
     findings,
   }
 }

@@ -81,6 +81,24 @@ describe('upsertExceptionDeskItems / loadExceptionDeskItems', () => {
     const stats = await stat(path)
     expect(stats.mode & 0o777).toBe(0o600)
   })
+
+  // P0 measurement-integrity fix (2026-07-20): the exact scenario this fix targets -- a human
+  // resolving one item (`kairos exceptions resolve`) at the same moment a watch tick
+  // (`kairos watch --contracts`) refreshes/opens a different item for the same contract. Before
+  // the lock, whichever write landed second would silently win in full, discarding the other's
+  // update -- a human's resolution could be reverted with no error and no trace.
+  it('a concurrent human resolve and watch-tick refresh for different items both survive', async () => {
+    await upsertExceptionDeskItems('c1', [makeItem({ id: 'item-1', status: 'open' })])
+
+    const humanResolve = upsertExceptionDeskItems('c1', [makeItem({ id: 'item-1', status: 'resolved' })])
+    const watchTickOpensNew = upsertExceptionDeskItems('c1', [makeItem({ id: 'item-2', promiseInstanceId: 'instance-2', status: 'open' })])
+    await Promise.all([humanResolve, watchTickOpensNew])
+
+    const items = await loadExceptionDeskItems('c1')
+    const byId = new Map(items.map(i => [i.id, i]))
+    expect(byId.get('item-1')?.status).toBe('resolved')
+    expect(byId.get('item-2')?.status).toBe('open')
+  })
 })
 
 describe('saveExceptionDeskItem', () => {

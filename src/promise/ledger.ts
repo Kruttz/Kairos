@@ -35,35 +35,64 @@ function readPath(obj: unknown, path: string): unknown {
   return cur
 }
 
-/** n8n's real execution data shape (confirmed against a live production execution, Phase 3
- * spike Finding 1): data.resultData.runData[nodeName][runIndex].data.main[branch][item].json. */
-function firstItemJson(runData: Record<string, unknown[]>, nodeName: string): Record<string, unknown> | undefined {
+/** One item found on a node, plus exactly where it came from -- run/branch/item index --
+ * (P0 measurement-integrity fix, 2026-07-20, fix #2) so callers can build a stable, unique
+ * per-item id rather than colliding on `${executionId}:${transitionId}` the way a first-item-only
+ * read never had to worry about. */
+interface RunDataItem {
+  json: Record<string, unknown>
+  runIndex: number
+  branchIndex: number
+  itemIndex: number
+}
+
+function itemPosition(item: RunDataItem): string {
+  return `${item.runIndex}.${item.branchIndex}.${item.itemIndex}`
+}
+
+/**
+ * ALL items found on a given node across EVERY run and EVERY output branch in this execution's
+ * runData -- not just the first run's first branch's first item (P0 measurement-integrity fix,
+ * 2026-07-20, fix #2). n8n's real execution data shape (confirmed against a live production
+ * execution, Phase 3 spike Finding 1):
+ * data.resultData.runData[nodeName][runIndex].data.main[branch][item].json.
+ *
+ * A batch-style trigger (e.g. "read every new Sheet row in one execution") or a node that runs
+ * more than once inside a loop both produce more than one item/run here -- the original
+ * single-item read (`runData[nodeName][0].data.main[0][0].json`) silently dropped every item but
+ * the very first, with zero signal anything was lost.
+ */
+function allItemsJson(runData: Record<string, unknown[]>, nodeName: string): RunDataItem[] {
   const runs = runData[nodeName]
-  if (!Array.isArray(runs) || runs.length === 0) return undefined
-  const run = runs[0] as Record<string, unknown> | undefined
-  const data = run?.['data'] as Record<string, unknown> | undefined
-  const main = data?.['main'] as unknown[][] | undefined
-  const firstBranch = main?.[0]
-  const firstItem = firstBranch?.[0] as Record<string, unknown> | undefined
-  return firstItem?.['json'] as Record<string, unknown> | undefined
+  if (!Array.isArray(runs)) return []
+  const results: RunDataItem[] = []
+  for (let runIndex = 0; runIndex < runs.length; runIndex++) {
+    const run = runs[runIndex] as Record<string, unknown> | undefined
+    const data = run?.['data'] as Record<string, unknown> | undefined
+    const main = data?.['main'] as unknown[][] | undefined
+    if (!Array.isArray(main)) continue
+    for (let branchIndex = 0; branchIndex < main.length; branchIndex++) {
+      const branch = main[branchIndex]
+      if (!Array.isArray(branch)) continue
+      for (let itemIndex = 0; itemIndex < branch.length; itemIndex++) {
+        const rawItem = branch[itemIndex] as Record<string, unknown> | undefined
+        const json = rawItem?.['json'] as Record<string, unknown> | undefined
+        if (json) results.push({ json, runIndex, branchIndex, itemIndex })
+      }
+    }
+  }
+  return results
 }
 
 export function hashCorrelationKeyValue(value: string): string {
   return createHash('sha256').update(value).digest('hex')
 }
 
-/** The trigger node is always the first key in runData -- confirmed against real execution data
- * (Phase 3 spike Finding 1: a schedule-triggered execution's own trigger node was literally the
- * first entry) rather than needing a second naming convention just for correlation-key capture.
- * `correlationKey.fieldPath` is documented (types.ts) as relative to "the start-condition's own
- * payload shape" -- i.e. the trigger node's own output. */
-function extractCorrelationKeyValue(contract: ProcessContract, runData: Record<string, unknown[]>): string | undefined {
-  const nodeNames = Object.keys(runData)
-  const triggerNodeName = nodeNames[0]
-  if (!triggerNodeName) return undefined
-  const triggerJson = firstItemJson(runData, triggerNodeName)
-  if (!triggerJson) return undefined
-  const value = readPath(triggerJson, contract.correlationKey.fieldPath)
+/** `correlationKey.fieldPath` is documented (types.ts) as relative to "the start-condition's own
+ * payload shape" -- i.e. a trigger item's own output. Pure, per-item (P0 measurement-integrity
+ * fix, 2026-07-20, fix #2) -- callers decide which item's json to read this from. */
+function readCorrelationKeyFromJson(contract: ProcessContract, json: Record<string, unknown>): string | undefined {
+  const value = readPath(json, contract.correlationKey.fieldPath)
   if (typeof value === 'string' && value.length > 0) return value
   if (typeof value === 'number') return String(value)
   return undefined
@@ -75,10 +104,7 @@ interface FieldExtraction {
   missingFields: string[]
 }
 
-function extractEvidenceFields(ev: EvidenceRequirement, runData: Record<string, unknown[]>): FieldExtraction | null {
-  const json = firstItemJson(runData, evidenceNodeName(ev.transitionId))
-  if (!json) return null // Not present in this execution -- 'skipped', not a failure.
-
+function extractFieldsFromJson(ev: EvidenceRequirement, json: Record<string, unknown>): FieldExtraction {
   const fields: Record<string, unknown> = {}
   const missingFields: string[] = []
   for (const field of ev.requiredFields) {
@@ -129,10 +155,24 @@ export function extractExecutionEvidence(
   const data = execution.data as Record<string, unknown> | undefined
   const resultData = data?.['resultData'] as Record<string, unknown> | undefined
   const runData = (resultData?.['runData'] as Record<string, unknown[]> | undefined) ?? {}
+  const now = new Date().toISOString()
+  // The real-world event time (P0 measurement-integrity fix, 2026-07-20) -- n8n's own
+  // execution.startedAt, when it reported one. Falls back to `now` (Kairos's own poll-time
+  // clock) only in the rare case n8n's API returns a null startedAt -- never worse than the
+  // pre-fix behavior (which always used poll time), and correct whenever n8n's timestamp is
+  // present, which the Phase 3 design spike confirmed is the normal case.
+  const eventTime = execution.startedAt ?? now
+
+  // The trigger node is always the first key in runData -- confirmed against real execution data
+  // (Phase 3 spike Finding 1). ALL of its items (P0 measurement-integrity fix, 2026-07-20, fix
+  // #2) -- a batch-style trigger returning multiple rows/items in one execution is a real,
+  // structurally supported shape, not just the common single-item case.
+  const triggerNodeName = Object.keys(runData)[0]
+  const triggerItems = triggerNodeName ? allItemsJson(runData, triggerNodeName) : []
 
   const matches = contract.evidenceRequirements
-    .map(ev => ({ ev, found: extractEvidenceFields(ev, runData) }))
-    .filter((x): x is { ev: EvidenceRequirement; found: FieldExtraction } => x.found !== null)
+    .map(ev => ({ ev, items: allItemsJson(runData, evidenceNodeName(ev.transitionId)) }))
+    .filter((x): x is { ev: EvidenceRequirement; items: RunDataItem[] } => x.items.length > 0)
 
   if (!startCondition && matches.length === 0) {
     return {
@@ -141,72 +181,95 @@ export function extractExecutionEvidence(
         startedAt,
         outcome: 'skipped',
         detail: 'No evidence-marker node found in this execution -- not relevant to any EvidenceRequirement in this contract.',
+        attributedToInstance: false,
       }],
       entries: [],
     }
   }
 
-  const correlationValue = extractCorrelationKeyValue(contract, runData)
-  const now = new Date().toISOString()
-
-  if (!correlationValue) {
-    const reason = `the correlation key (${contract.correlationKey.fieldPath}) could not be read from this execution's trigger data -- no ledger entry written without a known promise instance.`
-    const outcomes: PollExecutionOutcome[] = []
-    if (startCondition) {
-      outcomes.push({ executionId: execution.id, startedAt, outcome: 'unverifiable', detail: `Start-condition execution, but ${reason}` })
-    }
-    for (const { ev } of matches) {
-      outcomes.push({ executionId: execution.id, startedAt, outcome: 'unverifiable', transitionId: ev.transitionId, detail: `Evidence marker node found for transition "${ev.transitionId}", but ${reason}` })
-    }
-    return { outcomes, entries: [] }
-  }
-
-  const promiseInstanceId = hashCorrelationKeyValue(correlationValue)
   const outcomes: PollExecutionOutcome[] = []
   const entries: ProofLedgerEntry[] = []
+  const noKeyReason = `the correlation key (${contract.correlationKey.fieldPath}) could not be read -- no ledger entry written without a known promise instance.`
 
+  // instance_start: one per resolvable trigger item, not just the first (P0 measurement-integrity
+  // fix, 2026-07-20, fix #2) -- a batch intake execution creating N new instances at once.
   if (startCondition) {
-    const detail = `New ${contract.entity.name} instance began in state "${startCondition.initialState}" (${startCondition.description}).`
-    outcomes.push({ executionId: execution.id, startedAt, outcome: 'extracted', detail })
-    entries.push({
-      id: `${execution.id}:instance_start`,
-      contractId: contract.id,
-      contractVersion: contract.version,
-      promiseInstanceId,
-      correlationKeyValueHash: promiseInstanceId,
-      kind: 'instance_start',
-      initialState: startCondition.initialState,
-      observedAt: now,
-      sourceWorkflowId: n8nWorkflowId,
-      sourceExecutionId: execution.id,
-      status: 'observed',
-      detail,
-    })
+    if (triggerItems.length === 0) {
+      outcomes.push({ executionId: execution.id, startedAt, outcome: 'unverifiable', detail: `Start-condition execution, but no trigger data was found at all -- ${noKeyReason}`, attributedToInstance: false })
+    }
+    for (const item of triggerItems) {
+      const correlationValue = readCorrelationKeyFromJson(contract, item.json)
+      if (!correlationValue) {
+        outcomes.push({ executionId: execution.id, startedAt, outcome: 'unverifiable', detail: `Start-condition execution (item ${itemPosition(item)}), but ${noKeyReason}`, attributedToInstance: false })
+        continue
+      }
+      const promiseInstanceId = hashCorrelationKeyValue(correlationValue)
+      const detail = `New ${contract.entity.name} instance began in state "${startCondition.initialState}" (${startCondition.description}).`
+      outcomes.push({ executionId: execution.id, startedAt, outcome: 'extracted', detail, attributedToInstance: true })
+      entries.push({
+        id: `${execution.id}:instance_start:${itemPosition(item)}`,
+        contractId: contract.id,
+        contractVersion: contract.version,
+        promiseInstanceId,
+        correlationKeyValueHash: promiseInstanceId,
+        kind: 'instance_start',
+        initialState: startCondition.initialState,
+        observedAt: now,
+        eventTime,
+        sourceWorkflowId: n8nWorkflowId,
+        sourceExecutionId: execution.id,
+        status: 'observed',
+        detail,
+      })
+    }
   }
 
-  for (const { ev, found } of matches) {
-    const detail = buildDetail(ev, found.fields, found.missingFields)
-    outcomes.push({
-      executionId: execution.id,
-      startedAt,
-      outcome: found.status === 'observed' ? 'extracted' : 'unverifiable',
-      transitionId: ev.transitionId,
-      detail,
-    })
-    entries.push({
-      id: `${execution.id}:${ev.transitionId}`,
-      contractId: contract.id,
-      contractVersion: contract.version,
-      promiseInstanceId,
-      correlationKeyValueHash: promiseInstanceId,
-      kind: 'evidence',
-      transitionId: ev.transitionId,
-      observedAt: now,
-      sourceWorkflowId: n8nWorkflowId,
-      sourceExecutionId: execution.id,
-      status: found.status,
-      detail,
-    })
+  // evidence: one entry per item found at the marker node, not just the first (P0
+  // measurement-integrity fix, 2026-07-20, fix #2). Correlation key resolution per item: first
+  // try reading it directly off the SAME item's own json (an n8n Set/Edit Fields node normally
+  // passes through unset input fields, so a per-item correlation key usually survives to the
+  // evidence node unchanged) -- this is what actually makes multi-item attribution possible.
+  // Falls back to the single trigger item's own key ONLY when there is exactly one trigger item
+  // total (byte-identical behavior to before this fix for the common single-item case); with more
+  // than one trigger item and no per-item key on the evidence node itself, there is no reliable,
+  // non-guessing way to attribute it, so it is reported unattributed rather than misattributed.
+  for (const { ev, items } of matches) {
+    for (const item of items) {
+      let correlationValue = readCorrelationKeyFromJson(contract, item.json)
+      if (!correlationValue && triggerItems.length === 1) {
+        correlationValue = readCorrelationKeyFromJson(contract, triggerItems[0]!.json)
+      }
+      if (!correlationValue) {
+        outcomes.push({ executionId: execution.id, startedAt, outcome: 'unverifiable', transitionId: ev.transitionId, detail: `Evidence marker node found for transition "${ev.transitionId}" (item ${itemPosition(item)}), but ${noKeyReason}`, attributedToInstance: false })
+        continue
+      }
+      const promiseInstanceId = hashCorrelationKeyValue(correlationValue)
+      const found = extractFieldsFromJson(ev, item.json)
+      const detail = buildDetail(ev, found.fields, found.missingFields)
+      outcomes.push({
+        executionId: execution.id,
+        startedAt,
+        outcome: found.status === 'observed' ? 'extracted' : 'unverifiable',
+        transitionId: ev.transitionId,
+        detail,
+        attributedToInstance: true,
+      })
+      entries.push({
+        id: `${execution.id}:${ev.transitionId}:${itemPosition(item)}`,
+        contractId: contract.id,
+        contractVersion: contract.version,
+        promiseInstanceId,
+        correlationKeyValueHash: promiseInstanceId,
+        kind: 'evidence',
+        transitionId: ev.transitionId,
+        observedAt: now,
+        eventTime,
+        sourceWorkflowId: n8nWorkflowId,
+        sourceExecutionId: execution.id,
+        status: found.status,
+        detail,
+      })
+    }
   }
 
   return { outcomes, entries }
@@ -266,6 +329,14 @@ export async function pollWorkflowEvidence(
     entries.push(...result.entries)
   }
 
+  // The invisible-failure blind spot (P0 measurement-integrity fix, 2026-07-20, fix #11):
+  // evidence was expected (outcome !== 'skipped') but couldn't be attached to any promise
+  // instance -- these executions would otherwise vanish from promise-report.md's counts with no
+  // trace. Carried forward cumulatively on the watermark so `kairos contract report` can warn
+  // about them without re-polling.
+  const unattributedCount = outcomes.filter(o => o.outcome !== 'skipped' && !o.attributedToInstance).length
+  const cumulativeUnattributedCount = (watermark?.cumulativeUnattributedCount ?? 0) + unattributedCount
+
   const newest = summaries[0]
   const newWatermark: ContractPollWatermark = newest
     ? {
@@ -274,6 +345,7 @@ export async function pollWorkflowEvidence(
         lastProcessedExecutionId: newest.id,
         lastProcessedStartedAt: newest.startedAt ?? (watermark?.lastProcessedStartedAt ?? ''),
         updatedAt: new Date().toISOString(),
+        cumulativeUnattributedCount,
       }
     : (watermark ?? {
         contractId: contract.id,
@@ -281,6 +353,7 @@ export async function pollWorkflowEvidence(
         lastProcessedExecutionId: '',
         lastProcessedStartedAt: '',
         updatedAt: new Date().toISOString(),
+        cumulativeUnattributedCount,
       })
 
   return {
@@ -293,5 +366,6 @@ export async function pollWorkflowEvidence(
     // Only meaningful once there was a prior watermark to compare against -- a contract's very
     // first poll always processes "everything", which isn't a gap, it's the starting point.
     possibleGap: watermark !== null && summaries.length > 0 && newOnes.length === summaries.length,
+    unattributedCount,
   }
 }

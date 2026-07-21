@@ -1,6 +1,7 @@
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { acquireFileLock } from '../utils/file-lock.js'
 import type { ExceptionDeskItem } from './exception-types.js'
 
 /**
@@ -25,23 +26,48 @@ export async function loadExceptionDeskItems(contractId: string): Promise<Except
   }
 }
 
+/** Write-to-temp-then-rename (P0 measurement-integrity fix, 2026-07-20) -- the same crash-safety
+ * idiom src/library/file-library.ts's own persist() uses alongside its lock: `rename()` is
+ * atomic on POSIX, so a reader (or a crash mid-write) never observes a half-written
+ * exceptions.json, only the old complete file or the new complete file, never a torn one. */
 async function writeAll(contractId: string, items: ExceptionDeskItem[]): Promise<void> {
   const dir = join(homedir(), '.kairos', 'promise-ledger', contractId)
   await mkdir(dir, { recursive: true })
   const path = exceptionsPath(contractId)
-  await writeFile(path, JSON.stringify(items, null, 2) + '\n', 'utf-8')
-  await chmod(path, 0o600)
+  const tmpPath = `${path}.tmp`
+  await writeFile(tmpPath, JSON.stringify(items, null, 2) + '\n', 'utf-8')
+  await chmod(tmpPath, 0o600)
+  await rename(tmpPath, path)
 }
 
 /** Merges `items` into whatever's already on file, replacing any existing item with the same
  * id and appending genuinely new ones -- the same "open new, refresh existing in place" split
- * exception-desk.ts's updateExceptionDesk() already returns. */
+ * exception-desk.ts's updateExceptionDesk() already returns.
+ *
+ * Locked (P0 measurement-integrity fix, 2026-07-20): this is the single most important lock in
+ * this arc. `kairos watch --contracts` (an unattended, continuously-running loop by design) and
+ * `kairos exceptions ack`/`resolve` (a human, interactively) both call into this same
+ * read-modify-write cycle against the same file, and running both at once is the EXPECTED usage
+ * pattern this feature exists for, not a rare edge case. Without a lock, a human's resolution
+ * and a concurrent watch tick's own refresh can race: whichever write lands second silently wins
+ * in full, discarding the other's update entirely -- including a human's `resolved` status being
+ * reverted back to `open` with no error, no warning, and no record that it happened. That would
+ * have directly undermined this module's one core guarantee (human resolution only, never
+ * auto-reverted -- exception-types.ts's own doc comment). */
 export async function upsertExceptionDeskItems(contractId: string, items: ExceptionDeskItem[]): Promise<void> {
   if (items.length === 0) return
-  const existing = await loadExceptionDeskItems(contractId)
-  const byId = new Map(existing.map(i => [i.id, i]))
-  for (const item of items) byId.set(item.id, item)
-  await writeAll(contractId, [...byId.values()])
+  const dir = join(homedir(), '.kairos', 'promise-ledger', contractId)
+  await mkdir(dir, { recursive: true })
+  const path = exceptionsPath(contractId)
+  const releaseLock = await acquireFileLock(`${path}.lock`)
+  try {
+    const existing = await loadExceptionDeskItems(contractId)
+    const byId = new Map(existing.map(i => [i.id, i]))
+    for (const item of items) byId.set(item.id, item)
+    await writeAll(contractId, [...byId.values()])
+  } finally {
+    await releaseLock()
+  }
 }
 
 /** Saves a single updated item (e.g. after a human ack/resolve) -- a thin, explicit wrapper

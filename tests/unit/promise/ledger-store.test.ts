@@ -86,6 +86,30 @@ describe('appendProofLedgerEntries / getProofLedgerEntries', () => {
     expect(await getProofLedgerEntries('contract-a')).toHaveLength(1)
     expect(await getProofLedgerEntries('contract-b')).toHaveLength(1)
   })
+
+  // P0 measurement-integrity fix (2026-07-20): a single corrupted JSONL line must not discard
+  // every valid entry in the same file -- the exact regression this fix targets.
+  it('skips a single corrupted line and still returns every valid entry', async () => {
+    await appendProofLedgerEntries('c1', [makeEntry({ id: 'e1', sourceExecutionId: 'e1' })])
+    const path = join(scratchHome, '.kairos', 'promise-ledger', 'c1', 'ledger.jsonl')
+    const { appendFile } = await import('node:fs/promises')
+    await appendFile(path, 'not valid json at all\n', 'utf-8')
+    await appendProofLedgerEntries('c1', [makeEntry({ id: 'e2', sourceExecutionId: 'e2' })])
+
+    const entries = await getProofLedgerEntries('c1')
+    expect(entries.map(e => e.sourceExecutionId)).toEqual(['e1', 'e2'])
+  })
+
+  // P0 measurement-integrity fix (2026-07-20): two concurrent pollers (e.g. a watch tick and a
+  // manual `kairos ledger poll` overlapping) must not lose either one's entries to a race.
+  it('concurrent appends from two racing callers both survive', async () => {
+    await Promise.all([
+      appendProofLedgerEntries('c1', [makeEntry({ id: 'race-a', sourceExecutionId: 'race-a' })]),
+      appendProofLedgerEntries('c1', [makeEntry({ id: 'race-b', sourceExecutionId: 'race-b' })]),
+    ])
+    const entries = await getProofLedgerEntries('c1')
+    expect(entries.map(e => e.sourceExecutionId).sort()).toEqual(['race-a', 'race-b'])
+  })
 })
 
 function makeWatermark(overrides: Partial<ContractPollWatermark> = {}): ContractPollWatermark {
@@ -139,5 +163,18 @@ describe('saveContractPollWatermark / loadContractPollWatermark', () => {
     await mkdir(dir, { recursive: true })
     await writeFile(join(dir, 'watermarks.json'), '{not valid json', 'utf-8')
     expect(await loadContractPollWatermark('c1', 'wf-1')).toBeNull()
+  })
+
+  // P0 measurement-integrity fix (2026-07-20): two concurrent pollers for different workflows on
+  // the same contract must not lose either one's watermark update to a race.
+  it('concurrent watermark saves for different workflows on the same contract both survive', async () => {
+    await Promise.all([
+      saveContractPollWatermark(makeWatermark({ n8nWorkflowId: 'wf-a', lastProcessedExecutionId: 'exec-a' })),
+      saveContractPollWatermark(makeWatermark({ n8nWorkflowId: 'wf-b', lastProcessedExecutionId: 'exec-b' })),
+    ])
+    const a = await loadContractPollWatermark('empire-homecare-referral-intake', 'wf-a')
+    const b = await loadContractPollWatermark('empire-homecare-referral-intake', 'wf-b')
+    expect(a!.lastProcessedExecutionId).toBe('exec-a')
+    expect(b!.lastProcessedExecutionId).toBe('exec-b')
   })
 })

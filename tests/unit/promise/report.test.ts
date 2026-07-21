@@ -164,6 +164,58 @@ describe('classifyPromiseInstance', () => {
     const result = classifyPromiseInstance(contract, entries, exceptions, new Date(TUE_8AM))
     expect(result.status).toBe('missed')
   })
+
+  // P0 measurement-integrity fix (2026-07-20): "do not compute normal SLA kept/missed numbers
+  // while ignoring pauses" -- a pause-rule contract must never classify an instance 'kept' (or a
+  // suppressed-drift 'missed') based on timing it can't actually vouch for.
+  it('unverifiable, not kept: a would-be kept instance on a pause-rule contract', () => {
+    const contract = empireHomecare()
+    contract.pauseRules = [{ id: 'p1', condition: 'customer asked to be contacted next week', resumeCondition: 'the requested date arrives' }]
+    const entries = [
+      instanceStart('i1', MON_8AM),
+      evidence('i1', 't-received-to-attempted', MON_10AM),
+      evidence('i1', 't-attempted-to-contacted', MON_10AM),
+      evidence('i1', 't-contacted-to-scheduled', MON_10AM), // direct evidence of reaching the success terminal, in time
+    ]
+    const result = classifyPromiseInstance(contract, entries, [], new Date(MON_10AM))
+    expect(result.status).toBe('unverifiable')
+    expect(result.status).not.toBe('kept')
+    expect(result.detail).toContain('pause rule')
+  })
+
+  it('unverifiable, not missed: a would-be drifting-terminal instance on a pause-rule contract', () => {
+    const contract = empireHomecare()
+    contract.pauseRules = [{ id: 'p1', condition: 'customer asked to be contacted next week', resumeCondition: 'the requested date arrives' }]
+    const entries = [
+      instanceStart('i1', MON_8AM),
+      evidence('i1', 't-attempted-to-contacted', TUE_8AM), // late (9h) indirect evidence -- would breach sla-first-contact
+      evidence('i1', 't-contacted-to-scheduled', TUE_8AM),
+    ]
+    const result = classifyPromiseInstance(contract, entries, [], new Date(TUE_8AM))
+    expect(result.status).toBe('unverifiable')
+    expect(result.status).not.toBe('missed')
+  })
+
+  it('unverifiable, not in_progress: a not-yet-terminal instance whose SLA already breached its window on a pause-rule contract', () => {
+    const contract = empireHomecare()
+    contract.pauseRules = [{ id: 'p1', condition: 'customer asked to be contacted next week', resumeCondition: 'the requested date arrives' }]
+    const entries = [instanceStart('i1', MON_8AM)] // no further evidence, deadline will have passed by TUE_8AM
+    const result = classifyPromiseInstance(contract, entries, [], new Date(TUE_8AM))
+    expect(result.status).toBe('unverifiable')
+  })
+
+  it('a real failure terminal outcome still wins over the pause-rule caveat', () => {
+    const contract = empireHomecare()
+    contract.pauseRules = [{ id: 'p1', condition: 'customer asked to be contacted next week', resumeCondition: 'the requested date arrives' }]
+    contract.transitions.push({ id: 't-attempted-to-noanswer', fromState: 'contact_attempted', event: 'call_no_answer', toState: 'no_answer' })
+    const entries = [
+      instanceStart('i1', MON_8AM),
+      evidence('i1', 't-received-to-attempted', MON_10AM),
+      evidence('i1', 't-attempted-to-noanswer', TUE_8AM),
+    ]
+    const result = classifyPromiseInstance(contract, entries, [], new Date(TUE_8AM))
+    expect(result.status).toBe('missed')
+  })
 })
 
 describe('buildPromiseReportData', () => {
@@ -188,6 +240,27 @@ describe('buildPromiseReportData', () => {
     const entries = [instanceStart('i1', MON_8AM), instanceStart('i2', TUE_8AM)]
     const data = buildPromiseReportData(contract, entries, [], { from: MON_10AM }, new Date(TUE_8AM))
     expect(data.totalInstances).toBe(1) // i1's instance_start is before the window, excluded
+  })
+
+  // P0 measurement-integrity fix (2026-07-20): window filtering must use eventTime (the real
+  // event time), not observedAt (poll time) -- a "July" report should include a July event
+  // discovered by a late poll, and exclude a June event that a backfill happened to discover in
+  // July.
+  it('filters by eventTime, not observedAt, when eventTime is present', () => {
+    const contract = empireHomecare()
+    // i1's real event happened MON_8AM (in-window) but wasn't polled/discovered until TUE_8AM
+    // (which, alone, would be out of window if observedAt were used for filtering).
+    const i1: ProofLedgerEntry = { ...instanceStart('i1', TUE_8AM), eventTime: MON_8AM }
+    // i2's real event happened TUE_8AM (out-of-window) even though Kairos polled it promptly
+    // (observedAt also TUE_8AM) -- included only if the filter wrongly used observedAt AND the
+    // window's own boundary happened to admit it; here the window excludes it either way, so
+    // this arm proves eventTime, not observedAt, gates inclusion in the from<=x<=to sense too.
+    const i2: ProofLedgerEntry = { ...instanceStart('i2', MON_8AM), eventTime: TUE_8AM }
+
+    const data = buildPromiseReportData(contract, [i1, i2], [], { from: MON_8AM, to: MON_10AM }, new Date(TUE_8AM))
+    const ids = data.instances.map(i => i.promiseInstanceId)
+    expect(ids).toContain('i1')
+    expect(ids).not.toContain('i2')
   })
 
   it('excludes exceptions detected outside the window from open/resolved counts', () => {
@@ -246,6 +319,43 @@ describe('buildPromiseReportData', () => {
     const entries: ProofLedgerEntry[] = [{ ...instanceStart('i1', MON_8AM), contractId: 'some-other-contract' }]
     const data = buildPromiseReportData(contract, entries, [], {}, new Date(MON_10AM))
     expect(data.totalInstances).toBe(0)
+  })
+
+  // P0 measurement-integrity fix (2026-07-20): the pause-rule disclaimer is a structural
+  // property of the contract, not a per-run finding -- it must appear even when this run's
+  // instances all happen to classify cleanly (e.g. no evidence yet at all).
+  it('adds a pause-rule disclaimer whenever the contract declares any, even with zero instances', () => {
+    const contract = empireHomecare()
+    contract.pauseRules = [{ id: 'p1', condition: 'customer asked to be contacted next week', resumeCondition: 'the requested date arrives' }]
+    const data = buildPromiseReportData(contract, [], [], {}, new Date(MON_10AM))
+    expect(data.disclaimers.some(d => d.includes('pause rule'))).toBe(true)
+  })
+
+  it('does not add a pause-rule disclaimer when the contract declares none', () => {
+    const contract = empireHomecare()
+    const data = buildPromiseReportData(contract, [], [], {}, new Date(MON_10AM))
+    expect(data.disclaimers.some(d => d.includes('pause rule'))).toBe(false)
+  })
+
+  // P0 measurement-integrity fix (2026-07-20, fix #11 -- the invisible-failure blind spot): the
+  // caller-supplied unattributedExecutionCount must surface as its own field and its own
+  // disclaimer, without being folded into or confused with instanceCounts/totalInstances.
+  it('surfaces a caller-supplied unattributedExecutionCount as its own field and disclaimer', () => {
+    const contract = empireHomecare()
+    const entries = [instanceStart('i1', MON_8AM)]
+    const data = buildPromiseReportData(contract, entries, [], {}, new Date(MON_10AM), 3)
+    expect(data.unattributedExecutionCount).toBe(3)
+    expect(data.disclaimers.some(d => d.includes('3 execution(s)') && d.includes('no readable correlation key'))).toBe(true)
+    // Unattributed executions are never folded into instanceCounts/totalInstances -- there is no
+    // instance id to count them against.
+    expect(data.totalInstances).toBe(1)
+  })
+
+  it('defaults unattributedExecutionCount to 0 and adds no disclaimer when the caller omits it', () => {
+    const contract = empireHomecare()
+    const data = buildPromiseReportData(contract, [], [], {}, new Date(MON_10AM))
+    expect(data.unattributedExecutionCount).toBe(0)
+    expect(data.disclaimers.some(d => d.includes('no readable correlation key'))).toBe(false)
   })
 })
 

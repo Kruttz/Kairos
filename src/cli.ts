@@ -35,7 +35,7 @@ Usage:
   kairos contract plan "<business description>" --client-id <slug> [--json]
   kairos contract compile <file.json> [--build] [--dry-run] [--json]
   kairos contract validate <file.json> [--json]
-  kairos contract import <file.json> --client-id <slug> [--json]
+  kairos contract import <file.json> --client-id <slug> [--confirm-version-change] [--json]
   kairos contract report <contract-id> --client-id <slug> [--from <date>] [--to <date>] [--bundle <dir>] [--json]
   kairos ledger poll <contract-id> --client-id <slug> [--limit <n>] [--json]
   kairos ledger show <contract-id> [--instance <promise-instance-id>] [--json]
@@ -1524,10 +1524,17 @@ async function handleContractPlan(positional: string[], flags: Record<string, st
 
   console.error('Drafting ProcessContract...\n')
   const result = await planProcessContract({ description, clientId, anthropicApiKey })
+  // P0 measurement-integrity fix (2026-07-20): checked before saving, deliberately a WARNING
+  // here rather than contract import's hard refusal -- `contract plan` already always saves the
+  // draft unconditionally ("never withheld", see the usage text above), so a version conflict
+  // here surfaces loudly but doesn't fight that established behavior. A version collision under
+  // `plan` (deriveContractId() is a name slug, version always 1 for a fresh draft) generally only
+  // happens if two different business descriptions happen to produce the same contract name.
+  const existingVersion = await checkContractVersionConflict(clientId, result.contract)
   const { path } = await saveProcessContract(result.contract)
 
   if (flags['json'] === true) {
-    console.log(JSON.stringify({ ...result, savedTo: path }, null, 2))
+    console.log(JSON.stringify({ ...result, savedTo: path, ...(existingVersion !== null ? { overwroteVersion: existingVersion } : {}) }, null, 2))
     if (!result.readyToProceed) process.exit(2)
     return
   }
@@ -1562,6 +1569,9 @@ async function handleContractPlan(positional: string[], flags: Record<string, st
   }
 
   console.log(`\nSaved to: ${path}`)
+  if (existingVersion !== null) {
+    console.log(`⚠ Overwrote an existing contract at this id (was v${existingVersion}, now v${contract.version}). Ledger evidence recorded against the old version's own ids may no longer match this contract's current shape -- review before trusting historical reports.`)
+  }
   console.log(readyToProceed ? '\n✓ Ready for human review -- no blocking issues.' : '\n⚠ Needs human review before this contract can be trusted.')
 
   if (!readyToProceed) process.exit(2)
@@ -1719,6 +1729,23 @@ async function handleContractCompile(positional: string[], flags: Record<string,
 }
 
 /**
+ * P0 measurement-integrity fix (2026-07-20): store.ts's saveProcessContract() has no
+ * update/versioning semantics at all -- its own doc comment says so -- it just overwrites
+ * `<id>.json` in place. Silently overwriting a saved contract with a DIFFERENT version (e.g. a
+ * state renamed, an SLA restructured) orphans every ProofLedger entry that referenced the old
+ * contract's own ids: stateReachSignals() just stops matching them against the new contract
+ * shape, and historical evidence silently vanishes from SLA/report computations -- no error, no
+ * warning, just a quietly emptier-looking history. Returns the existing version only when a real
+ * conflict exists (same id, different version) -- null otherwise (nothing saved yet, or an
+ * exact-version re-save, which is not a conflict).
+ */
+async function checkContractVersionConflict(clientId: string, contract: import('./promise/types.js').ProcessContract): Promise<number | null> {
+  const { loadProcessContract } = await import('./promise/store.js')
+  const existing = await loadProcessContract(clientId, contract.id)
+  return existing && existing.version !== contract.version ? existing.version : null
+}
+
+/**
  * Closes a real gap found during the Promise Engine v0 closeout pass: `kairos contract compile
  * <file.json>` only ever reads a file, it never saves the contract anywhere -- only
  * `kairos contract plan` does that. A hand-authored or externally-sourced contract, compiled and
@@ -1734,7 +1761,7 @@ async function handleContractImport(positional: string[], flags: Record<string, 
   const clientId = typeof flags['client-id'] === 'string' ? flags['client-id'] : undefined
 
   if (!filePath || !clientId) {
-    console.error('Usage: kairos contract import <file.json> --client-id <slug> [--json]')
+    console.error('Usage: kairos contract import <file.json> --client-id <slug> [--confirm-version-change] [--json]')
     console.error('')
     console.error('Saves a valid ProcessContract file into the local store')
     console.error('(~/.kairos/contracts/<client-id>/<id>.json) so kairos ledger poll,')
@@ -1744,7 +1771,10 @@ async function handleContractImport(positional: string[], flags: Record<string, 
     console.error('nothing written) on a validation error or a blocking assumption, the same gate')
     console.error('kairos contract compile itself uses. Contract provenance/version/status are')
     console.error('preserved exactly as given -- never rewritten, never bumped -- importing is not')
-    console.error('authoring.')
+    console.error('authoring. Also refuses (exit 2, nothing written) if a contract already exists')
+    console.error('at this id with a DIFFERENT version -- overwriting it in place would silently')
+    console.error('orphan any ProofLedger evidence recorded against the old version\'s own state/')
+    console.error('transition/SLA ids. Pass --confirm-version-change to overwrite anyway.')
     process.exit(1)
   }
 
@@ -1786,15 +1816,32 @@ async function handleContractImport(positional: string[], flags: Record<string, 
     process.exit(2)
   }
 
+  const existingVersion = await checkContractVersionConflict(clientId, contract)
+  if (existingVersion !== null && flags['confirm-version-change'] !== true) {
+    if (flags['json'] === true) {
+      console.log(JSON.stringify({ imported: false, versionConflict: { existingVersion, attemptedVersion: contract.version } }, null, 2))
+      process.exit(2)
+    }
+    console.error(`\nRefusing to import "${filePath}" -- nothing written.`)
+    console.error(`A contract with id "${contract.id}" already exists at version ${existingVersion}, but this file is version ${contract.version}.`)
+    console.error(`Overwriting it would silently orphan any ProofLedger evidence recorded against the old version's own state/transition/SLA ids --`)
+    console.error(`stateReachSignals() would simply stop matching those ids against the new contract shape.`)
+    console.error(`Re-run with --confirm-version-change if you understand this and want to proceed anyway.`)
+    process.exit(2)
+  }
+
   const { saveProcessContract } = await import('./promise/store.js')
   const { path } = await saveProcessContract(contract)
 
   if (flags['json'] === true) {
-    console.log(JSON.stringify({ imported: true, path, validationIssues: issues }, null, 2))
+    console.log(JSON.stringify({ imported: true, path, validationIssues: issues, ...(existingVersion !== null ? { overwroteVersion: existingVersion } : {}) }, null, 2))
     return
   }
 
   console.log(`✓ Imported "${contract.name}" (${contract.id} v${contract.version}) to: ${path}`)
+  if (existingVersion !== null) {
+    console.log(`⚠ Overwrote an existing contract at v${existingVersion} (--confirm-version-change was passed). Ledger evidence recorded against the old version's own ids may no longer match this contract's current shape.`)
+  }
   if (warnings.length > 0) {
     console.log(`\n${warnings.length} warning(s):`)
     for (const w of warnings) console.log(`  ⚠ [Rule ${w.rule}] ${w.message}${w.path ? ` (${w.path})` : ''}`)
@@ -1834,8 +1881,9 @@ async function handleContractReport(positional: string[], flags: Record<string, 
     process.exit(1)
   }
 
-  const { getProofLedgerEntries } = await import('./promise/ledger-store.js')
+  const { getProofLedgerEntries, loadContractPollWatermark } = await import('./promise/ledger-store.js')
   const { loadExceptionDeskItems } = await import('./promise/exception-store.js')
+  const { loadContractWorkflowRegistration } = await import('./promise/registry.js')
   const { buildPromiseReportData, generatePromiseReport } = await import('./promise/report.js')
 
   const entries = await getProofLedgerEntries(contractId, 10000)
@@ -1844,7 +1892,19 @@ async function handleContractReport(positional: string[], flags: Record<string, 
     ...(typeof flags['from'] === 'string' ? { from: flags['from'] } : {}),
     ...(typeof flags['to'] === 'string' ? { to: flags['to'] } : {}),
   }
-  const data = buildPromiseReportData(contract, entries, exceptions, window)
+
+  // P0 measurement-integrity fix (2026-07-20, fix #11): summed across every workflow ever
+  // registered to this contract, not just the ones with entries in the current window -- a
+  // structural count of executions that never became ledger entries at all, read from the
+  // watermark rather than requiring a fresh poll.
+  const registration = await loadContractWorkflowRegistration(clientId, contractId)
+  let unattributedExecutionCount = 0
+  for (const wf of registration?.workflows ?? []) {
+    const watermark = await loadContractPollWatermark(contractId, wf.n8nWorkflowId)
+    unattributedExecutionCount += watermark?.cumulativeUnattributedCount ?? 0
+  }
+
+  const data = buildPromiseReportData(contract, entries, exceptions, window, new Date(), unattributedExecutionCount)
 
   const bundleDir = typeof flags['bundle'] === 'string' ? flags['bundle'] : undefined
   if (bundleDir) {
@@ -1889,7 +1949,7 @@ async function handleContract(positional: string[], flags: Record<string, string
     console.error('Usage: kairos contract plan "<business description>" --client-id <slug> [--json]')
     console.error('       kairos contract compile <file.json> [--build] [--dry-run] [--json]')
     console.error('       kairos contract validate <file.json> [--json]')
-    console.error('       kairos contract import <file.json> --client-id <slug> [--json]')
+    console.error('       kairos contract import <file.json> --client-id <slug> [--confirm-version-change] [--json]')
     console.error('       kairos contract report <contract-id> --client-id <slug> [--from <date>] [--to <date>] [--bundle <dir>] [--json]')
     console.error('')
     console.error('plan drafts a ProcessContract from a plain-language description via an LLM,')
@@ -1907,7 +1967,10 @@ async function handleContract(positional: string[], flags: Record<string, string
     console.error('')
     console.error('import validates a contract file and saves it into the local store so ledger')
     console.error('poll/watch --contracts/contract report can find it afterward -- required')
-    console.error('before those, since compile itself never saves anything.')
+    console.error('before those, since compile itself never saves anything. Refuses (exit 2) to')
+    console.error('overwrite an already-saved contract at a DIFFERENT version unless')
+    console.error('--confirm-version-change is passed -- overwriting silently would orphan any')
+    console.error("ProofLedger evidence recorded against the old version's own ids.")
     console.error('')
     console.error('report generates a client-facing promise-report.md from ProofLedger +')
     console.error('ExceptionDesk data -- see "kairos contract report" with no args for detail.')
@@ -2032,6 +2095,9 @@ async function handleLedgerPoll(positional: string[], flags: Record<string, stri
     if (r.possibleGap) {
       console.log(`  ⚠ Every fetched execution was new -- the poll window may be smaller than the real gap since the last check. Consider --limit or polling more often.`)
     }
+    if (r.unattributedCount > 0) {
+      console.log(`  ⚠ ${r.unattributedCount} execution(s) this poll had evidence expected but NO readable correlation key -- no ledger entry was written for them, and they will NOT appear in "kairos contract report"'s counts. Cumulative total for this workflow: ${r.newWatermark.cumulativeUnattributedCount ?? r.unattributedCount}.`)
+    }
     for (const o of r.outcomes) {
       if (o.outcome === 'skipped') continue
       const icon = o.outcome === 'extracted' ? '✓' : '⚠'
@@ -2072,7 +2138,8 @@ async function handleLedgerShow(positional: string[], flags: Record<string, stri
   console.log('─'.repeat(50))
   for (const e of entries) {
     const icon = e.status === 'observed' ? '✓' : e.status === 'unverifiable' ? '⚠' : '?'
-    console.log(`  ${icon} [${e.status}] ${e.observedAt}  transition=${e.transitionId}  instance=${e.promiseInstanceId.slice(0, 12)}...`)
+    console.log(`  ${icon} [${e.status}] ${e.eventTime ?? e.observedAt}  transition=${e.transitionId}  instance=${e.promiseInstanceId.slice(0, 12)}...`)
+    if (e.eventTime && e.eventTime !== e.observedAt) console.log(`     (Kairos discovered this on ${e.observedAt})`)
     console.log(`     ${e.detail}`)
   }
 }
@@ -2665,7 +2732,7 @@ async function runContractComplianceTick(
     await saveContractPollWatermark(result.newWatermark)
   }
 
-  const { checkSlaCompliance } = await import('./promise/sla-compliance.js')
+  const { checkSlaCompliance, complianceVerdict } = await import('./promise/sla-compliance.js')
   const { updateExceptionDesk } = await import('./promise/exception-desk.js')
   const { loadExceptionDeskItems, upsertExceptionDeskItems } = await import('./promise/exception-store.js')
 
@@ -2675,7 +2742,7 @@ async function runContractComplianceTick(
   const { opened, refreshed } = updateExceptionDesk(contract, findings, existingItems)
   await upsertExceptionDeskItems(contractId, [...opened, ...refreshed])
 
-  const verdict = findings.some(f => f.status === 'drifting') ? 'DRIFTING' : 'HEALTHY'
+  const verdict = complianceVerdict(findings)
 
   if (asJson) {
     console.log(JSON.stringify({ contractId, verdict, findings, openedExceptions: opened, refreshedExceptions: refreshed }, null, 2))
@@ -2686,7 +2753,7 @@ async function runContractComplianceTick(
       console.log('  No SLA/expiration findings with real data yet.')
     }
     for (const f of reportable) {
-      const icon = f.status === 'drifting' ? '⚠' : '✓'
+      const icon = f.status === 'drifting' ? '⚠' : f.status === 'unverifiable' ? '?' : '✓'
       const label = f.kind === 'sla' ? `SLA ${f.slaId}` : `Expiration ${f.expirationRuleId}`
       console.log(`  ${icon} [${f.status}] ${label} (instance ${f.promiseInstanceId.slice(0, 12)}...) -- ${f.summary}`)
     }

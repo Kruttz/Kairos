@@ -53,6 +53,13 @@ export function classifyPromiseInstance(
 ): PromiseInstanceClassification {
   const findings = checkSlaCompliance(contract, instanceEntries, now)
   const drifting = findings.filter(f => f.status === 'drifting')
+  // P0 measurement-integrity fix (2026-07-20): a finding sla-compliance.ts downgraded from
+  // healthy/drifting to 'unverifiable' because this contract declares pause rules it can't yet
+  // account for (applyPauseRuleCaveat). Codex's explicit instruction: "do not compute normal SLA
+  // kept/missed numbers while ignoring pauses" -- so this instance's own classification must not
+  // confidently claim 'kept' (or 'missed' from a suppressed drift) either, once at least one of
+  // its findings couldn't be confidently determined.
+  const pauseAffected = findings.filter(f => f.status === 'unverifiable')
 
   for (const outcome of contract.terminalOutcomes) {
     const signals = stateReachSignals(contract, instanceEntries, outcome.state)
@@ -69,6 +76,12 @@ export function classifyPromiseInstance(
         evidenceQuality: 'specific',
       }
     }
+    if (pauseAffected.length > 0) {
+      return {
+        status: 'unverifiable',
+        detail: `Reached terminal state "${outcome.state}" (${outcome.outcome}), but this contract declares pause rule(s) that Kairos's SLA compliance checking does not yet account for in v0 -- cannot confidently confirm the promise's timing commitments were met along the way: ${pauseAffected[0]!.summary}`,
+      }
+    }
     if (confidence === 'generic') {
       return {
         status: 'unverifiable',
@@ -82,6 +95,13 @@ export function classifyPromiseInstance(
   if (drifting.length > 0) {
     const worst = drifting[0]!
     return { status: 'missed', detail: worst.summary, evidenceQuality: worst.evidenceQuality ?? 'specific' }
+  }
+
+  if (pauseAffected.length > 0) {
+    return {
+      status: 'unverifiable',
+      detail: `This instance has SLA/expiration finding(s) affected by this contract's declared pause rule(s), which Kairos's SLA compliance checking does not yet account for in v0: ${pauseAffected[0]!.summary}`,
+    }
   }
 
   const hasOpenException = instanceExceptions.some(e => e.status === 'open' || e.status === 'acknowledged')
@@ -132,6 +152,15 @@ export interface PromiseReportData {
   resolvedExceptionCount: number
   openExceptions: PromiseReportOpenException[]
   evidenceQualityBreakdown: { specific: number; generic: number }
+  /** Executions where evidence was expected but couldn't be attributed to any promise instance
+   * (P0 measurement-integrity fix, 2026-07-20, fix #11 -- the "invisible-failure blind spot") --
+   * these are NOT counted anywhere in `instanceCounts`/`totalInstances` above, since there is no
+   * instance id to count them against. Supplied by the caller (cli.ts sums
+   * ContractPollWatermark.cumulativeUnattributedCount across every workflow registered to this
+   * contract) since this module stays pure/no-IO -- 0 when the caller doesn't have this data.
+   * Always shown as a disclaimer when non-zero, so this report never implies its counts are a
+   * complete picture of every execution that ever ran. */
+  unattributedExecutionCount: number
   /** Plain-language caveats about what this report can and can't actually prove -- always
    * computed, never omitted just because the numbers look fine. Codex's explicit guardrail: "if
    * evidence is incomplete, say so plainly." */
@@ -150,8 +179,18 @@ export function buildPromiseReportData(
   allExceptions: ExceptionDeskItem[],
   window: PromiseReportWindow = {},
   now: Date = new Date(),
+  /** Sum of ContractPollWatermark.cumulativeUnattributedCount across every workflow registered
+   * to this contract (P0 measurement-integrity fix, 2026-07-20, fix #11) -- supplied by the
+   * caller (cli.ts), since this function stays pure/no-IO. 0 when the caller doesn't supply it
+   * (e.g. existing callers/tests predating this fix), which degrades gracefully to "nothing
+   * known to warn about," never a false claim either way. */
+  unattributedExecutionCount = 0,
 ): PromiseReportData {
-  const windowedEntries = allEntries.filter(e => e.contractId === contract.id && inWindow(e.observedAt, window))
+  // Window filtering prefers eventTime (the real n8n execution's own startedAt) over observedAt
+  // (P0 measurement-integrity fix, 2026-07-20) -- a "show me July" report should include an
+  // event that happened in July even if Kairos didn't poll for it until August, and should NOT
+  // include an event that happened in June just because a backfilled poll discovered it in July.
+  const windowedEntries = allEntries.filter(e => e.contractId === contract.id && inWindow(e.eventTime ?? e.observedAt, window))
   const windowedExceptions = allExceptions.filter(e => e.contractId === contract.id && inWindow(e.detectedAt, window))
 
   const instanceIds = [...new Set(windowedEntries.map(e => e.promiseInstanceId))]
@@ -190,6 +229,24 @@ export function buildPromiseReportData(
       `${genericCount} classification(s) above rely on indirect (generic-confidence) evidence -- inferred from a later transition, not a direct observation of the state being entered. See each instance's own detail for which ones.`
     )
   }
+  // P0 measurement-integrity fix (2026-07-20): always shown when the contract declares any
+  // pauseRules, regardless of whether any instance actually classified 'unverifiable' this run --
+  // a structural limitation of this contract's shape, not a per-run finding.
+  if (contract.pauseRules?.length) {
+    disclaimers.push(
+      `This contract declares ${contract.pauseRules.length} pause rule(s) (e.g. "${contract.pauseRules[0]!.condition}"). Kairos's SLA compliance checking does not yet account for paused time in v0 -- any SLA/expiration determination that would otherwise be healthy or drifting is instead reported as 'unverifiable', since elapsed time may include a paused span that should not count against the deadline.`
+    )
+  }
+  // P0 measurement-integrity fix (2026-07-20, fix #11): the counts above are NOT a complete
+  // picture of every execution that ever ran -- this many had evidence expected but no readable
+  // correlation key, so they never became a ledger entry and are absent from both the numerator
+  // and denominator of instanceCounts. Shown unconditionally when non-zero, matching the
+  // pause-rule disclaimer's own "always surface a real structural limitation" discipline.
+  if (unattributedExecutionCount > 0) {
+    disclaimers.push(
+      `${unattributedExecutionCount} execution(s) across this contract's registered workflows had evidence expected but no readable correlation key -- no ledger entry exists for them, and they are NOT counted anywhere above. Run "kairos ledger poll" for detail on which executions.`
+    )
+  }
 
   return {
     contractId: contract.id,
@@ -212,6 +269,7 @@ export function buildPromiseReportData(
       promiseInstanceId: e.promiseInstanceId, detectedAt: e.detectedAt,
     })),
     evidenceQualityBreakdown: { specific: specificCount, generic: genericCount },
+    unattributedExecutionCount,
     disclaimers,
   }
 }
