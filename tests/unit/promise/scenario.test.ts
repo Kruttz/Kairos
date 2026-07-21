@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { generateContractScenarios, ALL_SCENARIO_CATEGORIES } from '../../../src/promise/scenario.js'
+import { buildLedgerEntriesForScenario, runContractHarness } from '../../../src/promise/harness.js'
 import type { ProcessContract } from '../../../src/promise/types.js'
 
 const FIXTURES_DIR = join(__dirname, '../../fixtures/contracts')
@@ -90,6 +91,41 @@ describe('generateContractScenarios -- website-contact-form-ack (evidence-comple
     const startMs = start.offset.unit === 'days' ? start.offset.amount * 86_400_000 : start.offset.amount
     const evidenceMs = evidence.offset.unit === 'minutes' ? evidence.offset.amount * 60_000 : evidence.offset.amount * 3_600_000
     expect(startMs).toBeGreaterThan(evidenceMs)
+  })
+
+  it('after_hours is day-of-week independent -- Phase 9 non-flakiness proof: correct offsets AND a passing harness run for all 7 possible "now" weekdays, not just whichever day happens to run npm test', () => {
+    // 2024-01-01 was a real Monday; the following 6 dates cover every weekday exactly once. A
+    // day-of-week bug here would otherwise only surface on whichever specific day CI happened to
+    // run on -- exactly the class of flakiness this test exists to rule out deterministically,
+    // rather than trusting "it's generous enough" reasoning alone.
+    const mondayThroughSunday = [
+      '2024-01-01T14:00:00.000Z', '2024-01-02T14:00:00.000Z', '2024-01-03T14:00:00.000Z',
+      '2024-01-04T14:00:00.000Z', '2024-01-05T14:00:00.000Z', '2024-01-06T14:00:00.000Z',
+      '2024-01-07T14:00:00.000Z',
+    ]
+    for (const iso of mondayThroughSunday) {
+      const now = new Date(iso)
+      const { scenarios, skipped } = generateContractScenarios(contract, ['after_hours'], now)
+      expect(skipped, `unexpected skip when now=${iso}`).toEqual([])
+      const s = scenarios[0]!
+      const start = s.timeline.find(e => e.kind === 'instance_start')!
+      const evidence = s.timeline.find(e => e.kind === 'evidence')!
+
+      // Both offsets must be non-negative (safely in the past relative to `now`) -- a negative
+      // offset would mean the computed instant landed in the future, the exact bug class
+      // findAfterHoursWindow()'s own safety guard exists to prevent.
+      expect(start.offset.amount, `now=${iso}`).toBeGreaterThanOrEqual(0)
+      expect(evidence.offset.amount, `now=${iso}`).toBeGreaterThanOrEqual(0)
+
+      const entries = buildLedgerEntriesForScenario(s, now)
+      const startEntry = entries.find(e => e.kind === 'instance_start')!
+      const evidenceEntry = entries.find(e => e.kind === 'evidence')!
+      expect(new Date(startEntry.eventTime!).getTime(), `now=${iso}`).toBeLessThan(new Date(evidenceEntry.eventTime!).getTime())
+      expect(new Date(evidenceEntry.eventTime!).getTime(), `now=${iso}`).toBeLessThanOrEqual(now.getTime())
+
+      const result = runContractHarness(contract, scenarios, now)
+      expect(result.failCount, `now=${iso}: ${JSON.stringify(result.scenarioResults.filter(r => !r.passed))}`).toBe(0)
+    }
   })
 
   it('every generated scenario uses an obviously-synthetic correlation key value', () => {

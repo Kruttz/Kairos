@@ -99,6 +99,24 @@ describe('runScenario / runContractHarness -- website-contact-form-ack (primary 
     expect(outcome.actual.reportStatus).toBe('unverifiable')
     expect(outcome.actual.detail).toContain('separate "instance started" records')
   })
+
+  it('EXCEPTIONDESK BOUNDARY REGRESSION GUARD: a fast terminal failure (failure_terminal, reached in minutes) is correctly classified "missed" but opens ZERO ExceptionDesk items -- ExceptionDesk only reacts to time-based SLA/expiration drift, never to a terminal outcome reached quickly', () => {
+    // This is the exact real system boundary this session's own earlier synthetic validation
+    // first demonstrated by hand (Case C: a submission flagged "missing info" within minutes)
+    // and which the v0.12.0 docs audit subsequently documented in the README and CLI --help as
+    // a real, non-obvious operational gotcha, not a bug: updateExceptionDesk() only ever opens
+    // an item for a 'drifting' PromiseComplianceFinding (a time-based SLA/expiration miss), and
+    // a terminal outcome reached quickly, well within any SLA/expiration window, never produces
+    // one -- checkSlaCompliance() correctly reports 'healthy'/'insufficient_data' for every
+    // finding in that case, not 'drifting'. This test locks that boundary in as permanent,
+    // automatic regression coverage instead of a one-off hand-verified exercise.
+    const failureTerminal = scenarios.find(s => s.category === 'failure_terminal')!
+    const outcome = runScenario(contract, failureTerminal)
+    expect(outcome.actual.reportStatus).toBe('missed')
+    expect(outcome.actual.exceptionCount).toBe(0)
+    expect(outcome.actual.exceptionKinds).toEqual([])
+    expect(outcome.passed).toBe(true)
+  })
 })
 
 describe('runContractHarness -- empire-homecare-referral-intake (contrasting fixture)', () => {

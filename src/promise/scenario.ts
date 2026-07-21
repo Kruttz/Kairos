@@ -431,7 +431,7 @@ function findAfterHoursWindow(calendar: NonNullable<ProcessContract['businessCal
   return { closedInstant, nextOpenInstant }
 }
 
-function generateAfterHours(contract: ProcessContract): ContractScenario | ScenarioGenerationSkip {
+function generateAfterHours(contract: ProcessContract, now: Date = new Date()): ContractScenario | ScenarioGenerationSkip {
   if (!contract.businessCalendar) {
     return { category: 'after_hours', reason: 'Contract declares no businessCalendar -- every SLA/expiration duration is plain wall-clock time, so there is no "after hours" concept to test.' }
   }
@@ -442,7 +442,6 @@ function generateAfterHours(contract: ProcessContract): ContractScenario | Scena
     const backed = evidenceBackedTransitionInto(contract, outcome.state)
     if (!backed) continue
 
-    const now = new Date()
     const { closedInstant, nextOpenInstant } = findAfterHoursWindow(contract.businessCalendar, now)
     const msPerDay = 24 * 60 * 60 * 1000
     const startOffsetDays = (now.getTime() - closedInstant.getTime()) / msPerDay
@@ -477,7 +476,14 @@ function generateAfterHours(contract: ProcessContract): ContractScenario | Scena
   }
 }
 
-const CATEGORY_GENERATORS: Record<ScenarioCategory, (contract: ProcessContract) => ContractScenario | ScenarioGenerationSkip> = {
+// `now` is optional and only actually read by generateAfterHours() (the one category whose
+// output depends on real day-of-week arithmetic) -- every other generator's own timeline
+// offsets are relative numbers, converted to absolute timestamps later by the harness's own
+// `now`, so they don't need it. A function declaring fewer parameters than a type calls for is
+// structurally assignable to it in TypeScript (extra call-site arguments are simply ignored),
+// so the other six generators are left with their original single-parameter signatures rather
+// than each carrying an unused `now` parameter.
+const CATEGORY_GENERATORS: Record<ScenarioCategory, (contract: ProcessContract, now?: Date) => ContractScenario | ScenarioGenerationSkip> = {
   happy_path: generateHappyPath,
   missing_data: generateMissingData,
   failure_terminal: generateFailureTerminal,
@@ -501,12 +507,15 @@ function isSkip(result: ContractScenario | ScenarioGenerationSkip): result is Sc
   return !('id' in result)
 }
 
-export function generateContractScenarios(contract: ProcessContract, categories: ScenarioCategory[] = ALL_SCENARIO_CATEGORIES): ScenarioGenerationResult {
+/** `now` is optional (defaults to real "now") and threaded through only to generateAfterHours()
+ * -- exposed here so tests can inject a fixed instant and prove day-of-week independence
+ * deterministically, rather than depending on which real day `npm test` happens to run on. */
+export function generateContractScenarios(contract: ProcessContract, categories: ScenarioCategory[] = ALL_SCENARIO_CATEGORIES, now: Date = new Date()): ScenarioGenerationResult {
   const scenarios: ContractScenario[] = []
   const skipped: ScenarioGenerationSkip[] = []
 
   for (const category of categories) {
-    const result = CATEGORY_GENERATORS[category](contract)
+    const result = CATEGORY_GENERATORS[category](contract, now)
     if (isSkip(result)) skipped.push(result)
     else scenarios.push(result)
   }
