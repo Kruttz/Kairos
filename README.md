@@ -957,9 +957,14 @@ kairos contract validate <file.json> --json  # exact structured issues, not rend
 # written) on a validation error or a blocking assumption. `--client-id` must exactly match the
 # contract's own `clientId` field -- refuses rather than silently importing into the wrong
 # client's namespace. Provenance/version/status are preserved exactly as given, never rewritten
-# or bumped -- importing an existing contract is not authoring a new one.
+# or bumped -- importing an existing contract is not authoring a new one. Also refuses (exit 2,
+# nothing written) to overwrite an already-saved contract at a DIFFERENT version unless
+# --confirm-version-change is passed -- store.ts has no versioning semantics at all, so an
+# unconfirmed overwrite could silently orphan ProofLedger evidence recorded against the old
+# version's own state/transition/SLA ids.
 kairos contract import <file.json> --client-id acme
 kairos contract import <file.json> --client-id acme --json
+kairos contract import <file.json> --client-id acme --confirm-version-change  # only after a version conflict was already reported and reviewed
 
 # ProofLedger v0 (Phase 3): poll n8n execution data (read-only -- GET only, never a write) for
 # every workflow registered against a contract, extract evidence ONLY from the exact fields each
@@ -969,7 +974,14 @@ kairos contract import <file.json> --client-id acme --json
 # never claims more than n8n's own execution data actually supports -- a marker node with a
 # required field missing is recorded "unverifiable", never silently rounded up to "observed". No
 # new hosted service, no listener -- this was a real design-verification spike's decision (§6.0
-# of the plan doc), verified against live production execution data, not assumed.
+# of the plan doc), verified against live production execution data, not assumed. Iterates every
+# run/branch/item on a node, not just the first (P0 measurement-integrity fix, 2026-07-20) -- a
+# batch-style trigger returning multiple items in one execution, or a node that ran more than once
+# inside a loop, are both fully captured, each item attributed to its own promise instance where
+# possible. When an execution had evidence expected but no readable correlation key at all, it
+# produces no ledger entry (there is no instance to attach it to) -- surfaced explicitly as a
+# warning here and counted cumulatively for `contract report` to warn about too, rather than
+# silently vanishing (P0 measurement-integrity fix, 2026-07-20).
 kairos ledger poll <contract-id> --client-id acme          # requires N8N_BASE_URL/N8N_API_KEY
 kairos ledger poll <contract-id> --client-id acme --json   # full per-workflow poll results as JSON
 kairos ledger show <contract-id>                            # read back what's already recorded, purely local
@@ -993,20 +1005,28 @@ kairos exceptions resolve <contract-id> <item-id> --reason "Called and scheduled
 # generated purely from this contract's own ProofLedger + ExceptionDesk data, no network calls.
 # Counts kept/at-risk/missed/unverifiable/in-progress promise instances -- 'unverifiable' is
 # never counted as 'kept', even when the underlying evidence looks superficially positive (e.g. a
-# terminal state reached only through an indirect, inferred signal) -- plus open/acknowledged/
-# resolved exceptions, an evidence-quality breakdown, and an owner/action summary for every open
-# exception. Always states plainly when evidence is incomplete or the window has nothing to show.
-# No fake ROI math, no raw PII beyond the hashed correlation key, no dashboard (a markdown file,
-# nothing live), no autonomous decisions. Without --bundle, prints only; with --bundle <dir>, also
-# writes promise-report.md + a manifest there, reusing the same Delivery Bundle artifact/manifest
-# pattern `kairos pack export --bundle` already uses.
+# terminal state reached only through an indirect, inferred signal, OR an SLA/expiration
+# determination on a contract that declares pauseRules Kairos's own SLA math doesn't yet account
+# for -- P0 measurement-integrity fix, 2026-07-20) -- plus open/acknowledged/resolved exceptions,
+# an evidence-quality breakdown, and an owner/action summary for every open exception. Always
+# states plainly when evidence is incomplete or the window has nothing to show, including a
+# dedicated disclaimer whenever any executions had evidence expected but no readable correlation
+# key -- these are never silently folded into the counts above (P0 measurement-integrity fix,
+# 2026-07-20 -- "unattributedExecutionCount"). No fake ROI math, no raw PII beyond the hashed
+# correlation key, no dashboard (a markdown file, nothing live), no autonomous decisions. Without
+# --bundle, prints only; with --bundle <dir>, also writes promise-report.md + a manifest there,
+# reusing the same Delivery Bundle artifact/manifest pattern `kairos pack export --bundle`
+# already uses.
 #
 # --from/--to date format: plain ISO 8601 strings, compared lexicographically against each
-# event's own timestamp -- no calendar-aware parsing. A bare date ("2026-07-20") is therefore an
-# EXCLUSIVE boundary against a full timestamp ("2026-07-20T09:00:00Z" sorts AFTER "2026-07-20" as
-# a string), so `--to 2026-07-20` does NOT include events later that same day. For an inclusive
-# "through end of July 20", either pass the following day (`--to 2026-07-21`) or a full timestamp
-# (`--to 2026-07-20T23:59:59.999Z`) directly.
+# event's own real-world event time (eventTime -- n8n's own execution.startedAt -- when known,
+# falling back to observedAt/poll-time only for entries recorded before the P0 measurement-
+# integrity fix added eventTime, 2026-07-20) -- no calendar-aware parsing. A bare date
+# ("2026-07-20") is therefore an EXCLUSIVE boundary against a full timestamp
+# ("2026-07-20T09:00:00Z" sorts AFTER "2026-07-20" as a string), so `--to 2026-07-20` does NOT
+# include events later that same day. For an inclusive "through end of July 20", either pass the
+# following day (`--to 2026-07-21`) or a full timestamp (`--to 2026-07-20T23:59:59.999Z`)
+# directly.
 kairos contract report <contract-id> --client-id acme
 kairos contract report <contract-id> --client-id acme --from 2026-07-01 --to 2026-08-01  # all of July, inclusive
 kairos contract report <contract-id> --client-id acme --bundle ./deliverables
