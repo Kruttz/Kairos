@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -6,6 +6,16 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import type { ProcessContract } from '../../../src/promise/types.js'
 import type { ProofLedgerEntry } from '../../../src/promise/ledger-types.js'
+
+// Found live during the post-Item-13 closeout review: vitest's default 5000ms per-test timeout
+// is too tight for a real-subprocess test chaining several sequential `run()` calls (up to 7-8
+// in this file's own heaviest tests) under full-suite parallel CPU contention -- each spawnSync
+// call alone can take 1-3+ seconds under load, confirmed by this exact test flaking once in a
+// full-suite run and then passing cleanly in isolation (7.6s total). Not a product bug -- a
+// generous, explicit budget for genuinely multi-step real-CLI tests, matching the same "catch a
+// real hang, not real slowness under load" philosophy business-calendar.test.ts's own regression
+// guard already uses.
+vi.setConfig({ testTimeout: 60_000 })
 
 /**
  * End-to-end CLI coverage for roadmap item 11 (Contract Evolution v0, docs/plans/

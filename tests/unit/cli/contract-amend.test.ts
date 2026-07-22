@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -6,6 +6,13 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import type { ProcessContract } from '../../../src/promise/types.js'
 import type { ProofLedgerEntry } from '../../../src/promise/ledger-types.js'
+
+// Same fix as contract-evolve.test.ts (found live during the post-Item-13 closeout review) --
+// vitest's default 5000ms per-test timeout is too tight for real-subprocess tests chaining
+// several sequential `run()` calls under full-suite parallel CPU contention. Applied here
+// proactively (this file's own heaviest test chains 4 calls) rather than waiting for it to flake
+// too.
+vi.setConfig({ testTimeout: 60_000 })
 
 /**
  * End-to-end CLI coverage for roadmap item 12 (Contract Amendment/Diff, docs/plans/
