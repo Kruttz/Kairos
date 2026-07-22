@@ -79,6 +79,7 @@ console.log(pack.testChecklist)               // how to verify each workflow
 | Checks a real sandboxed workflow's execution against a contract's own expected business outcome, alongside its existing structural/adversarial checks (`kairos replay run --contract`, `kairos chaos run --contract`) | A full end-to-end business-outcome proof from one execution — both are explicit that they verify intake evidence only, never state-transition evidence a separate processing workflow produces |
 | Proposes evidence-linked contract amendments from real ProofLedger/ExceptionDesk patterns, and lets a human preview/apply a real, version-archived amendment (`kairos contract evolve`, `kairos contract amend`/`versions`/`diff`) | Any automatic contract change, ever — every proposal requires human accept/reject, every amendment requires explicit `--confirm`, and a breaking amendment is refused outright while any promise instance is still in flight unless explicitly overridden |
 | Translates real, conservative Promise Report counts into an optional dollar/time value estimate — but only for the exact multipliers a human explicitly supplies (`kairos contract value`) | Any invented, inferred, or benchmarked dollar/time figure — every value line shows its own `count × assumption` formula, and the command refuses outright rather than guess a missing currency |
+| Finds candidate processes worth building a ProcessContract for, from a single human-supplied CSV export — 10 narrow heuristic checks, evidence-graded, never proven failures (`kairos scout analyze`) | Any live API/OAuth connector, any scheduled/continuous scanning, any per-worker scoring, or any automatic contract/automation creation — findings are read-only text a human hand-copies into `contract intake`/`contract plan` themselves |
 | Documents assumptions, open questions, and test steps | — |
 | Syncs node types from your live instance | — |
 | Learns from prior builds and failures | — |
@@ -941,6 +942,32 @@ kairos pack export my-pack --impact-notes
 
 # Record a deployed workflow's latest n8n execution into the library (improves retrieval)
 kairos trace record <n8n-workflow-id>
+
+# Operations Scout v0 (roadmap item 14): a read-only, single-file diagnostic for the step BEFORE
+# a ProcessContract exists -- finds which process might be worth building one for, for a
+# business that doesn't already know. Reads exactly the file you name -- no auto-discovery, no
+# directory crawling, no live API/OAuth integration to Sheets/Gmail/Shopify/anything, ever, in
+# this v0. This is not employee surveillance: no per-worker scoring, single file only, no
+# continuous/scheduled scanning -- a point-in-time diagnostic, never a watcher. Resolves 5
+# column roles (status/timestamp/owner/key/next-action) from your explicit --*-column flags
+# first, falling back to a header-name guess when a role isn't hinted -- every finding derived
+# from a guessed role says so in its own caveats. Runs 10 narrow heuristic checks: stale rows,
+# stuck status, missing owner, missing next action, duplicate records, long gaps between
+# timestamps, unclosed loops, possible handoff delays, repeated manual status values, and a
+# candidate process name guessed from column headers. A check whose required column role can't
+# be resolved is honestly skipped, with a stated reason, never run against a wrong column. No
+# raw cell value ever appears in the report, in --json, or anywhere else -- only row indices,
+# counts, and column names (the one exception, by design: the candidate-process-name finding
+# references column HEADERS, schema, never a row's own content). Every finding is a candidate
+# for human review, not a proven business failure. This never creates or feeds a ProcessContract
+# automatically -- a finding may carry a "possible ProcessContract seed," a short sentence you
+# can hand-copy into `kairos contract intake start --context <file>` or a `contract plan`
+# description yourself, if it looks real; there is no dedicated hand-off command in this v0 --
+# `--context` already reads plain text, so nothing more is needed. Without --out, prints only;
+# with --out <dir>, also writes opportunity-report.md/.json + a manifest there.
+kairos scout analyze ./export.csv
+kairos scout analyze ./export.csv --status-column Status --timestamp-column "Last Updated" --owner-column Owner
+kairos scout analyze ./export.csv --out ./scout-output --json
 
 # Draft a ProcessContract from a plain-language business description via an LLM (requires
 # ANTHROPIC_API_KEY). ProcessContract v0 is a separate, later-stage arc

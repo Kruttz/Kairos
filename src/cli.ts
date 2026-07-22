@@ -37,6 +37,7 @@ Usage:
   kairos validate-pack <name>
   kairos preflight <name> [--live] [--bundle-dir <dir>] [--client-id <slug>] [--json]
   kairos trace record <n8n-workflow-id>
+  kairos scout analyze <file.csv> [--status-column <name>] [--timestamp-column <name>] [--owner-column <name>] [--key-column <name>] [--next-action-column <name>] [--out <dir>] [--json]
   kairos contract plan "<business description>" --client-id <slug> [--json]
   kairos contract intake start --client-id <slug> [--context <file>] [--resume <session-id>] [--json]
   kairos contract intake status <session-id> --client-id <slug> [--json]
@@ -142,6 +143,32 @@ Patterns ingest/sync (community pattern library, EXPERIMENTAL -- see docs/plans/
                              never influences generation. Set KAIROS_COMMUNITY_PATTERNS=true to
                              see it (clearly marked [EXPERIMENTAL COMMUNITY]) in 'kairos patterns'
                              output; unset it (the default) to fully disable the display.
+
+Scout options (Operations Scout v0, roadmap item 14, see docs/plans/
+contract-evolution-ops-roadmap-plan.md §14):
+  scout analyze <file.csv>       A read-only, single-file diagnostic for the step BEFORE a
+    [--status-column <name>]     ProcessContract exists -- finds which process might be worth
+    [--timestamp-column <name>]  building one for. Reads exactly the file you name -- no
+    [--owner-column <name>]      auto-discovery, no directory crawling, no live API/OAuth to
+    [--key-column <name>]        Sheets/Gmail/Shopify/anything, ever, in this v0. Not employee
+    [--next-action-column <name>] surveillance: no per-worker scoring, single file only, no
+    [--out <dir>]                continuous/scheduled scanning. Resolves 5 column roles from
+                                  your explicit --*-column flags first, falling back to a
+                                  header-name guess when unhinted -- every finding derived from a
+                                  guess says so in its own caveats. Runs 10 narrow heuristic
+                                  checks (stale rows, stuck status, missing owner/next action,
+                                  duplicate records, long gaps between timestamps, unclosed
+                                  loops, possible handoff delays, repeated manual status values,
+                                  candidate process name from column headers) -- a check whose
+                                  required column role can't be resolved is honestly skipped,
+                                  with a reason, never run against a wrong column. No raw cell
+                                  value ever appears anywhere in the output -- only row indices,
+                                  counts, and column names. Never creates or feeds a
+                                  ProcessContract automatically -- a finding's own "possible
+                                  ProcessContract seed" is a sentence you hand-copy into
+                                  "contract intake start --context <file>" yourself, if it looks
+                                  real. Without --out, prints only; with --out <dir>, also writes
+                                  opportunity-report.md/.json + a manifest there.
 
 Contract options (ProcessContract v0, Phase 0+1+2+5 -- see docs/plans/process-contract-promise-engine-plan.md):
   contract plan "<description>"  Draft a ProcessContract from a plain-language business
@@ -4054,6 +4081,76 @@ async function handleChaos(positional: string[], flags: Record<string, string | 
   }
 }
 
+async function handleScout(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const subcommand = positional[0]
+  const filePath = positional[1]
+
+  if (subcommand !== 'analyze' || !filePath) {
+    console.error('Usage: kairos scout analyze <file.csv> [--status-column <name>] [--timestamp-column <name>] [--owner-column <name>] [--key-column <name>] [--next-action-column <name>] [--out <dir>] [--json]')
+    console.error('')
+    console.error('Operations Scout v0 (roadmap item 14): a read-only, single-file diagnostic --')
+    console.error('finds which process is worth building a ProcessContract for in the first')
+    console.error('place, for a business that doesn\'t already know. Reads exactly the file you')
+    console.error('name -- no auto-discovery, no directory crawling, no live API/OAuth')
+    console.error('integration to Sheets/Gmail/Shopify/any system, ever, in this v0. This is not')
+    console.error('employee surveillance: no per-worker scoring, no continuous/scheduled')
+    console.error('scanning, single file only, findings are candidates for human review, never a')
+    console.error('proven business failure.')
+    console.error('')
+    console.error('Resolves 5 column roles (status/timestamp/owner/key/next-action) from your')
+    console.error('explicit --*-column flags first, falling back to a header-name guess when a')
+    console.error('role isn\'t hinted -- every finding derived from a guessed role says so in its')
+    console.error('own caveats. Runs 10 narrow heuristic checks (stale rows, stuck status,')
+    console.error('missing owner/next action, duplicate records, long gaps between timestamps,')
+    console.error('unclosed loops, possible handoff delays, repeated manual status values, and a')
+    console.error('candidate process name guessed from column headers) -- a check whose required')
+    console.error('column role can\'t be resolved is honestly skipped, with a reason, never run')
+    console.error('against a wrong column. No raw cell value ever appears in the report, in')
+    console.error('--json, or anywhere else -- only row indices, counts, and column names.')
+    console.error('')
+    console.error('This never creates or feeds a ProcessContract automatically. Each finding may')
+    console.error('carry a "possible ProcessContract seed" -- a short sentence you can hand-copy')
+    console.error('into "kairos contract intake start --context <file>" or a "contract plan"')
+    console.error('description yourself, if it looks real. Without --out, prints only; with')
+    console.error('--out <dir>, also writes opportunity-report.md + opportunity-report.json + a')
+    console.error('manifest there.')
+    process.exit(1)
+  }
+
+  const { analyzeCsvFile, generateOpportunityReport } = await import('./scout/analyze.js')
+
+  const hints = {
+    ...(typeof flags['status-column'] === 'string' ? { statusColumn: flags['status-column'] } : {}),
+    ...(typeof flags['timestamp-column'] === 'string' ? { timestampColumn: flags['timestamp-column'] } : {}),
+    ...(typeof flags['owner-column'] === 'string' ? { ownerColumn: flags['owner-column'] } : {}),
+    ...(typeof flags['key-column'] === 'string' ? { keyColumn: flags['key-column'] } : {}),
+    ...(typeof flags['next-action-column'] === 'string' ? { nextActionColumn: flags['next-action-column'] } : {}),
+  }
+
+  let report: import('./scout/types.js').OpportunityReport
+  try {
+    report = await analyzeCsvFile(filePath, hints)
+  } catch (err) {
+    console.error(`Could not read or parse ${filePath}: ${err instanceof Error ? err.message : String(err)}`)
+    process.exit(1)
+  }
+
+  const outDir = typeof flags['out'] === 'string' ? flags['out'] : undefined
+  if (outDir) {
+    const { writeOpportunityReport } = await import('./scout/report-bundle.js')
+    const manifest = await writeOpportunityReport(report, outDir)
+    console.error(`\nOpportunity report written to: ${manifest.files[0]!.path}`)
+    console.error(`Manifest: ${outDir}/opportunity-report-manifest.json`)
+  }
+
+  if (flags['json'] === true) {
+    console.log(JSON.stringify(report, null, 2))
+    return
+  }
+
+  console.log(generateOpportunityReport(report))
+}
+
 // Conservative by design (Phase 6 design-verification pass, docs/plans/reliability-suite-plan.md
 // 11): fetchLatestTrace is cheap (2 API calls/workflow/tick) and N8nApiClient already retries
 // 429s with backoff, but no live rate-limit ceiling was empirically probed against production-
@@ -4788,6 +4885,9 @@ async function main(): Promise<void> {
       break
     case 'contract':
       await handleContract(positional, flags)
+      break
+    case 'scout':
+      await handleScout(positional, flags)
       break
     case 'ledger':
       await handleLedger(positional, flags)
