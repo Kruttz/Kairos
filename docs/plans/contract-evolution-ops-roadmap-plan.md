@@ -173,6 +173,20 @@ Read-only against the contract itself; writes only to the new `amendment-proposa
 
 `kairos contract evolve <id>` runs against a real client's real local ProofLedger + ExceptionDesk data, produces zero proposals on quiet/healthy evidence, produces at least the `sla_threshold_hotspot` and `unreached_state` categories correctly on a crafted fixture, every proposal carries real evidence refs and a sample-size-aware confidence, nothing is ever written to the contract itself, full unit coverage, docs updated.
 
+### Shipped (2026-07-22)
+
+**Category design reconciled against real code before writing detection logic, not against this section's own original sketch**: confirmed `ExceptionDeskItem` has no direct link to `ExceptionRule.id` at all (only `slaId`/`expirationRuleId`/`transitionId`) — the originally-sketched `exception_rule_hotspot` category had nothing real to key against. Folded ExceptionDesk evidence into `sla_threshold_hotspot`/`expiration_rule_hotspot` instead (both DO have a direct id link), added a new whole-contract `high_miss_rate` category for the "Promise Report outcomes" evidence source Codex named explicitly (`buildPromiseReportData()`'s own `instanceCounts`), and added `recommendedNextAction` (a general "go look at this," never a specific replacement value) as its own required field per Codex's explicit list.
+
+**Shipped**: `src/promise/evolution-types.ts`/`evolution.ts` — `analyzeContractForAmendments(contract, entries, exceptions, harnessResult?, now?)`, pure, reusing only `checkSlaCompliance()` and `buildPromiseReportData()` (both already-shipped) as its two real data sources. Filters entries to `contractVersion === contract.version` before anything else runs — an old, since-amended version's entries could reference an id whose meaning has changed (exactly the risk Item 12's `diffProcessContracts()` breaking-change classification exists to catch), so mixing versions into one hotspot count would risk misattributing the wrong evidence to the current contract shape. `harness_mismatch` proposals (from an optional `HarnessResult` parameter, "if available") are always confidence `'low'`, unconditionally — never blended with real-evidence confidence, since a harness failure is evidence about internal consistency between the contract's own stated expectation and Kairos's own evaluation logic, not about real-world business behavior (this section's own Risks). Proposal ids are deterministic (`makeProposalId(contractId, version, category, elementId)`), not a counter — found and fixed during design, before any live testing: a counter-based id would have made `evolution-store.ts`'s own upsert-by-id silently write-once, defeating the whole point of re-running `evolve` regularly. `src/promise/evolution-store.ts` — `upsertContractAmendmentProposals()` preserves an existing proposal's `status`/`history`/`createdAt`/`appliedToVersion` across re-detection (a human's prior accept/reject is never silently reset to `'proposed'` just because the same hotspot is detected again) while refreshing detection-derived fields (`summary`/`evidence`/`occurrenceCount`/`sampleSize`/`confidence`); `updateProposalStatus()` is the reject/accept audit trail, same file-lock + write-to-temp-then-rename discipline as `exception-store.ts`. `cli.ts` gained `kairos contract evolve run/list/show/accept/reject`, plus `--from-proposal <id>` on the EXISTING `kairos contract amend` (Item 12) — the bridge Codex's own scope required ("Accepted proposals should flow through the amendment/diff gate"): accepting a proposal only ever records intent (never touches the contract); a human still always hand-authors the new contract file themselves (this v0 never infers a replacement value); `contract amend --confirm --from-proposal <id>` is what actually marks a proposal `'applied'`, stamped with the real resulting version, only after Item 12's own full validate/diff/breaking-change/active-instance gate has already passed.
+
+**A real, severe bug found and fixed via this phase's own live-testing discipline, in already-shipped code, not new code**: the first live checkpoint of `kairos contract evolve run` hung for 90+ seconds at 100% CPU. Root cause, isolated by bisecting the call stack across three narrowing live checks (a pure in-process call to `analyzeContractForAmendments` alone: 1.4s; the same call plus real ledger/exception-store I/O: still fast; only the full CLI path: hung) rather than guessed at: `business-calendar.ts`'s `isBusinessMinute()` constructed a **brand-new `Intl.DateTimeFormat` on every single call**, and `businessMinutesBetween()` walks minute-by-minute — fine at the "multi-day span" scale the file's own original doc comment assumed, but nothing in any real caller (`checkSlaCompliance`, `kairos contract report`, `kairos watch --contracts`, and now `kairos contract evolve run`) restricts itself to "recent" data; an old, still-open promise instance evaluated against the real current time is a normal case, not an edge case, and a multi-year gap meant ~1.3 million minute checks, each constructing a fresh formatter. Fixed by caching one `Intl.DateTimeFormat` per timezone and reusing it — a pure performance fix, zero behavior change (confirmed: all 50 pre-existing `business-calendar.test.ts`/`sla-compliance.test.ts` tests still pass unchanged, and both files got noticeably *faster* even at normal scale). This dropped a single multi-year `businessMinutesBetween()` call from "does not complete" to ~3s; a permanent regression-guard test now asserts this stays under 30s (a deliberately generous bound — the real number is ~3s in isolation, ~13s under full-suite CPU contention — chosen to catch a regression back toward "hangs," not to enforce a tight SLA). This bug predates this phase entirely (any existing caller with sufficiently old data could have hit it) — Item 11's own test/checkpoint discipline is what surfaced it, the same "a live checkpoint found a real production bug, fix it before calling the phase done" pattern this whole arc has followed since Phase 5/6.
+
+**A second, related, but NOT fixed, finding, named honestly rather than silently patched**: `analyzeContractForAmendments()` itself calls compliance-checking logic more times than strictly necessary (`checkSlaCompliance()` once directly for hotspot detection, then again per-instance via `buildPromiseReportData()`'s own internal `classifyPromiseInstance()` for `high_miss_rate`) — for a contract with genuinely old dormant instances, this redundancy still costs real seconds even with the `Intl.DateTimeFormat` fix (measured: ~40 redundant calls × ~3s ≈ 90s+ for an artificially extreme 2.5-year-old fixture). Deliberately NOT fixed in this pass — it would mean either restructuring `evolution.ts`'s own internal call pattern or touching `buildPromiseReportData()`'s signature (already-shipped, widely-used code), and realistic client data (recent activity, not multi-year-old dormant instances) does not hit this cost in practice. The end-to-end CLI test fixture (`tests/unit/cli/contract-evolve.test.ts`) was built with a plain wall-clock-hours SLA and `Date.now()`-relative timestamps specifically to avoid this cost by construction, documented in the test file's own doc comment, rather than papering over it with a longer timeout.
+
+**Live-checkpointed** via real end-to-end CLI subprocess runs (no n8n/network needed — everything here is local file I/O): `kairos contract evolve run` on a real seeded ledger (8 of 10 instances drifting) produces a `sla_threshold_hotspot` proposal with `confidence: 'high'`, matching Codex's own worked example exactly; re-running against unchanged evidence refreshes rather than duplicates; `list`/`show` round-trip correctly; `reject` records a real audited history entry and never touches the contract; the full `accept` → hand-author a new contract → `amend --confirm --from-proposal` → proposal marked `'applied'` with the real resulting version lifecycle was run end to end and verified at every step.
+
+18 new unit tests (`tests/unit/promise/evolution.test.ts`), 11 new unit tests (`tests/unit/promise/evolution-store.test.ts`, including the single most important invariant: re-detection never silently resets a human's prior accept/reject decision), 1 new permanent regression-guard test (`business-calendar.test.ts`), 7 new end-to-end CLI tests (`tests/unit/cli/contract-evolve.test.ts`) — full suite 1985 → 2022, typecheck/lint/docs-drift clean.
+
 ---
 
 ### 12. Contract Amendment/Diff
@@ -794,3 +808,1296 @@ Items 16, 17 (longer-term half), and 18 — all three are documented above at fu
 | 16 | Platform Adapter Layer | Real client demand (not met) | Strategy only, zero code |
 | 17 | Node.js Optional Runtime | Real n8n operational pain (not met); near-term half already shipped | Strategy only for the unshipped half, zero code |
 | 18 | Dashboard / Portal | Real client demand (not met) | Strategy only, zero code |
+
+---
+
+# Addendum: Roadmap Context Update Before Continuing Items 11–18
+
+Date: 2026-07-21
+
+This addendum captures side-chat roadmap context that was developed outside Claude Code. It is intentionally appended at the end of the plan so no existing plan content is removed or rewritten while implementation work may already be in progress.
+
+This section is context and guardrails for future implementation. It should not be treated as permission to start unrelated work. Current implementation should remain scoped to the approved item only.
+
+## Why This Addendum Exists
+
+Several roadmap discussions happened outside the codebase and outside Claude Code. The implementation agent may not know this context unless it is written down directly.
+
+This addendum records:
+
+- Completed roadmap status.
+- The corrected interpretation of Items 11–18.
+- Strategic framing for Kairos.
+- Item 11 scope boundaries.
+- Items 13–15 as later roadmap context.
+- Items 16–18 as explicitly deferred.
+- Corrections to possible misunderstandings from prior AI summaries.
+- What should and should not be built next.
+
+The screenshots alone are not sufficient context. Future implementation should read this addendum, the existing plan, and the current source code directly.
+
+## Current Completed Status
+
+Items already complete:
+
+4. Intake Interview v0
+   - Multi-question intake exists.
+   - Contract drafting from intake exists.
+   - Intake improves the upstream business-logic capture layer.
+
+5. Contract Scenario Generator
+   - Scenario generation from ProcessContract exists.
+   - It creates business-level scenarios from states, transitions, SLAs, exceptions, and evidence expectations.
+
+6. Kairos Contract Harness / Node Harness v0
+   - Node.js harness/simulation/assertion layer exists.
+   - Harness can run generated scenarios against the real Promise Engine logic without n8n or network.
+   - This is the near-term Node.js role.
+
+7. Replay Upgrade with Contract Outcome Checks
+   - Replay can check intake-level contract outcomes.
+   - Scope caveat exists: because compiled contracts are split into multiple workflows, replaying a single webhook workflow can usually prove only intake-level evidence, not full end-to-end promise classification.
+
+8. Chaos Upgrade with Business-Level Scenarios
+   - Chaos can run intake-testable contract scenarios.
+   - It keeps structural chaos and business-level outcome checks separate.
+   - It does not overclaim full contract coverage where n8n workflow structure prevents it.
+
+9. ProofLedger / ExceptionDesk Harness Tests
+   - Harness is now part of permanent regression coverage.
+   - It verifies Promise Engine behavior across fixtures.
+   - It locks in known boundaries such as fast terminal failures not automatically opening ExceptionDesk items.
+
+10. Contract Compiler Verification
+    - Compiler verification exists.
+    - It checks that deployed workflows structurally contain required evidence nodes, correlation-key references, and start-condition coverage.
+    - It does not claim semantic correctness, only structural presence.
+
+12. Contract Amendment/Diff
+    - Complete and committed.
+    - Contract version history exists.
+    - Contract diff/amend/version CLI exists.
+    - Amendment safety/versioning is now the accept/apply path for Item 11.
+    - Contract changes should flow through this machinery rather than silent overwrite.
+    - Item 12 should not be re-planned as if it does not exist.
+
+Known commit context:
+- Item 12 was committed before this addendum.
+- Future agents should verify exact git state directly instead of relying on this note.
+
+## Strategic Framing
+
+Kairos is a Business Operations Reliability engine.
+
+Kairos should not be framed narrowly as only an AI workflow builder. The stronger direction is:
+
+> Kairos defines the business promise, builds/verifies the automation, monitors whether the promise is being kept, surfaces exceptions, reports evidence-graded outcomes, and evolves the ProcessContract with human approval.
+
+Important framing principles:
+
+- ProcessContract / WorkflowIntent is the source-of-truth layer.
+- The business promise is the source of truth; generated workflows are compiled output.
+- n8n is the first execution substrate, not the conceptual boundary.
+- Node.js is important, but near-term it is deterministic harness/simulation/assertion infrastructure, not a hosted runtime product.
+- Platform adapters are optional downstream execution choices, not the main moat right now.
+- Use evidence-graded evaluation language, not guarantee/proof language.
+- Avoid claims like “Kairos proves the promise was kept” unless the evidence model and shadow validation justify that language.
+- Prefer “Kairos produces evidence-graded evaluations of whether the process appears to have kept the promise.”
+- Human approval is required for contract changes and business-impact claims.
+- Do not build autonomous production rewrites.
+- Do not build a hosted SaaS/dashboard/platform expansion unless real client need proves CLI/static artifacts are insufficient.
+- Avoid premature platformization.
+- Avoid turning Kairos into a universal business ontology, generic process-mining platform, or autonomous repair brain.
+
+## Corrections To Prior AI/Plan Interpretations
+
+These corrections should guide future implementation:
+
+1. Item 12 is already complete.
+   - Contract Amendment/Diff was completed and committed.
+   - The next implementation target is Item 11: Contract Evolution v0.
+   - Item 11 should use Item 12’s existing version/diff/amend system as the accept/apply path.
+
+2. “Dashboard” language is too early.
+   - For Item 13, prefer “Value Report” or “Automation P&L / Value Report.”
+   - Start as a static/local artifact, not a dashboard.
+   - Do not assume dashboard/portal yet.
+
+3. Harness mismatches and ExceptionDesk findings are separate evidence sources.
+   - Harness results do not come from ExceptionDesk.
+   - ExceptionDesk does not “contain” harness mismatches.
+   - Contract Evolution can consume both as separate evidence sources.
+
+4. “Automatically recompile/retest after approval” is too broad for v0.
+   - Safer v0: approval creates/amends the contract through Item 12.
+   - Then the operator explicitly runs compile/build/test.
+   - Do not make approval trigger automatic production workflow changes in v0.
+
+5. “38% branch missing handler” or similar claims need structured evidence.
+   - v0 can propose from counts/hotspots.
+   - v0 should not infer exact business-rule changes from free text unless the evidence model supports it.
+   - Frequency/hotspot-based proposals are acceptable.
+   - Magical interpretation is not acceptable.
+
+6. Item 11 is not Self-Tuning Flywheel.
+   - Contract Evolution v0 proposes structured, evidence-linked amendments.
+   - Self-Tuning Flywheel is later and broader.
+   - Do not merge Items 11 and 15.
+
+7. Item 11 is not Automation P&L.
+   - Value reporting is Item 13.
+   - Do not include dollar estimates or ROI in Item 11.
+
+8. Item 11 is not Operations Scout.
+   - Operations Scout discovers new process opportunities from approved read-only inputs.
+   - Contract Evolution improves an existing ProcessContract based on evidence from that contract.
+
+9. Item 11 is not a dashboard.
+   - CLI/local storage/static output is enough for v0 unless a later real need proves otherwise.
+
+## Correct Next Arc
+
+The correct next implementation target is:
+
+## Item 11 — Contract Evolution v0
+
+### Purpose
+
+Treat ProcessContract as a hypothesis that can improve based on real operational evidence.
+
+The purpose of Contract Evolution v0 is to convert repeated evidence-backed patterns into structured, human-gated amendment proposals.
+
+It should not automatically change business rules. It should not automatically rewrite workflows. It should not claim to know the correct answer without evidence.
+
+### Core Idea
+
+Kairos already has:
+
+- ProcessContract as the source-of-truth model.
+- ProofLedger as evidence history.
+- SLA compliance.
+- ExceptionDesk.
+- Promise Reports.
+- Scenario Generator.
+- Contract Harness.
+- Replay outcome checks.
+- Chaos outcome checks.
+- Compiler verification.
+- Contract diff/amend/version machinery.
+
+Item 11 should connect these into a conservative feedback loop:
+
+```text
+Observed evidence
+      ↓
+Repeated pattern / hotspot detection
+      ↓
+Structured Contract Evolution proposal
+      ↓
+Human approve/reject
+      ↓
+If approved: Item 12 diff/amend/version path
+      ↓
+Operator explicitly recompiles/builds/tests
+```
+
+### Evidence Sources
+
+Contract Evolution v0 may read from these existing evidence sources:
+
+1. ProofLedger entries
+   - Evidence status.
+   - Observed/asserted/verified/unverifiable evidence.
+   - Transition evidence.
+   - Instance start evidence.
+   - Skipped or unattributed outcomes where available.
+   - Repeated missing/unverifiable evidence.
+
+2. ExceptionDesk items
+   - SLA misses.
+   - Stuck/expired cases.
+   - Repeated exceptions by SLA, owner, state, or contract element.
+   - Human ack/resolve history.
+   - Repeated owner/action hotspots.
+
+3. Promise Report classifications
+   - kept
+   - missed
+   - at_risk
+   - in_progress
+   - unverifiable
+   - evidence completeness
+   - report-level caveats/disclaimers
+
+4. Contract Harness results
+   - Scenario category failures.
+   - Scenario mismatches.
+   - Skipped scenario categories.
+   - Expected-vs-actual outcome mismatches.
+   - Harness results are separate from ExceptionDesk items.
+
+5. Replay/Chaos outcome results, if persisted or available
+   - Business-outcome mismatch.
+   - Intake-level evidence mismatch.
+   - Scope caveats must be preserved.
+   - Do not overclaim full end-to-end verification from intake-only replay/chaos checks.
+
+6. Compiler verification results, if persisted or available
+   - Missing evidence node.
+   - Missing correlation key reference.
+   - Missing start-condition coverage.
+   - These are structural findings, not proof of semantic correctness.
+
+### What v0 Should Detect
+
+Contract Evolution v0 should detect repeated evidence-backed patterns/hotspots, not invent business logic.
+
+Acceptable v0 pattern types include:
+
+1. Repeated unverifiable evidence for a transition
+   - Example: “Transition `contact_attempted` repeatedly produces unverifiable evidence.”
+   - Possible proposal: review or strengthen EvidenceRequirement for that transition.
+
+2. Repeated SLA exceptions for an owner
+   - Example: “Owner `Intake Coordinator` repeatedly receives SLA exceptions for `first_contact_sla`.”
+   - Possible proposal: review SLA, handoff, owner assignment, or escalation path.
+
+3. Repeated SLA exceptions for a state
+   - Example: “Instances frequently get stuck in `received` past deadline.”
+   - Possible proposal: review transition coverage out of that state.
+
+4. State often reached but terminal evidence missing
+   - Example: “State `acknowledged` is important but has no terminal EvidenceRequirement.”
+   - Possible proposal: add or review terminal evidence requirement.
+
+5. Terminal outcome lacks evidence requirement
+   - Example: “Success terminal state exists, but no EvidenceRequirement proves arrival there.”
+   - This exact kind of fixture issue has already appeared in existing contracts.
+   - Possible proposal: add evidence requirement for transition into the terminal outcome.
+
+6. Harness category repeatedly fails
+   - Example: “Scenario category `missing_data` repeatedly mismatches expected outcome.”
+   - Possible proposal: review branch/exception/evidence modeling.
+
+7. Scenario category is repeatedly skipped
+   - Example: “`failure_terminal` scenario cannot be generated because the contract lacks terminal evidence.”
+   - Possible proposal: review contract completeness.
+
+8. High skipped/unattributed evidence rate
+   - Example: “Ledger polling checks executions but produces few usable promise instances.”
+   - Possible proposal: review correlation key extraction or workflow instrumentation.
+
+9. Repeated open exceptions that resolve manually the same way
+   - Example: “Exceptions for state `waiting_for_customer` are repeatedly resolved with the same human note.”
+   - v0 should not infer exact rule changes from free text.
+   - It may propose “review whether this repeated manual resolution should be represented in the contract.”
+
+10. Repeated evidence-quality ceiling
+   - Example: “Large fraction of outcomes are unverifiable.”
+   - Possible proposal: strengthen instrumentation or evidence requirements.
+
+11. Contract element appears unused
+   - Example: “Transition X has no observed evidence across N runs/windows.”
+   - Possible proposal: review whether transition is unreachable, unused, or under-instrumented.
+   - Must avoid declaring it dead without enough evidence.
+
+12. Repeated Compiler Verification gaps
+   - Example: “Evidence node for transition X missing from generated workflow.”
+   - Possible proposal: review compiler prompt/evidence node requirements.
+
+### What v0 Should Produce
+
+Contract Evolution v0 should produce structured proposals.
+
+Each proposal should include:
+
+- proposalId
+- contractId
+- contractVersion
+- clientId
+- createdAt
+- status
+  - proposed
+  - accepted
+  - rejected
+  - superseded, if needed
+- proposalType
+  - evidence_gap
+  - sla_hotspot
+  - owner_hotspot
+  - terminal_evidence_gap
+  - harness_mismatch
+  - scenario_skip
+  - instrumentation_gap
+  - unattributed_evidence
+  - recurring_exception
+  - contract_review
+- severity
+  - info
+  - warning
+  - important
+- confidence
+  - low
+  - medium
+  - high
+- evidenceWindow
+  - from
+  - to
+  - count
+- affectedContractElements
+  - stateIds
+  - transitionIds
+  - slaIds
+  - exceptionRuleIds
+  - evidenceRequirementIds
+  - owner labels, if applicable
+- evidenceLinks
+  - ProofLedger entry refs
+  - ExceptionDesk item refs
+  - Promise Report artifact refs
+  - Harness result refs
+  - Replay/Chaos refs, if available
+  - Compiler verification refs, if available
+- observedPatternSummary
+- proposedContractChange
+  - optional in v0
+  - should be structured only when safe
+  - can also be “review needed” rather than a concrete patch
+- humanReadableRecommendation
+- risks
+- caveats
+- decision
+  - accepted/rejected/null
+- decidedAt
+- decidedBy, if provided
+- decisionReason
+
+### Proposal Types: Important Distinction
+
+Not every proposal should contain a concrete contract patch.
+
+There should be two levels:
+
+1. Review proposal
+   - The system has evidence of a hotspot.
+   - It recommends human review.
+   - It does not know the exact correct amendment.
+
+2. Amendment proposal
+   - The system has enough structured evidence to propose a concrete contract change.
+   - The proposed change can be shown through Item 12’s diff machinery.
+   - A human must approve before it becomes a contract amendment.
+
+Most v0 proposals should probably be review proposals.
+
+Concrete amendments should be limited to cases where the evidence is structurally clear, such as:
+
+- Add an EvidenceRequirement for a terminal transition that currently has none.
+- Mark a contract area as needing review due to repeated unverifiable outcomes.
+- Add or update metadata/caveat fields if the schema supports it safely.
+
+Do not infer exact SLA duration changes, retry counts, branch rules, or owner changes from free-text exception notes in v0.
+
+### Approval / Rejection Flow
+
+Approval should use Item 12.
+
+Expected flow:
+
+```text
+kairos contract evolve propose <contractId> --client-id <clientId>
+kairos contract evolve list <contractId> --client-id <clientId>
+kairos contract evolve show <proposalId> --client-id <clientId>
+kairos contract evolve reject <proposalId> --client-id <clientId> --reason "<reason>"
+kairos contract evolve accept <proposalId> --client-id <clientId>
+```
+
+On accept:
+
+- If the proposal has a concrete proposed contract amendment:
+  - Run it through Item 12’s diff/amend/version machinery.
+  - Show the diff.
+  - Require explicit confirmation.
+  - Preserve version history.
+  - Do not silently overwrite.
+- If the proposal is review-only:
+  - Mark as accepted as a review item, but do not modify the contract.
+  - Human can later manually amend the contract.
+
+Acceptance should not automatically:
+
+- Recompile workflows.
+- Build workflows.
+- Deploy workflows.
+- Run replay.
+- Run chaos.
+- Run harness.
+- Change production workflows.
+
+After acceptance, the operator can explicitly run:
+
+```text
+kairos contract diff ...
+kairos contract amend ...
+kairos contract compile ...
+kairos contract compile --build ...
+kairos contract scenarios generate ...
+kairos contract harness run ...
+kairos replay run --contract ...
+kairos chaos run --contract ...
+```
+
+### Rejection Flow
+
+Rejection should be recorded locally.
+
+A rejected proposal should retain:
+
+- proposalId
+- rejectedAt
+- decisionReason
+- evidence snapshot or refs
+- proposal content
+
+Rejected proposals should not disappear silently.
+
+Future proposal generation should avoid repeatedly re-proposing the exact same rejected recommendation unless new evidence materially changes the case.
+
+### Storage
+
+Proposals should be stored locally.
+
+Possible path shape:
+
+```text
+~/.kairos/contract-evolution/<clientId>/<contractId>/proposals.jsonl
+```
+
+or similar.
+
+Storage should follow existing Kairos local-data patterns:
+
+- clientId-scoped
+- contractId-scoped
+- append-only where practical
+- chmod 600
+- file locking if concurrent writes are possible
+- no hidden network transmission
+- no community sharing
+- no PII leakage beyond local user-owned storage
+- preserve enough evidence references to audit why proposal existed
+
+### CLI Surface
+
+Possible v0 CLI surface:
+
+```text
+kairos contract evolve propose <contractId> --client-id <clientId>
+kairos contract evolve list <contractId> --client-id <clientId>
+kairos contract evolve show <proposalId> --client-id <clientId>
+kairos contract evolve accept <proposalId> --client-id <clientId>
+kairos contract evolve reject <proposalId> --client-id <clientId> --reason "<reason>"
+```
+
+Alternative naming is acceptable if consistent with existing CLI style.
+
+Important: CLI should clearly state:
+
+- It is proposing contract review/amendment.
+- It is not modifying production workflows.
+- It is evidence-graded.
+- It requires human approval.
+- Accepted proposals use existing contract amendment/versioning machinery.
+
+### Tests / Checkpoints For Item 11
+
+Minimum tests:
+
+1. Proposal generation from repeated unverifiable ProofLedger evidence.
+2. Proposal generation from repeated ExceptionDesk SLA hotspot.
+3. Proposal generation from terminal state missing EvidenceRequirement.
+4. Proposal generation from repeated harness mismatch.
+5. No proposal when evidence count is below threshold.
+6. No exact amendment inferred from free-text notes.
+7. Proposal stores with clientId isolation.
+8. Proposal list/show work.
+9. Reject records reason and does not delete proposal.
+10. Accept review-only proposal does not mutate contract.
+11. Accept concrete amendment proposal routes through Item 12 diff/amend/version machinery.
+12. Existing contract history remains intact.
+13. Rejected proposal is not immediately re-created without new evidence.
+14. File permissions and storage behavior match local custody expectations.
+15. Documentation and CLI help use evidence-graded language.
+
+Checkpoints:
+
+- Pure unit tests for proposal detection.
+- Local integration test with synthetic ledger/exception/harness data.
+- No n8n required for v0 unless using existing artifacts.
+- If live n8n is used, read-only only unless disposable workflows are created.
+
+### Guardrails For Item 11
+
+Item 11 must not:
+
+- Automatically change a ProcessContract.
+- Automatically recompile workflows.
+- Automatically build/deploy workflows.
+- Automatically change production workflows.
+- Claim guarantee/proof.
+- Infer exact business rules from free-text notes.
+- Merge harness mismatches and ExceptionDesk findings as one source.
+- Include Automation P&L.
+- Include Operations Scout.
+- Include Self-Tuning Flywheel.
+- Include platform adapters.
+- Include Node.js optional runtime.
+- Include dashboard/portal.
+- Share data externally.
+- Learn from synthetic-only evidence as if it were real production evidence.
+
+Item 11 should:
+
+- Use evidence-graded language.
+- Prefer “review recommended” when the correct amendment is unclear.
+- Require human approval.
+- Preserve evidence links.
+- Preserve contract version history.
+- Use Item 12 for actual contract amendments.
+- Keep local data custody.
+- Keep clientId isolation.
+
+### Risks / Open Questions For Item 11
+
+1. Proposal quality
+   - If proposals are too vague, they are not useful.
+   - If proposals are too specific, they may overclaim.
+   - v0 should bias toward conservative review proposals.
+
+2. Evidence thresholds
+   - Need minimum count/window thresholds.
+   - Avoid noisy one-off findings.
+   - Thresholds should be configurable or at least explicit.
+
+3. Free-text evidence
+   - Exception notes may contain useful hints, but v0 should not infer exact business-rule changes from them.
+   - Treat free text as supporting context, not structured proof.
+
+4. Active instance safety
+   - If accepting a proposal produces a breaking contract amendment, Item 12’s active-instance refusal rules should apply.
+
+5. Synthetic evidence
+   - Harness results are useful, but synthetic-only evidence should not be promoted as real operational learning.
+   - Proposals based only on harness results should be labeled as test/harness-based, not production-observed.
+
+6. Proposal fatigue
+   - Repeatedly surfacing the same proposal after rejection is bad UX.
+   - Store rejection decisions and suppress duplicates unless new evidence changes the case.
+
+7. Scope creep into Self-Tuning Flywheel
+   - Item 11 should record decisions, but not automatically modify prompts/rules.
+   - Pattern promotion belongs to Item 15.
+
+### Definition Of Done For Item 11
+
+Item 11 is done when:
+
+- Contract Evolution proposal types exist.
+- Proposal storage exists and is client/contract scoped.
+- Proposal generation reads current evidence sources.
+- At least ProofLedger, ExceptionDesk, Promise Report, and Harness evidence can be represented or linked.
+- v0 detects repeated evidence-backed hotspots.
+- Proposals are evidence-linked.
+- Human can list/show/accept/reject.
+- Reject is recorded.
+- Accept uses Item 12’s amendment/version path when there is a concrete amendment.
+- Review-only proposals can be accepted without mutating the contract.
+- No production workflow changes happen automatically.
+- Tests cover core proposal generation and decision flows.
+- CLI help and README explain the feature without guarantee/proof language.
+- Plan doc is updated with shipped scope and known deferrals.
+
+---
+
+## Item 13 — Automation P&L / Value Report
+
+### Purpose
+
+Show business value without fake ROI math.
+
+This item should make Kairos commercially useful by connecting reliability outcomes to operational impact.
+
+It should answer:
+
+- What happened operationally?
+- What improved or worsened?
+- Where did the business avoid dropped work/data/customers/revenue?
+- What might that be worth if the human supplies assumptions?
+
+It must not fabricate financial value.
+
+### Relationship To Current Kairos Architecture
+
+Item 13 should extend or complement Promise Report.
+
+It can use:
+
+- Promise Report classifications.
+- ProofLedger evidence.
+- ExceptionDesk history.
+- Contract Evolution proposals.
+- Workflow/process health signals.
+- Harness/replay/chaos outcomes, when relevant.
+
+It should probably start as a local/static artifact, similar to existing bundle/report patterns.
+
+### Observed Facts Section
+
+The report should separate factual observations from estimated value.
+
+Observed facts may include:
+
+- Promises kept.
+- Promises missed.
+- Promises unverifiable.
+- Promises in progress.
+- SLA misses.
+- SLA misses reduced or avoided, if comparative baseline exists.
+- Exceptions opened.
+- Exceptions resolved.
+- Manual follow-ups detected.
+- Manual follow-ups reduced, if evidence supports comparison.
+- Evidence completeness.
+- Repeated bottlenecks.
+- Workflow/process health.
+- Contract Evolution proposals created/accepted/rejected.
+- Harness/replay/chaos confidence signals.
+
+### Estimated Value Section
+
+Dollar estimates should appear only if a human supplies assumptions.
+
+Examples of human-supplied assumptions:
+
+- Cost per missed follow-up.
+- Value per retained lead.
+- Labor cost per manual task.
+- Average revenue per order.
+- Average cost of delayed invoice.
+- Cost per compliance miss.
+- Cost per support escalation.
+- Cost per manual rework event.
+
+No assumptions means no dollar figure.
+
+Estimates must be labeled clearly as estimates, not facts.
+
+### Guardrails
+
+Item 13 must not:
+
+- Make fake “AI saved you $X” claims.
+- Hide assumptions.
+- Claim direct causality without evidence.
+- Use guarantee/proof language.
+- Overstate accuracy.
+- Become a dashboard-first project.
+- Require hosted infrastructure in v0.
+- Mix clients.
+- Share private data.
+
+Item 13 should:
+
+- Be artifact/report-first.
+- Show assumptions explicitly.
+- Separate observed facts from estimates.
+- Use evidence-graded language.
+- Prefer conservative wording.
+- Include caveats where data is incomplete or unverifiable.
+
+### Possible CLI Surface
+
+Possible commands:
+
+```text
+kairos contract value-report <contractId> --client-id <clientId>
+```
+
+or:
+
+```text
+kairos contract report <contractId> --client-id <clientId> --include-value
+```
+
+The exact surface should be decided later.
+
+### What Not To Build Yet
+
+Do not build Item 13 inside Item 11.
+
+Do not build:
+
+- dashboard
+- billing analytics
+- full ROI engine
+- automated finance assumptions
+- cross-client benchmarking
+- hidden economic model
+
+### Definition Of Done For Future Item 13
+
+Item 13 is done when:
+
+- Static/local Value Report exists.
+- Observed and estimated sections are clearly separated.
+- Dollar values require explicit human assumptions.
+- No fake ROI claims.
+- Output is useful as a client-facing artifact.
+- Tests verify no dollar estimates appear without assumptions.
+
+---
+
+## Item 14 — Operations Scout v0
+
+### Purpose
+
+Move upstream from “client tells Kairos the process” to “Kairos helps identify messy process opportunities.”
+
+Operations Scout should help find candidate processes where work, data, customers, revenue, or handoffs may be getting stuck or dropped.
+
+This connects to the broader idea of Kairos as a Business Operations Reliability agent, but v0 must stay narrow and read-only.
+
+### What v0 Should Do
+
+Operations Scout v0 should:
+
+- Read approved sources only.
+- Start with files/exports, not broad live company crawling.
+- Analyze business records for signs of process breakdown.
+- Output candidate opportunities.
+- Suggest possible ProcessContract starting points.
+- Feed Intake Interview.
+- Never fix or modify anything automatically.
+
+Approved source examples:
+
+- CSV exports.
+- Google Sheets exports.
+- CRM exports.
+- Shopify/order exports.
+- ticket exports.
+- invoice exports.
+- form submissions.
+- support inbox exports.
+- scheduling exports.
+- fulfillment exports.
+
+### Candidate Problems To Detect
+
+Operations Scout may detect:
+
+- stale rows
+- stuck statuses
+- repeated manual status changes
+- missing follow-ups
+- unclosed loops
+- long gaps between steps
+- duplicate work
+- duplicate records
+- handoff delays
+- missing owner
+- missing next action
+- late invoice/payment follow-up
+- delayed onboarding
+- abandoned leads/referrals
+- unresolved tickets
+- order fulfillment bottlenecks
+- missing documents
+- compliance step gaps
+
+### Output
+
+Output should be an Opportunity Report.
+
+Each finding should include:
+
+- candidate process
+- suspected failure mode
+- source file/export
+- evidence rows/records where possible
+- confidence
+- recommended next step
+- possible ProcessContract seed
+- caveats
+- whether more human context is required
+
+### Relationship To Intake Interview
+
+Scout should feed Intake Interview.
+
+A scout finding can become:
+
+- intake starting description
+- attached artifact
+- candidate ProcessContract topic
+- follow-up question source
+
+Expected flow:
+
+```text
+kairos scout analyze <file>
+      ↓
+Opportunity Report
+      ↓
+kairos contract intake start --from-scout <finding>
+```
+
+The exact command can be decided later.
+
+### Guardrails
+
+Operations Scout must not:
+
+- perform employee surveillance
+- score individual workers
+- crawl all company systems broadly
+- run in the background without approval
+- modify any source system
+- send private data externally without explicit approval
+- claim findings are confirmed business failures
+- auto-build automations
+- auto-create contracts without review
+
+Operations Scout should:
+
+- be read-only
+- cite source records
+- label findings as candidates for review
+- preserve local data custody
+- avoid private data sharing
+- keep scope narrow
+- be file/export-first
+
+### Possible CLI Surface
+
+Possible commands:
+
+```text
+kairos scout analyze <file>
+kairos scout report <scanId>
+```
+
+or:
+
+```text
+kairos scout analyze <file> --type crm-export
+kairos scout analyze <file> --type shopify-orders
+kairos scout analyze <file> --type tickets
+```
+
+### What Not To Build Yet
+
+Do not build Operations Scout inside Item 11.
+
+Do not build:
+
+- live connectors
+- browser automation
+- employee monitoring
+- background agent
+- broad company crawler
+- automatic fixes
+- dashboard
+- multi-system knowledge graph
+
+### Definition Of Done For Future Item 14
+
+Item 14 is done when:
+
+- Kairos can analyze at least one approved export/file format.
+- It produces a useful Opportunity Report.
+- Findings cite source rows/records.
+- Findings are framed as candidates, not confirmed failures.
+- A finding can seed Intake Interview or ProcessContract planning.
+- No live systems are modified.
+
+---
+
+## Item 15 — Self-Tuning Flywheel
+
+### Purpose
+
+Use validated operational outcomes to improve Kairos over time.
+
+This item is about making intake, scenario generation, compiler prompts, validators, and evolution suggestions sharper based on real outcomes and human decisions.
+
+It is not autonomous self-improvement.
+
+### What It Should Learn From
+
+Self-Tuning Flywheel may eventually learn from:
+
+- real ProofLedger outcomes
+- ExceptionDesk histories
+- human accepted/rejected Contract Evolution proposals
+- Harness failures
+- Replay outcomes
+- Chaos outcomes
+- Compiler verification failures
+- Promise Report trends
+- Intake corrections
+- Contract amendment history
+
+### What It Can Improve
+
+It may improve:
+
+- intake question ordering
+- intake follow-up prompts
+- contract planning prompts
+- scenario generation coverage
+- evidence requirement suggestions
+- compiler verification checks
+- repair proposal ranking
+- evolution proposal ranking
+- validator warnings
+- pattern recommendations
+- contract templates
+
+### Guardrails
+
+Self-Tuning Flywheel must not:
+
+- learn from synthetic-only evidence as if it were real
+- promote patterns from tests as production knowledge
+- autonomously edit contracts
+- autonomously rewrite production workflows
+- silently change prompts/rules
+- silently share client data
+- create cross-client learning without strict privacy design
+- overfit to one client
+- become a hidden model-training system
+
+Self-Tuning Flywheel should:
+
+- store provenance for every promoted pattern
+- require human approval
+- distinguish real/live evidence from synthetic/test evidence
+- distinguish accepted proposals from rejected proposals
+- keep local/off-by-default unless there is clear reason otherwise
+- produce candidate learning notes first
+
+### Possible v0 Approach
+
+A conservative v0 could:
+
+- record human accepted/rejected proposals
+- track repeated real evidence patterns
+- generate candidate learning notes
+- require explicit promotion of any pattern into prompts/rules
+- keep promoted patterns local
+- show provenance and evidence links
+
+Possible flow:
+
+```text
+evidence pattern
+      ↓
+Contract Evolution proposal
+      ↓
+human accepts/rejects
+      ↓
+candidate learning note
+      ↓
+human promotes or discards
+      ↓
+future intake/scenario/compiler behavior may use promoted pattern
+```
+
+### What Not To Build Yet
+
+Do not build Self-Tuning Flywheel inside Item 11.
+
+Do not build:
+
+- automatic prompt mutation
+- global marketplace
+- background pattern ingestion
+- cross-client learning
+- model fine-tuning
+- autonomous policy updates
+- autonomous contract/workflow rewrites
+
+### Definition Of Done For Future Item 15
+
+Item 15 is done when:
+
+- Kairos records human accepted/rejected proposal outcomes.
+- Candidate learning notes exist.
+- Synthetic/test evidence is structurally prevented from being promoted as real.
+- Human promotion is required.
+- Promoted patterns include provenance.
+- No autonomous behavior changes happen silently.
+
+---
+
+## Items 16–18 Remain Later / Deferred
+
+## Item 16 — Platform Adapter Layer
+
+### Purpose
+
+Eventually support non-n8n execution targets.
+
+Potential targets:
+
+- Zapier
+- Make
+- custom Node runtime
+- other workflow engines
+
+### Correct Architecture
+
+Platform adapters should compile from ProcessContract / WorkflowIntent to target-specific outputs.
+
+Avoid brittle n8n JSON → Zapier/Make translation as the primary architecture.
+
+The better direction is:
+
+```text
+ProcessContract / WorkflowIntent
+        ↓
+target-specific compiler
+        ↓
+n8n / Zapier / Make / Node / other
+```
+
+n8n JSON can be useful as a reference or migration source, but should not become the canonical intermediate representation.
+
+### Why Deferred
+
+Do not build until there is real demand for a non-n8n target.
+
+Reasons to defer:
+
+- n8n is currently the proven substrate.
+- Existing reliability stack is n8n-specific.
+- Platform adapters would multiply scope.
+- Premature adapters risk shallow, brittle support.
+- The current moat is business reliability and contract/evidence modeling, not broad platform coverage.
+
+### What Not To Build Now
+
+Do not build:
+
+- Zapier compiler
+- Make compiler
+- generic workflow IR
+- n8n JSON translator
+- platform marketplace
+- multi-platform dashboard
+
+---
+
+## Item 17 — Node.js Optional Runtime
+
+### Current Node.js Role
+
+Node.js is already important.
+
+Near-term Node.js role is:
+
+- Contract Harness
+- Scenario Simulator
+- Business Assertion Engine
+- Mock Integration Layer
+- Fake Time / Calendar Engine
+- Expected Ledger Generator
+- Expected Exception Generator
+- Report Oracle
+- n8n Sandbox Comparator
+- Regression Test Suite Generator
+- Agent-Native Debugging Layer
+- Business Chaos Engine
+- Operations Scout Support
+- Optional future runtime target
+- Platform Adapter Bridge
+
+The near-term harness/simulation/assertion layer is already partially shipped through Items 5, 6, 7, 8, and 9.
+
+### Optional Runtime Purpose
+
+A Node.js runtime may eventually execute some workflows directly when they are better as code than n8n workflows.
+
+This is later.
+
+### Requirements Before Runtime
+
+A real Node runtime would need:
+
+- durable execution
+- retries
+- idempotency
+- provenance
+- logging
+- observability
+- replayability
+- rollback/safety model
+- credential handling
+- human approval flow
+- deployment model
+- failure isolation
+- local/hosted decision
+- clear relationship to n8n
+
+### Why Deferred
+
+Do not turn Kairos into a generic hosted code platform now.
+
+Reasons to defer:
+
+- The current value is reliability/evidence around business promises.
+- Running production code is a much larger operational burden.
+- n8n is already the first execution substrate.
+- Node is currently more valuable as deterministic validation infrastructure.
+
+### What Not To Build Now
+
+Do not build:
+
+- hosted runtime
+- worker fleet
+- durable task queue
+- generic job execution platform
+- replacement for n8n
+- arbitrary code execution environment
+
+---
+
+## Item 18 — Dashboard / Portal
+
+### Purpose
+
+A dashboard/portal may eventually surface:
+
+- reports
+- exceptions
+- proposals
+- approvals
+- evidence
+- contract versions
+- value reports
+- scout findings
+
+### Why Deferred
+
+Do not assume dashboard is needed yet.
+
+CLI/static artifacts may be enough for the current phase.
+
+A dashboard adds:
+
+- product surface area
+- authentication concerns
+- hosting concerns
+- data custody concerns
+- multi-user permissions
+- notification logic
+- UI maintenance
+- higher expectations from clients
+
+### Correct Trigger
+
+Only build dashboard/portal if real usage proves CLI/static artifacts are insufficient.
+
+Examples of real triggers:
+
+- client needs recurring review interface
+- operator cannot manage exceptions/proposals through CLI
+- approval workflows need multiple users
+- static reports are not enough
+- commercial sales require a lightweight portal
+
+### What Not To Build Now
+
+Do not build:
+
+- SaaS portal
+- login system
+- client dashboard
+- admin console
+- multi-tenant backend
+- hosted report viewer
+
+---
+
+## Current Implementation Recommendation
+
+Start with Item 11 only: Contract Evolution v0.
+
+Do not start Items 13–15 yet. They are roadmap context for architecture alignment so Item 11 does not conflict with future direction.
+
+Do not start Items 16–18.
+
+Recommended Item 11 sequence:
+
+1. Design-verification pass against current code.
+2. Identify existing evidence sources and what can be read today.
+3. Define proposal types and storage.
+4. Build pure hotspot/proposal generation first.
+5. Add local proposal store.
+6. Add CLI list/show/propose.
+7. Add reject.
+8. Add accept using Item 12 amendment/diff/version path where safe.
+9. Add tests.
+10. Update docs and plan.
+
+If current implementation already started before this addendum was appended, do not throw away working code solely because this addendum exists. Instead, use this addendum as review criteria before closing Item 11.
+
+## Relevant Files / Plans To Read Before Coding
+
+Do not rely on memory. Verify current code directly.
+
+Read:
+
+- docs/plans/contract-evolution-ops-roadmap-plan.md
+- docs/plans/intake-scenario-harness-plan.md
+- docs/plans/process-contract-promise-engine-plan.md
+- docs/plans/reliability-suite-plan.md
+- README.md
+- src/promise/
+- src/reliability/
+- /Users/jordankrutman/Desktop/Futrure copy.txt
+- /Users/jordankrutman/Desktop/FutureForKairos.txt
+
+The external desktop files contain strategic context and should be read directly if available. If they are missing, continue from repo plans and this addendum, but state that they were unavailable.
+
+## Short Instruction For Current Work
+
+For now, implement Item 11 only.
+
+Items 13–15 are context for architecture alignment, not current implementation scope.
+
+Items 16–18 remain deferred.
+
+Item 12 already exists and should be used as the contract amendment/version accept path.
+
+No autonomous production workflow changes.
+
+No dashboard.
+
+No platform adapter.
+
+No optional Node runtime.
+
+No Automation P&L.
+
+No Operations Scout.
+
+No Self-Tuning Flywheel.
+
+Use evidence-graded language.
+
+Human approval remains required.
+
+This addendum is intentionally long because it is not just a short note. It is the missing roadmap context that a future implementation agent otherwise would not have.

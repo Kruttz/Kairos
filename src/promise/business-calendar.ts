@@ -10,29 +10,63 @@ import type { BusinessCalendarRef, SlaSpec } from './types.js'
  * timestamps and checking whether it falls in a weekly-hours window is easy to verify correct by
  * inspection (a real property for something whose whole job is not overclaiming precision) --
  * timezone/DST correctness comes from Intl.DateTimeFormat's own timezone database, not
- * hand-rolled offset math. Performance is a non-issue at SLA scale (a multi-day span is at most
- * tens of thousands of minute checks, well under a second).
+ * hand-rolled offset math. A multi-day span is at most tens of thousands of minute checks, well
+ * under a second -- but nothing in this file's own callers restricts `end` to be "recent" (an
+ * old, still-open promise instance evaluated against the real current time is a real, normal
+ * case, not an edge case), so a multi-YEAR span is also real and must stay fast: each minute
+ * check's own `Intl.DateTimeFormat` instance is cached per timezone (below), not reconstructed
+ * per call, after a live multi-year gap was found to hang for 90+ seconds before that fix
+ * (roadmap item 11, docs/plans/contract-evolution-ops-roadmap-plan.md §3, item 11).
  */
 
 const WEEKDAY_MAP: Record<string, BusinessCalendarRef['weeklyHours'][number]['day']> = {
   Mon: 'mon', Tue: 'tue', Wed: 'wed', Thu: 'thu', Fri: 'fri', Sat: 'sat', Sun: 'sun',
 }
 
+/** Per-timezone `Intl.DateTimeFormat` instances, reused rather than reconstructed. A real,
+ * severe performance bug found live (roadmap item 11, docs/plans/
+ * contract-evolution-ops-roadmap-plan.md §3, item 11's own test/checkpoint discipline): the
+ * original `isBusinessMinute()` constructed a BRAND NEW `Intl.DateTimeFormat` on every single
+ * call -- fine at the "multi-day span" scale this file's own original doc comment assumed, but
+ * `businessMinutesBetween()` walks MINUTE BY MINUTE, and any real caller evaluating an old,
+ * still-open promise instance (e.g. `kairos contract evolve run`, `kairos contract report`,
+ * `kairos watch --contracts` -- none of which restrict themselves to "recent" data, by design)
+ * against the real, far-future `now` could trigger millions of minute checks, each constructing
+ * a fresh formatter -- confirmed live to hang for 90+ seconds (a ~2.5-year gap, ~1.3M minutes)
+ * before this fix. `Intl.DateTimeFormat` construction is known to be far more expensive than
+ * calling `.formatToParts()`/`.format()` on an already-built instance -- reusing one, keyed by
+ * timezone, is a pure performance fix with zero behavior change: the formatter's OUTPUT for a
+ * given instant is identical either way, only the redundant construction cost is removed. */
+const weekdayFormatterCache = new Map<string, Intl.DateTimeFormat>()
+const isoDateFormatterCache = new Map<string, Intl.DateTimeFormat>()
+
+function weekdayFormatter(timezone: string): Intl.DateTimeFormat {
+  let formatter = weekdayFormatterCache.get(timezone)
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-US', { timeZone: timezone, weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false })
+    weekdayFormatterCache.set(timezone, formatter)
+  }
+  return formatter
+}
+
+function isoDateFormatter(timezone: string): Intl.DateTimeFormat {
+  let formatter = isoDateFormatterCache.get(timezone)
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' })
+    isoDateFormatterCache.set(timezone, formatter)
+  }
+  return formatter
+}
+
 function isBusinessMinute(date: Date, calendar: BusinessCalendarRef): boolean {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: calendar.timezone,
-    weekday: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).formatToParts(date)
+  const parts = weekdayFormatter(calendar.timezone).formatToParts(date)
 
   const weekdayPart = parts.find(p => p.type === 'weekday')?.value
   const day = weekdayPart ? WEEKDAY_MAP[weekdayPart] : undefined
   if (!day) return false
 
   if (calendar.holidays?.length) {
-    const isoDate = new Intl.DateTimeFormat('en-CA', { timeZone: calendar.timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date)
+    const isoDate = isoDateFormatter(calendar.timezone).format(date)
     if (calendar.holidays.includes(isoDate)) return false
   }
 

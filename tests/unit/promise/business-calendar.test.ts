@@ -57,6 +57,25 @@ describe('businessMinutesBetween', () => {
     expect(businessMinutesBetween(start, end, UTC_CALENDAR)).toBe(0) // after hours in UTC
     expect(businessMinutesBetween(start, end, denverCalendar)).toBe(30) // within hours in Denver
   })
+
+  // Roadmap item 11 (docs/plans/contract-evolution-ops-roadmap-plan.md §3, item 11) found this
+  // live: a multi-year gap (a real, normal case -- an old still-open promise instance evaluated
+  // against the real current time, not restricted to "recent" data by any caller) hung for 90+
+  // seconds before this test existed, because isBusinessMinute() constructed a brand-new
+  // Intl.DateTimeFormat on every one of the ~1.3M minutes walked. Fixed by reusing a cached
+  // formatter per timezone (this file's own doc comment). A permanent regression guard, not just
+  // a one-time fix -- this must stay fast, not just eventually correct.
+  it('stays fast across a multi-year gap (regression guard for the Intl.DateTimeFormat reconstruction bug)', () => {
+    // The bug this guards against hung for 90+ seconds (a real, live-measured number, not an
+    // estimate). The threshold here is deliberately generous -- ~3s in isolation, but full-suite
+    // parallel runs under real CPU contention have measured up to ~13s -- the goal is catching a
+    // regression back toward "doesn't complete," not enforcing a tight performance SLA.
+    const start = Date.now()
+    const result = businessMinutesBetween('2024-01-01T09:00:00Z', '2026-07-22T09:00:00Z', UTC_CALENDAR)
+    const elapsedMs = Date.now() - start
+    expect(elapsedMs).toBeLessThan(30_000)
+    expect(result).toBeGreaterThan(0) // sanity: still produces a real, non-zero answer
+  })
 })
 
 describe('averageBusinessMinutesPerDay', () => {

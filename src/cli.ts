@@ -2505,7 +2505,7 @@ async function handleContractAmend(positional: string[], flags: Record<string, s
   const newFile = typeof flags['new'] === 'string' ? flags['new'] : undefined
 
   if (!contractId || !clientId || !newFile) {
-    console.error('Usage: kairos contract amend <contract-id> --client-id <slug> --new <file.json> [--confirm] [--confirm-breaking-with-active-instances] [--json]')
+    console.error('Usage: kairos contract amend <contract-id> --client-id <slug> --new <file.json> [--confirm] [--confirm-breaking-with-active-instances] [--from-proposal <proposal-id>] [--json]')
     console.error('')
     console.error('Without --confirm (the default): validates the new contract, shows the diff')
     console.error('against the current live version and its breaking/compatible classification,')
@@ -2520,6 +2520,12 @@ async function handleContractAmend(positional: string[], flags: Record<string, s
     console.error('pass --confirm-breaking-with-active-instances too if you understand an')
     console.error('in-flight instance\'s evidence may be misinterpreted against the new shape and')
     console.error('want to proceed anyway.')
+    console.error('')
+    console.error('--from-proposal <proposal-id> links this amendment back to a Contract Evolution')
+    console.error('proposal (kairos contract evolve) once it succeeds -- marks that proposal')
+    console.error('\'applied\' with the resulting version. The proposal never causes the amendment;')
+    console.error('you always still hand-author the new contract file yourself, since this v0')
+    console.error('never infers a specific replacement value.')
     console.error('')
     console.error('Never recompiles or redeploys anything -- run')
     console.error('"kairos contract compile <file.json> --build" yourself afterward.')
@@ -2625,17 +2631,197 @@ async function handleContractAmend(positional: string[], flags: Record<string, s
 
   const { path, archivedVersion } = await amendProcessContract(next, current, 'contract_amend')
 
+  // Roadmap item 11 (docs/plans/contract-evolution-ops-roadmap-plan.md §3, item 11): the bridge
+  // back from a Contract Evolution proposal to the real amendment that acted on it -- "Accepted
+  // proposals should flow through the amendment/diff gate," Codex's own explicit requirement.
+  // Never the other direction: a proposal never causes an amendment by itself, this only ever
+  // records that one already happened, after the fact, once this command's own gates above have
+  // already passed.
+  const fromProposal = typeof flags['from-proposal'] === 'string' ? flags['from-proposal'] : undefined
+  let updatedProposal: import('./promise/evolution-types.js').ContractAmendmentProposal | null = null
+  if (fromProposal) {
+    const { updateProposalStatus } = await import('./promise/evolution-store.js')
+    updatedProposal = await updateProposalStatus(clientId, contractId, fromProposal, 'applied', undefined, next.version)
+    if (!updatedProposal) {
+      console.error(`⚠ --from-proposal "${fromProposal}" does not match any stored proposal for this contract -- the amendment above still succeeded and was NOT rolled back, but no proposal record was linked to it. Check the proposal id with "kairos contract evolve list".`)
+    }
+  }
+
   if (flags['json'] === true) {
-    console.log(JSON.stringify({ amended: true, path, archivedVersion, diff }, null, 2))
+    console.log(JSON.stringify({ amended: true, path, archivedVersion, diff, ...(fromProposal ? { linkedProposal: updatedProposal } : {}) }, null, 2))
     return
   }
   printContractDiff(diff)
   console.log(`\n✓ Amended "${next.name}" (${contractId}): v${archivedVersion} archived, v${next.version} is now live. Path: ${path}`)
+  if (updatedProposal) {
+    console.log(`✓ Proposal "${fromProposal}" marked applied -> v${next.version}.`)
+  }
   if (warnings.length > 0) {
     console.log(`\n${warnings.length} warning(s):`)
     for (const w of warnings) console.log(`  ⚠ [Rule ${w.rule}] ${w.message}${w.path ? ` (${w.path})` : ''}`)
   }
   console.log(`\nNothing was recompiled or redeployed. Run "kairos contract compile ${newFile} --build" to generate and register updated workflows.`)
+}
+
+function proposalStatusIcon(status: import('./promise/evolution-types.js').ProposalStatus): string {
+  return { proposed: '?', accepted: '~', rejected: '✗', applied: '✓' }[status]
+}
+
+function printAmendmentProposal(p: import('./promise/evolution-types.js').ContractAmendmentProposal, stale: boolean): void {
+  console.log(`  [${proposalStatusIcon(p.status)} ${p.status}] ${p.id}`)
+  console.log(`      category: ${p.category}   affects: ${p.affectedElementId}   confidence: ${p.confidence}   sample: ${p.occurrenceCount}/${p.sampleSize}`)
+  console.log(`      ${p.summary}`)
+  console.log(`      next action: ${p.recommendedNextAction}`)
+  if (stale) console.log(`      ⚠ computed against contract v${p.contractVersion}, which is no longer the live version -- re-run "kairos contract evolve run" to refresh.`)
+}
+
+async function handleContractEvolve(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const subcommand = positional[0]
+  const contractId = positional[1]
+  const clientId = typeof flags['client-id'] === 'string' ? flags['client-id'] : undefined
+  const validSubcommands = ['run', 'list', 'show', 'accept', 'reject']
+
+  if (!subcommand || !validSubcommands.includes(subcommand) || !contractId || !clientId) {
+    console.error('Usage: kairos contract evolve run <contract-id> --client-id <slug> [--from <date>] [--to <date>] [--with-harness] [--json]')
+    console.error('       kairos contract evolve list <contract-id> --client-id <slug> [--status <status>] [--json]')
+    console.error('       kairos contract evolve show <contract-id> <proposal-id> --client-id <slug> [--json]')
+    console.error('       kairos contract evolve accept <contract-id> <proposal-id> --client-id <slug> [--reason <text>] [--json]')
+    console.error('       kairos contract evolve reject <contract-id> <proposal-id> --client-id <slug> [--reason <text>] [--json]')
+    console.error('')
+    console.error('Contract Evolution v0: treats ProcessContract as a hypothesis, not permanent')
+    console.error('truth. run reads this contract\'s own real ProofLedger + ExceptionDesk data')
+    console.error('(plus, with --with-harness, generated-scenario mismatches -- always confidence')
+    console.error('\'low\', never blended with real-evidence confidence) and produces evidence-')
+    console.error('linked proposals: frequency/existence hotspots only, never a specific')
+    console.error('replacement value (e.g. never "3 attempts should become 2") -- that would need')
+    console.error('inferring a number from unstructured data this v0 deliberately does not')
+    console.error('attempt. Read-only against the contract itself; writes only to this contract\'s')
+    console.error('own stored proposal list, never the contract.')
+    console.error('')
+    console.error('accept/reject record a human decision (audited, never auto) -- they do NOT')
+    console.error('change the contract either. To actually act on an accepted proposal, hand-')
+    console.error('author a new contract version yourself, then run "kairos contract amend ...')
+    console.error('--from-proposal <proposal-id>" (item 12\'s own diff/amend/version gate is the')
+    console.error('only thing allowed to write a new contract version).')
+    process.exit(1)
+  }
+
+  const { loadProcessContract } = await import('./promise/store.js')
+  const contract = await loadProcessContract(clientId, contractId)
+  if (!contract) {
+    console.error(`No ProcessContract found for client "${clientId}" with id "${contractId}".`)
+    process.exit(1)
+  }
+
+  if (subcommand === 'run') {
+    const { getProofLedgerEntries } = await import('./promise/ledger-store.js')
+    const { loadExceptionDeskItems } = await import('./promise/exception-store.js')
+    const { analyzeContractForAmendments } = await import('./promise/evolution.js')
+    const { upsertContractAmendmentProposals } = await import('./promise/evolution-store.js')
+
+    const allEntries = await getProofLedgerEntries(clientId, contractId, 10000)
+    const window = {
+      ...(typeof flags['from'] === 'string' ? { from: flags['from'] } : {}),
+      ...(typeof flags['to'] === 'string' ? { to: flags['to'] } : {}),
+    }
+    const entries = allEntries.filter(e => (!window.from || (e.eventTime ?? e.observedAt) >= window.from) && (!window.to || (e.eventTime ?? e.observedAt) <= window.to))
+    const exceptions = await loadExceptionDeskItems(clientId, contractId)
+
+    let harnessResult: import('./promise/harness-types.js').HarnessResult | undefined
+    if (flags['with-harness'] === true) {
+      const { generateContractScenarios } = await import('./promise/scenario.js')
+      const { runContractHarness } = await import('./promise/harness.js')
+      const { scenarios } = generateContractScenarios(contract)
+      harnessResult = runContractHarness(contract, scenarios)
+    }
+
+    const fresh = analyzeContractForAmendments(contract, entries, exceptions, harnessResult)
+    const merged = await upsertContractAmendmentProposals(clientId, contractId, fresh)
+    const freshIds = new Set(fresh.map(p => p.id))
+
+    if (flags['json'] === true) {
+      console.log(JSON.stringify({ generated: fresh, allStored: merged }, null, 2))
+      return
+    }
+    console.log(`${contract.name} (${contractId}) — Contract Evolution run`)
+    console.log('─'.repeat(50))
+    if (fresh.length === 0) {
+      console.log('No new/refreshed proposals from this run\'s evidence.')
+    } else {
+      for (const p of fresh) printAmendmentProposal(p, false)
+    }
+    const untouchedCount = merged.filter(p => !freshIds.has(p.id)).length
+    if (untouchedCount > 0) {
+      console.log(`\n(${untouchedCount} previously-stored proposal(s) not re-detected this run -- unchanged, run "kairos contract evolve list" to see all.)`)
+    }
+    return
+  }
+
+  if (subcommand === 'list') {
+    const { loadContractAmendmentProposals } = await import('./promise/evolution-store.js')
+    const proposals = await loadContractAmendmentProposals(clientId, contractId)
+    const statusFilter = typeof flags['status'] === 'string' ? flags['status'] : undefined
+    const filtered = statusFilter ? proposals.filter(p => p.status === statusFilter) : proposals
+
+    if (flags['json'] === true) {
+      console.log(JSON.stringify(filtered.map(p => ({ ...p, stale: p.contractVersion !== contract.version })), null, 2))
+      return
+    }
+    console.log(`${contract.name} (${contractId}) — Amendment Proposals${statusFilter ? ` (status: ${statusFilter})` : ''}`)
+    console.log('─'.repeat(50))
+    if (filtered.length === 0) {
+      console.log('(None. Run "kairos contract evolve run" first.)')
+      return
+    }
+    for (const p of filtered) printAmendmentProposal(p, p.contractVersion !== contract.version)
+    return
+  }
+
+  const proposalId = positional[2]
+  if (!proposalId) {
+    console.error(`Usage: kairos contract evolve ${subcommand} <contract-id> <proposal-id> --client-id <slug> [--json]`)
+    process.exit(1)
+  }
+
+  if (subcommand === 'show') {
+    const { loadContractAmendmentProposals } = await import('./promise/evolution-store.js')
+    const proposals = await loadContractAmendmentProposals(clientId, contractId)
+    const p = proposals.find(x => x.id === proposalId)
+    if (!p) {
+      console.error(`No proposal "${proposalId}" found for contract "${contractId}".`)
+      process.exit(1)
+    }
+    if (flags['json'] === true) {
+      console.log(JSON.stringify({ ...p, stale: p!.contractVersion !== contract.version }, null, 2))
+      return
+    }
+    printAmendmentProposal(p!, p!.contractVersion !== contract.version)
+    console.log(`\n  evidence:`)
+    for (const e of p!.evidence) console.log(`    - ${e.kind}: ${e.id}`)
+    if (p!.history.length > 0) {
+      console.log(`\n  history:`)
+      for (const h of p!.history) console.log(`    ${h.ts}  ${h.from ?? '(created)'} -> ${h.to}${h.reason ? `  (${h.reason})` : ''}`)
+    }
+    return
+  }
+
+  // subcommand === 'accept' | 'reject'
+  const { updateProposalStatus } = await import('./promise/evolution-store.js')
+  const reason = typeof flags['reason'] === 'string' ? flags['reason'] : undefined
+  const updated = await updateProposalStatus(clientId, contractId, proposalId, subcommand === 'accept' ? 'accepted' : 'rejected', reason)
+  if (!updated) {
+    console.error(`No proposal "${proposalId}" found for contract "${contractId}".`)
+    process.exit(1)
+  }
+  if (flags['json'] === true) {
+    console.log(JSON.stringify(updated, null, 2))
+    return
+  }
+  console.log(`✓ Proposal "${proposalId}" marked ${updated!.status}.`)
+  if (subcommand === 'accept') {
+    console.log(`Nothing has changed yet -- hand-author a new contract version addressing this, then run:`)
+    console.log(`  kairos contract amend ${contractId} --client-id ${clientId} --new <file.json> --confirm --from-proposal ${proposalId}`)
+  }
 }
 
 async function handleContractReport(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
@@ -2744,6 +2930,11 @@ async function handleContract(positional: string[], flags: Record<string, string
     return
   }
 
+  if (subcommand === 'evolve') {
+    await handleContractEvolve(positional.slice(1), flags)
+    return
+  }
+
   if (subcommand === 'intake') {
     await handleContractIntake(positional.slice(1), flags)
     return
@@ -2770,7 +2961,8 @@ async function handleContract(positional: string[], flags: Record<string, string
     console.error('       kairos contract import <file.json> --client-id <slug> [--confirm-version-change] [--json]')
     console.error('       kairos contract versions <contract-id> --client-id <slug> [--json]')
     console.error('       kairos contract diff <contract-id> --client-id <slug> --from <v> --to <v> [--json]')
-    console.error('       kairos contract amend <contract-id> --client-id <slug> --new <file.json> [--confirm] [--confirm-breaking-with-active-instances] [--json]')
+    console.error('       kairos contract amend <contract-id> --client-id <slug> --new <file.json> [--confirm] [--confirm-breaking-with-active-instances] [--from-proposal <id>] [--json]')
+    console.error('       kairos contract evolve run|list|show|accept|reject <contract-id> [<proposal-id>] --client-id <slug> [--json]')
     console.error('       kairos contract report <contract-id> --client-id <slug> [--from <date>] [--to <date>] [--bundle <dir>] [--json]')
     console.error('')
     console.error('plan drafts a ProcessContract from a plain-language description via an LLM,')
@@ -2827,6 +3019,14 @@ async function handleContract(positional: string[], flags: Record<string, string
     console.error('still in_progress unless --confirm-breaking-with-active-instances is also')
     console.error('passed -- amending never recompiles/redeploys anything; run')
     console.error('"kairos contract compile <file.json> --build" yourself afterward.')
+    console.error('')
+    console.error('evolve treats this contract as a hypothesis, not permanent truth. run reads')
+    console.error('real ProofLedger/ExceptionDesk evidence (plus, with --with-harness, generated-')
+    console.error('scenario mismatches, always low confidence) and produces frequency/existence')
+    console.error('hotspot proposals -- never a specific replacement value. list/show inspect them;')
+    console.error('accept/reject record a human decision (audited, never automatic) but do NOT')
+    console.error('change the contract -- only "kairos contract amend ... --from-proposal <id>" can')
+    console.error('do that, and even then only after you hand-author the new contract yourself.')
     console.error('')
     console.error('report generates a client-facing promise-report.md from ProofLedger +')
     console.error('ExceptionDesk data -- see "kairos contract report" with no args for detail.')
