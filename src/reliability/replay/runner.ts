@@ -156,6 +156,15 @@ export interface SinglePayloadRunOutcome {
   status: 'found' | 'no_execution_found'
   executionId?: string
   snapshot?: ReplayExecutionSnapshot
+  /** The raw execution detail (id/startedAt/data) this snapshot was built from -- present
+   * whenever `snapshot` is (roadmap item 7, docs/plans/intake-scenario-harness-plan.md §7).
+   * `buildSnapshotFromExecution()` only keeps field-type shapes, never real values (see its own
+   * type's doc comment) -- deliberately, for the structural diff's own purposes -- but a
+   * contract-aware caller needs REAL field values to run extractExecutionEvidence() (the exact
+   * function the production ProofLedger poller uses) against this same real execution, without
+   * a second network fetch for data already sitting in hand. Never persisted anywhere; purely
+   * in-memory, same discipline as harness.ts's own synthetic entries. */
+  rawExecution?: { id: string; startedAt: string | null; data?: unknown }
 }
 
 /** Injects one captured payload at one sandbox workflow's webhook, then polls (bounded,
@@ -198,7 +207,12 @@ export async function replayOnePayload(
   }
 
   const detail = await client.getExecution(freshId)
-  return { status: 'found', executionId: freshId, snapshot: buildSnapshotFromExecution(freshId, detail) }
+  return {
+    status: 'found',
+    executionId: freshId,
+    snapshot: buildSnapshotFromExecution(freshId, detail),
+    rawExecution: { id: freshId, startedAt: detail.startedAt ?? null, data: detail.data },
+  }
 }
 
 /**

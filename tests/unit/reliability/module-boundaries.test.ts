@@ -5,6 +5,7 @@ import { join } from 'node:path'
 const REPO_ROOT = join(__dirname, '../../..')
 const COMMUNITY_DIR = join(REPO_ROOT, 'src/reliability/community')
 const PROMISE_DIR = join(REPO_ROOT, 'src/promise')
+const REPLAY_DIR = join(REPO_ROOT, 'src/reliability/replay')
 
 /**
  * Enforces the G4 firewall (docs/plans/reliability-suite-plan.md §12, §10.6): the Phase 5
@@ -154,5 +155,62 @@ describe('module boundary: src/promise/ and reliability/community/ must never re
       if (/['"`].*\.kairos[/\\]contracts['"`]/.test(content)) violations.push(file)
     }
     expect(violations, `These files reference the contracts/ path directly: ${violations.join(', ')}`).toEqual([])
+  })
+})
+
+/**
+ * A new, narrow boundary for src/reliability/replay/ (roadmap item 7, docs/plans/
+ * intake-scenario-harness-plan.md §3.3/§7) -- the first time anything under src/reliability/
+ * needed to read src/promise/ at all. Deliberately an explicit ALLOW-list of exactly the pure,
+ * read-only modules replay's contract-outcome checking needs (ledger.ts's extraction function,
+ * plain type modules), not a blanket "may import promise/" -- and a matching DENY-list for the
+ * file-backed persistence layer (ledger-store.ts/exception-store.ts/store.ts), so a sandbox
+ * execution's synthetic-context evidence can never be mistaken for, or accidentally written
+ * alongside, a real client's real ProofLedger/ExceptionDesk/contract files on disk. Checked as a
+ * standing test, not a comment someone has to remember, matching this file's own established
+ * precedent for every other boundary in this codebase.
+ */
+describe('module boundary: reliability/replay/ may only read pure promise/ modules, never the file-backed store layer', () => {
+  function replayFiles(): string[] {
+    if (!existsSync(REPLAY_DIR)) return []
+    return readdirSync(REPLAY_DIR, { recursive: true })
+      .filter((f): f is string => typeof f === 'string' && f.endsWith('.ts') && !f.endsWith('.test.ts'))
+      .map(f => join(REPLAY_DIR, f))
+  }
+
+  const ALLOWED_PROMISE_IMPORTS = ['promise/ledger.js', 'promise/ledger-types.js', 'promise/types.js', 'promise/scenario-types.js']
+  const FORBIDDEN_PROMISE_IMPORTS = ['promise/ledger-store.js', 'promise/exception-store.js', 'promise/store.js']
+
+  it('every promise/ import under reliability/replay/ is on the explicit allow-list', () => {
+    const violations: string[] = []
+    for (const file of replayFiles()) {
+      const content = readFileSync(file, 'utf-8')
+      const importMatches = content.matchAll(/from\s+['"](\.\.\/\.\.\/promise\/[^'"]+)['"]/g)
+      for (const m of importMatches) {
+        const normalized = m[1]!.replace(/^\.\.\/\.\.\//, '')
+        if (!ALLOWED_PROMISE_IMPORTS.includes(normalized)) violations.push(`${file} imports ${normalized}`)
+      }
+    }
+    expect(violations, violations.join(', ')).toEqual([])
+  })
+
+  it('no file under reliability/replay/ imports the file-backed promise/ persistence layer', () => {
+    const violations: string[] = []
+    for (const file of replayFiles()) {
+      const content = readFileSync(file, 'utf-8')
+      for (const forbidden of FORBIDDEN_PROMISE_IMPORTS) {
+        if (content.includes(forbidden)) violations.push(`${file} imports ${forbidden}`)
+      }
+    }
+    expect(violations, violations.join(', ')).toEqual([])
+  })
+
+  it('no file under reliability/replay/ references a promise-engine storage path literally', () => {
+    const violations: string[] = []
+    for (const file of replayFiles()) {
+      const content = readFileSync(file, 'utf-8')
+      if (/['"`].*\.kairos[/\\](promise-ledger|contracts)['"`]/.test(content)) violations.push(file)
+    }
+    expect(violations, violations.join(', ')).toEqual([])
   })
 })

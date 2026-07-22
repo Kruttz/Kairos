@@ -59,6 +59,7 @@ Usage:
   kairos sandbox down
   kairos replay capture <n8n-workflow-id> --client-id <slug> [--limit <n>] [--scrub] [--json]
   kairos replay run <n8n-workflow-id> --candidate <file> --client-id <slug> [--live] [--verbose] [--json]
+  kairos replay run <n8n-workflow-id> --candidate <file> --client-id <slug> --contract <file.json> [--scenario <id>] [--verbose] [--json]
   kairos replay purge <n8n-workflow-id> --client-id <slug> [--json]
   kairos chaos audit <n8n-workflow-id> [--json]
   kairos chaos run <n8n-workflow-id> [--json]
@@ -3047,6 +3048,7 @@ async function handleReplay(positional: string[], flags: Record<string, string |
   if (!subcommand || !['capture', 'run', 'purge'].includes(subcommand) || !n8nWorkflowId || !clientId) {
     console.error('Usage: kairos replay capture <n8n-workflow-id> --client-id <slug> [--limit <n>] [--scrub] [--json]')
     console.error('       kairos replay run <n8n-workflow-id> --candidate <file> --client-id <slug> [--live] [--verbose] [--json]')
+    console.error('       kairos replay run <n8n-workflow-id> --candidate <file> --client-id <slug> --contract <file.json> [--scenario <id>] [--verbose] [--json]')
     console.error('       kairos replay purge <n8n-workflow-id> --client-id <slug> [--json]')
     console.error('')
     console.error('capture records real production payloads (opt-in, local-only, chmod 600) for later replay.')
@@ -3059,6 +3061,20 @@ async function handleReplay(positional: string[], flags: Record<string, string |
     console.error('test/demo setup), it refuses rather than risk confusing "production" with a')
     console.error('sandbox -- N8N_BASE_URL must be a genuinely different host (your real n8n) for')
     console.error('--live to run.')
+    console.error('')
+    console.error('run --contract <file.json> (roadmap item 7, see docs/plans/')
+    console.error('intake-scenario-harness-plan.md §7) additionally replays a ContractScenario\'s own')
+    console.error('intake payload against the CANDIDATE workflow and checks the real resulting')
+    console.error('instance_start evidence (via the same extractExecutionEvidence() the production')
+    console.error('ProofLedger poller uses) against what the scenario expects -- reported as a')
+    console.error('separate "Contract Outcome Check" section, alongside (never replacing) the')
+    console.error('existing structural baseline-vs-candidate diff. Auto-generates scenarios for the')
+    console.error('contract\'s first startCondition when --scenario is omitted (all of them checked);')
+    console.error('--scenario <id> narrows to one. Checks ONLY the intake workflow\'s own')
+    console.error('instance_start evidence -- never the scenario\'s full expected classification,')
+    console.error('which assumes state-transition evidence from a separate, differently-triggered')
+    console.error('processing workflow this check does not touch. Evidence-graded, not a semantic')
+    console.error('proof the whole business promise was kept.')
     process.exit(1)
   }
 
@@ -3140,14 +3156,60 @@ async function handleReplay(positional: string[], flags: Record<string, string |
 
   const result = await runReplay(sandboxConfig, baselineWorkflow, candidateWorkflow, n8nWorkflowId, clientId)
 
+  // Contract Outcome Check (roadmap item 7, docs/plans/intake-scenario-harness-plan.md §7) --
+  // deliberately a separate, independent block from runReplay() above, never conflated into
+  // one code path: this check needs no captured payloads at all (it builds its own synthetic
+  // one from a ContractScenario), so it runs regardless of whether the structural diff above
+  // had anything to compare or how it came out.
+  let contractOutcomeResults: import('./reliability/replay/contract-outcome.js').ContractOutcomeCheckResult[] = []
+  const contractFile = typeof flags['contract'] === 'string' ? flags['contract'] : undefined
+  if (contractFile) {
+    const contract = await readContractFile(contractFile)
+    const startCondition = contract.startConditions[0]
+    if (!startCondition) {
+      console.error(`⚠ Contract "${contract.id}" has no startConditions -- skipping contract outcome check.`)
+    } else {
+      const { generateContractScenarios } = await import('./promise/scenario.js')
+      const { checkScenarioIntakeOutcome } = await import('./reliability/replay/contract-outcome.js')
+      const { scenarios } = generateContractScenarios(contract)
+      const scenarioFlag = typeof flags['scenario'] === 'string' ? flags['scenario'] : undefined
+      const scenariosToCheck = scenarioFlag ? scenarios.filter(s => s.id === scenarioFlag || s.category === scenarioFlag) : scenarios
+
+      if (scenarioFlag && scenariosToCheck.length === 0) {
+        console.error(`⚠ No generated scenario matched "${scenarioFlag}" -- skipping contract outcome check. Available: ${scenarios.map(s => s.id).join(', ')}`)
+      }
+
+      console.error(`\nRunning contract outcome check against the CANDIDATE workflow for ${scenariosToCheck.length} scenario(s)...`)
+      for (const scenario of scenariosToCheck) {
+        const checkResult = await checkScenarioIntakeOutcome(sandboxConfig, candidateWorkflow, contract, startCondition, scenario)
+        contractOutcomeResults.push(checkResult)
+      }
+    }
+  }
+
   if (flags['json'] === true) {
-    console.log(JSON.stringify(result, null, 2))
+    console.log(JSON.stringify({ ...result, ...(contractFile ? { contractOutcomeResults } : {}) }, null, 2))
   } else {
     console.log(formatReplayReportForHumans(result))
     if (flags['verbose'] === true) {
       console.log('')
       console.log('--- Technical detail (--verbose) ---')
       console.log(formatReplayRunResult(result))
+    }
+    if (contractFile) {
+      console.log('')
+      console.log('=== Contract Outcome Check ===')
+      if (contractOutcomeResults.length === 0) {
+        console.log('(No scenarios checked -- see warning above.)')
+      }
+      for (const r of contractOutcomeResults) {
+        const icon = r.status !== 'checked' ? '?' : r.matched ? '✓' : '✗'
+        console.log(`\n  [${icon}] ${r.scenarioName} -- ${r.status}${r.status === 'checked' ? (r.matched ? ' (matched)' : ' (MISMATCH)') : ''}`)
+        console.log(`      ${r.detail}`)
+        for (const m of r.mismatches) console.log(`      MISMATCH: ${m}`)
+      }
+      console.log('')
+      console.log(`  Scope: ${contractOutcomeResults[0]?.scopeCaveat ?? 'This check replays only a scenario\'s own intake payload -- never the full contract.'}`)
     }
   }
 
@@ -3173,7 +3235,14 @@ async function handleReplay(positional: string[], flags: Record<string, string |
   // kairos drift check's own "only real problems trip the exit code" philosophy, but here
   // that includes an incomplete/uncomparable run, since a candidate that couldn't be tested
   // is not something a caller should treat as safe.
-  if (result.status !== 'completed' || (result.verdict !== 'IDENTICAL' && result.verdict !== 'BENIGN_VARIANCE')) {
+  const structuralFailed = result.status !== 'completed' || (result.verdict !== 'IDENTICAL' && result.verdict !== 'BENIGN_VARIANCE')
+  // The combined verdict is the worse of the two (docs/plans/intake-scenario-harness-plan.md
+  // §7): a clean structural diff must never mask a contract-outcome mismatch -- an unmatched
+  // or unresolvable ('no_execution_found') scenario check fails the whole command exactly like
+  // a structural BROKEN/INCOMPLETE would, never silently ignored just because the workflows
+  // otherwise looked identical to each other.
+  const contractOutcomeFailed = contractOutcomeResults.some(r => r.status !== 'checked' || !r.matched)
+  if (structuralFailed || contractOutcomeFailed) {
     process.exit(1)
   }
 }
