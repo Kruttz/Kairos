@@ -50,6 +50,7 @@ Usage:
   kairos contract amend <contract-id> --client-id <slug> --new <file.json> [--confirm] [--confirm-breaking-with-active-instances] [--from-proposal <id>] [--json]
   kairos contract evolve run|list|show|accept|reject <contract-id> [<proposal-id>] --client-id <slug> [--json]
   kairos contract report <contract-id> --client-id <slug> [--from <date>] [--to <date>] [--bundle <dir>] [--json]
+  kairos contract value <contract-id> --client-id <slug> [--assumptions <file.json>] [--from <date>] [--to <date>] [--bundle <dir>] [--json]
   kairos ledger poll <contract-id> --client-id <slug> [--limit <n>] [--json]
   kairos ledger show <contract-id> --client-id <slug> [--instance <promise-instance-id>] [--json]
   kairos exceptions list <contract-id> --client-id <slug> [--status <status>] [--json]
@@ -326,6 +327,26 @@ Contract options (ProcessContract v0, Phase 0+1+2+5 -- see docs/plans/process-co
                                   --bundle, prints only; with --bundle <dir>, also writes
                                   promise-report.md + a manifest there, reusing the same Delivery
                                   Bundle artifact/manifest pattern pack export --bundle already uses.
+  contract value <contract-id>   Automation P&L / Value Report (roadmap item 13, see docs/plans/
+    --client-id <slug>           contract-evolution-ops-roadmap-plan.md §13): report's own
+    [--assumptions <file.json>]  Observed section (identical, zero assumptions needed) plus an
+    [--from/--to <iso-date>]     optional Estimated Value section -- present only when
+    [--bundle <dir>]             --assumptions <file.json> supplies at least one human-entered
+                                  per-unit multiplier (minutesSavedPerKeptInstance,
+                                  minutesSavedPerResolvedException, dollarValuePerResolvedException,
+                                  dollarValuePerAvoidedMiss, currency, enteredBy, enteredAt -- all
+                                  optional, never defaulted/inferred by Kairos). No dollar or time
+                                  figure is ever computed without an explicit assumption for that
+                                  specific multiplier; refuses (exit 1, nothing printed) if a
+                                  dollar-denominated assumption is present with no currency. Every
+                                  value line shows its own formula inline (e.g. "42 resolved
+                                  exception(s) x 15 min = 630 min"), never a bare final number --
+                                  the same "human supplies the real number, Kairos never guesses
+                                  it" discipline pack export --impact-notes already established;
+                                  a prior automatic-ROI-math concept was proposed and explicitly
+                                  rejected in this codebase's own history for exactly this risk.
+                                  Without --bundle, prints only; with --bundle <dir>, also writes
+                                  automation-value-report.md + a manifest there.
 
 Ledger options (ProofLedger v0, Phase 3 -- see docs/plans/process-contract-promise-engine-plan.md §6):
   ledger poll <contract-id>      Polls n8n execution data (read-only -- GET only, never a write)
@@ -2955,6 +2976,98 @@ async function handleContractReport(positional: string[], flags: Record<string, 
   console.log(generatePromiseReport(data))
 }
 
+async function handleContractValue(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const contractId = positional[1]
+  const clientId = typeof flags['client-id'] === 'string' ? flags['client-id'] : undefined
+
+  if (!contractId || !clientId) {
+    console.error('Usage: kairos contract value <contract-id> --client-id <slug> [--assumptions <file.json>] [--from <iso-date>] [--to <iso-date>] [--bundle <dir>] [--json]')
+    console.error('')
+    console.error('Automation P&L / Value Report (roadmap item 13): an "Observed" section --')
+    console.error('identical to "kairos contract report", zero assumptions needed -- plus an')
+    console.error('optional "Estimated Value" section, present only when --assumptions <file.json>')
+    console.error('supplies at least one per-unit multiplier (minutesSavedPerKeptInstance,')
+    console.error('minutesSavedPerResolvedException, dollarValuePerResolvedException,')
+    console.error('dollarValuePerAvoidedMiss, currency, enteredBy, enteredAt -- all optional, all')
+    console.error('human-entered). No dollar or time figure is ever computed without an explicit')
+    console.error('assumption for that specific multiplier -- Kairos never infers, benchmarks, or')
+    console.error('defaults one on your behalf (the same discipline "kairos pack export')
+    console.error('--impact-notes" already uses; a prior automatic-ROI-math concept was proposed')
+    console.error('and explicitly rejected in this codebase\'s own history for exactly this risk).')
+    console.error('Every value line shows its own formula inline. Refuses (exit 1, nothing')
+    console.error('printed) if a dollar-denominated assumption is present with no currency.')
+    console.error('Without --bundle, only prints to stdout; with --bundle <dir>, also writes')
+    console.error('automation-value-report.md + a manifest there.')
+    process.exit(1)
+  }
+
+  const { loadProcessContract } = await import('./promise/store.js')
+  const contract = await loadProcessContract(clientId, contractId)
+  if (!contract) {
+    console.error(`No ProcessContract found for client "${clientId}" with id "${contractId}".`)
+    process.exit(1)
+  }
+
+  let assumptions: import('./promise/value-types.js').ImpactAssumptions | undefined
+  const assumptionsPath = typeof flags['assumptions'] === 'string' ? flags['assumptions'] : undefined
+  if (assumptionsPath) {
+    const { readFile } = await import('node:fs/promises')
+    try {
+      const content = await readFile(assumptionsPath, 'utf-8')
+      assumptions = JSON.parse(content) as import('./promise/value-types.js').ImpactAssumptions
+    } catch (err) {
+      console.error(`Could not read or parse ${assumptionsPath}: ${err instanceof Error ? err.message : String(err)}`)
+      process.exit(1)
+    }
+
+    const { validateImpactAssumptions } = await import('./promise/value-report.js')
+    const issues = validateImpactAssumptions(assumptions)
+    if (issues.length > 0) {
+      console.error(`\nRefusing to compute an Estimated Value section -- nothing printed.`)
+      for (const issue of issues) console.error(`  ✗ ${issue}`)
+      process.exit(1)
+    }
+  }
+
+  const { getProofLedgerEntries, loadContractPollWatermark } = await import('./promise/ledger-store.js')
+  const { loadExceptionDeskItems } = await import('./promise/exception-store.js')
+  const { loadContractWorkflowRegistration } = await import('./promise/registry.js')
+  const { buildPromiseReportData } = await import('./promise/report.js')
+  const { buildAutomationValueReport, generateAutomationValueReport } = await import('./promise/value-report.js')
+
+  const entries = await getProofLedgerEntries(clientId, contractId, 10000)
+  const exceptions = await loadExceptionDeskItems(clientId, contractId)
+  const window = {
+    ...(typeof flags['from'] === 'string' ? { from: flags['from'] } : {}),
+    ...(typeof flags['to'] === 'string' ? { to: flags['to'] } : {}),
+  }
+
+  const registration = await loadContractWorkflowRegistration(clientId, contractId)
+  let unattributedExecutionCount = 0
+  for (const wf of registration?.workflows ?? []) {
+    const watermark = await loadContractPollWatermark(clientId, contractId, wf.n8nWorkflowId)
+    unattributedExecutionCount += watermark?.cumulativeUnattributedCount ?? 0
+  }
+
+  const reportData = buildPromiseReportData(contract, entries, exceptions, window, new Date(), unattributedExecutionCount)
+  const valueReport = buildAutomationValueReport(reportData, assumptions)
+
+  const bundleDir = typeof flags['bundle'] === 'string' ? flags['bundle'] : undefined
+  if (bundleDir) {
+    const { writeAutomationValueReport } = await import('./promise/report-bundle.js')
+    const manifest = await writeAutomationValueReport(valueReport, bundleDir)
+    console.error(`\nAutomation value report written to: ${manifest.files[0]!.path}`)
+    console.error(`Manifest: ${bundleDir}/automation-value-report-manifest.json`)
+  }
+
+  if (flags['json'] === true) {
+    console.log(JSON.stringify(valueReport, null, 2))
+    return
+  }
+
+  console.log(generateAutomationValueReport(valueReport))
+}
+
 async function handleContract(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const subcommand = positional[0]
 
@@ -2970,6 +3083,11 @@ async function handleContract(positional: string[], flags: Record<string, string
 
   if (subcommand === 'report') {
     await handleContractReport(positional, flags)
+    return
+  }
+
+  if (subcommand === 'value') {
+    await handleContractValue(positional, flags)
     return
   }
 
@@ -3027,6 +3145,7 @@ async function handleContract(positional: string[], flags: Record<string, string
     console.error('       kairos contract amend <contract-id> --client-id <slug> --new <file.json> [--confirm] [--confirm-breaking-with-active-instances] [--from-proposal <id>] [--json]')
     console.error('       kairos contract evolve run|list|show|accept|reject <contract-id> [<proposal-id>] --client-id <slug> [--json]')
     console.error('       kairos contract report <contract-id> --client-id <slug> [--from <date>] [--to <date>] [--bundle <dir>] [--json]')
+    console.error('       kairos contract value <contract-id> --client-id <slug> [--assumptions <file.json>] [--from <date>] [--to <date>] [--bundle <dir>] [--json]')
     console.error('')
     console.error('plan drafts a ProcessContract from a plain-language description via an LLM,')
     console.error('then always runs it through the deterministic validator before returning it.')
@@ -3093,6 +3212,13 @@ async function handleContract(positional: string[], flags: Record<string, string
     console.error('')
     console.error('report generates a client-facing promise-report.md from ProofLedger +')
     console.error('ExceptionDesk data -- see "kairos contract report" with no args for detail.')
+    console.error('')
+    console.error('value (roadmap item 13) is report\'s own Observed section (identical, zero')
+    console.error('assumptions needed) plus an optional Estimated Value section -- present only')
+    console.error('with --assumptions <file.json> supplying at least one human-entered per-unit')
+    console.error('multiplier. No dollar/time figure is ever computed without one; refuses (exit')
+    console.error('1) if a dollar assumption is present with no currency. See "kairos contract')
+    console.error('value" with no args for the full field list.')
     process.exit(1)
   }
 

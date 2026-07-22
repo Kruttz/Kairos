@@ -2,7 +2,9 @@ import { chmod, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { getKairosVersion } from '../validation/provenance-versions.js'
 import { generatePromiseReport } from './report.js'
+import { generateAutomationValueReport } from './value-report.js'
 import type { PromiseReportData } from './report.js'
+import type { AutomationValueReport } from './value-types.js'
 
 /**
  * Promise Report bundle writing (Phase 5) -- reuses pack-bundle.ts's own artifact/manifest
@@ -41,6 +43,43 @@ export async function writePromiseReport(data: PromiseReportData, outDir: string
   }
 
   const manifestPath = join(outDir, 'promise-report-manifest.json')
+  await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + '\n', 'utf-8')
+  await chmod(manifestPath, 0o600)
+
+  return manifest
+}
+
+/** Automation P&L / Value Report bundle writing (roadmap item 13, docs/plans/
+ * contract-evolution-ops-roadmap-plan.md §3, item 13) -- identical idiom to
+ * `writePromiseReport()` above, a separate artifact (`automation-value-report.md`) rather than
+ * replacing it, since a value report's own Observed section is meant to be a strict superset of
+ * `promise-report.md`'s content, not a competing rendering of the same data. */
+export interface AutomationValueReportManifest {
+  generatedAt: string
+  contractId: string
+  contractName: string
+  hasEstimatedValue: boolean
+  files: Array<{ artifact: string; path: string }>
+  provenance: { kairosVersion: string }
+}
+
+export async function writeAutomationValueReport(report: AutomationValueReport, outDir: string): Promise<AutomationValueReportManifest> {
+  await mkdir(outDir, { recursive: true })
+
+  const reportPath = join(outDir, 'automation-value-report.md')
+  await writeFile(reportPath, generateAutomationValueReport(report), 'utf-8')
+  await chmod(reportPath, 0o600)
+
+  const manifest: AutomationValueReportManifest = {
+    generatedAt: report.observed.generatedAt,
+    contractId: report.observed.contractId,
+    contractName: report.observed.contractName,
+    hasEstimatedValue: report.estimatedValue !== undefined,
+    files: [{ artifact: 'automation-value-report.md', path: reportPath }],
+    provenance: { kairosVersion: getKairosVersion() },
+  }
+
+  const manifestPath = join(outDir, 'automation-value-report-manifest.json')
   await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + '\n', 'utf-8')
   await chmod(manifestPath, 0o600)
 

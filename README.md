@@ -78,6 +78,7 @@ console.log(pack.testChecklist)               // how to verify each workflow
 | Drafts a ProcessContract via a guided 11-question interview instead of one free-text paragraph, and deterministically generates + evaluates synthetic business scenarios against it purely in-memory, no n8n (`kairos contract intake`, `kairos contract scenarios generate`, `kairos contract harness run`) | A substitute for a human deciding what the contract should actually say — synthesis is always validator-gated and human-reviewed, never auto-applied |
 | Checks a real sandboxed workflow's execution against a contract's own expected business outcome, alongside its existing structural/adversarial checks (`kairos replay run --contract`, `kairos chaos run --contract`) | A full end-to-end business-outcome proof from one execution — both are explicit that they verify intake evidence only, never state-transition evidence a separate processing workflow produces |
 | Proposes evidence-linked contract amendments from real ProofLedger/ExceptionDesk patterns, and lets a human preview/apply a real, version-archived amendment (`kairos contract evolve`, `kairos contract amend`/`versions`/`diff`) | Any automatic contract change, ever — every proposal requires human accept/reject, every amendment requires explicit `--confirm`, and a breaking amendment is refused outright while any promise instance is still in flight unless explicitly overridden |
+| Translates real, conservative Promise Report counts into an optional dollar/time value estimate — but only for the exact multipliers a human explicitly supplies (`kairos contract value`) | Any invented, inferred, or benchmarked dollar/time figure — every value line shows its own `count × assumption` formula, and the command refuses outright rather than guess a missing currency |
 | Documents assumptions, open questions, and test steps | — |
 | Syncs node types from your live instance | — |
 | Learns from prior builds and failures | — |
@@ -820,7 +821,7 @@ The loop: a `ProcessContract` (states, transitions, SLAs, owners, terminal outco
 
 Before any of that touches n8n at all, `kairos contract scenarios generate` deterministically derives synthetic business scenarios from the contract (happy path, missing data, duplicate submission, after-hours, and more — no LLM call), and `kairos contract harness run` evaluates them through the exact same evidence-checking code production uses, purely in-memory — a deterministic Node-side simulation/assertion layer, not a runtime replacing n8n. The same scenarios extend into live infrastructure once workflows exist: `kairos replay run --contract`/`kairos chaos run --contract` inject a scenario's own intake payload against a real (sandboxed) workflow and check the resulting evidence against the contract's own expected outcome, reported alongside their existing structural diff/adversarial-payload checks, never instead of them.
 
-Once real evidence exists, `kairos contract evolve` treats the contract as a hypothesis, not permanent truth — it mines ProofLedger/ExceptionDesk patterns for SLA hotspots, never-reached states, and similar signals, and proposes (never applies) amendments a human can accept or reject. An accepted proposal still requires hand-authoring the new contract version; `kairos contract amend`/`versions`/`diff` are the only path that ever actually changes a saved contract — always previewable first, always archiving what it replaces, and refusing a breaking change while any promise instance is still in flight unless explicitly overridden.
+Once real evidence exists, `kairos contract evolve` treats the contract as a hypothesis, not permanent truth — it mines ProofLedger/ExceptionDesk patterns for SLA hotspots, never-reached states, and similar signals, and proposes (never applies) amendments a human can accept or reject. An accepted proposal still requires hand-authoring the new contract version; `kairos contract amend`/`versions`/`diff` are the only path that ever actually changes a saved contract — always previewable first, always archiving what it replaces, and refusing a breaking change while any promise instance is still in flight unless explicitly overridden. For a sales/retainer conversation, `kairos contract value` translates the same conservative Promise Report counts into an optional dollar/time value estimate — but only for the exact per-unit multipliers a human explicitly supplies; it computes nothing on its own.
 
 **Read this before treating a Promise Report as authoritative:**
 
@@ -1144,6 +1145,26 @@ kairos contract report <contract-id> --client-id acme
 kairos contract report <contract-id> --client-id acme --from 2026-07-01 --to 2026-08-01  # all of July, inclusive
 kairos contract report <contract-id> --client-id acme --bundle ./deliverables
 kairos contract report <contract-id> --client-id acme --json  # full PromiseReportData as JSON
+
+# Automation P&L / Value Report (roadmap item 13): report's own Observed section (identical,
+# zero assumptions needed) plus an optional Estimated Value section -- present only when
+# --assumptions <file.json> supplies at least one human-entered per-unit multiplier
+# (minutesSavedPerKeptInstance, minutesSavedPerResolvedException,
+# dollarValuePerResolvedException, dollarValuePerAvoidedMiss, currency, enteredBy, enteredAt --
+# all optional, never defaulted/inferred/benchmarked by Kairos itself). No dollar or time figure
+# is ever computed without an explicit assumption for that specific multiplier; refuses (exit 1,
+# nothing printed) if a dollar-denominated assumption is present with no currency. A supplied
+# assumption still renders its own line even when the underlying count is zero -- the report's
+# own shape never silently changes window to window just because a count happened to be zero.
+# Every value line shows its own formula inline (e.g. "4 resolved exception(s) x 50 USD = 200
+# USD"), never a bare final number -- the same "human supplies the real number, Kairos never
+# guesses it" discipline `pack export --impact-notes` already established; a prior automatic-
+# ROI-math concept ("roi-ledger.md") was proposed and explicitly rejected in this codebase's own
+# history for exactly this risk. Without --bundle, prints only; with --bundle <dir>, also writes
+# automation-value-report.md + a manifest there.
+kairos contract value <contract-id> --client-id acme
+kairos contract value <contract-id> --client-id acme --assumptions ./assumptions.json
+kairos contract value <contract-id> --client-id acme --assumptions ./assumptions.json --bundle ./deliverables
 
 # Contract Evolution v0 (roadmap item 11): treats ProcessContract as a hypothesis, not permanent
 # truth. `run` reads this contract's own real ProofLedger + ExceptionDesk evidence (plus, with
