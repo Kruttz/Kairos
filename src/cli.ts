@@ -1611,7 +1611,7 @@ async function handleContractPlan(positional: string[], flags: Record<string, st
   const anthropicApiKey = getEnvOrExit('ANTHROPIC_API_KEY')
 
   const { planProcessContract } = await import('./promise/plan.js')
-  const { saveProcessContract } = await import('./promise/store.js')
+  const { loadProcessContract, amendProcessContract } = await import('./promise/store.js')
 
   console.error('Drafting ProcessContract...\n')
   const result = await planProcessContract({ description, clientId, anthropicApiKey })
@@ -1621,8 +1621,13 @@ async function handleContractPlan(positional: string[], flags: Record<string, st
   // here surfaces loudly but doesn't fight that established behavior. A version collision under
   // `plan` (deriveContractId() is a name slug, version always 1 for a fresh draft) generally only
   // happens if two different business descriptions happen to produce the same contract name.
-  const existingVersion = await checkContractVersionConflict(clientId, result.contract)
-  const { path } = await saveProcessContract(result.contract)
+  // Roadmap item 12 (docs/plans/contract-evolution-ops-roadmap-plan.md §3, item 12): even though
+  // this path always saves regardless of conflict, it now archives whatever it overwrites first,
+  // same as every other save-a-contract path -- "never withheld" was never a promise that the
+  // prior version would be destroyed, just that a draft wouldn't be silently dropped.
+  const priorForPlan = await loadProcessContract(clientId, result.contract.id)
+  const existingVersion = priorForPlan && priorForPlan.version !== result.contract.version ? priorForPlan.version : null
+  const { path } = await amendProcessContract(result.contract, existingVersion !== null ? priorForPlan! : undefined, 'contract_plan')
 
   if (flags['json'] === true) {
     console.log(JSON.stringify({ ...result, savedTo: path, ...(existingVersion !== null ? { overwroteVersion: existingVersion } : {}) }, null, 2))
@@ -1716,7 +1721,7 @@ async function handleContractIntakeStart(positional: string[], flags: Record<str
   const anthropicApiKey = getEnvOrExit('ANTHROPIC_API_KEY')
   const { createIntakeSession, runIntakeToCompletion, INTAKE_QUESTIONS } = await import('./promise/intake.js')
   const { saveIntakeSession, loadIntakeSession } = await import('./promise/intake-store.js')
-  const { saveProcessContract } = await import('./promise/store.js')
+  const { loadProcessContract, amendProcessContract } = await import('./promise/store.js')
 
   const resumeId = typeof flags['resume'] === 'string' ? flags['resume'] : undefined
   let session: import('./promise/intake-types.js').IntakeSession
@@ -1774,8 +1779,11 @@ async function handleContractIntakeStart(positional: string[], flags: Record<str
     process.exit(1)
   }
 
-  const existingVersion = await checkContractVersionConflict(clientId, finalSession.draftContract)
-  const { path } = await saveProcessContract(finalSession.draftContract)
+  // Roadmap item 12 (docs/plans/contract-evolution-ops-roadmap-plan.md §3, item 12): same
+  // archive-before-overwrite guarantee as `contract plan`'s own save path above.
+  const priorForIntake = await loadProcessContract(clientId, finalSession.draftContract.id)
+  const existingVersion = priorForIntake && priorForIntake.version !== finalSession.draftContract.version ? priorForIntake.version : null
+  const { path } = await amendProcessContract(finalSession.draftContract, existingVersion !== null ? priorForIntake! : undefined, 'contract_intake')
 
   const readyToProceed = finalSession.status === 'ready_for_review'
   const lastAttempt = finalSession.synthesisAttempts[finalSession.synthesisAttempts.length - 1]
@@ -2157,12 +2165,16 @@ async function handleContractCompile(positional: string[], flags: Record<string,
   // contract at all (the Phase 3 design spike's own named gap, plan doc §6.0).
   let compilerVerificationHasGaps = false
   if (!isDryRun && !buildResult.escalation) {
+    const registeredAt = new Date().toISOString()
     const registeredWorkflows = buildResult.workflows
       .filter((w): w is typeof w & { workflowId: string } => w.workflowId !== null && !w.error)
       .map(w => ({
         n8nWorkflowId: w.workflowId,
         workflowName: w.name,
         sourceElements: result.traceability.find(t => t.workflowName === w.name)?.sourceElements ?? [],
+        contractVersion: contract.version,
+        status: 'active' as const,
+        registeredAt,
       }))
 
     if (registeredWorkflows.length > 0) {
@@ -2212,60 +2224,53 @@ async function handleContractCompile(positional: string[], flags: Record<string,
       }
 
       const { loadContractWorkflowRegistration, saveContractWorkflowRegistration, computeDroppedWorkflows } = await import('./promise/registry.js')
-      // Finding 2 fix (supplemental measurement-integrity audit, 2026-07-20): a rebuild that
-      // would silently stop tracking a previously-registered workflow -- a transient generation
-      // failure among several, or the contract's own structure no longer producing it -- used to
-      // just overwrite the registration and lose that workflow's tracking forever, with zero
-      // signal. Refuses by default; the pack itself is already built at this point (see above),
-      // only the registration write is gated.
+      // Finding 2 fix (supplemental measurement-integrity audit, 2026-07-20), narrowed by
+      // roadmap item 12 (docs/plans/contract-evolution-ops-roadmap-plan.md §3, item 12):
+      // registration is now append-only (registry.ts's own doc comment), so a "dropped"
+      // workflow name is never silently lost from tracking anymore -- this gate now means "this
+      // rebuild no longer produces a workflow name that's currently active; confirm that's
+      // intentional before those old entries are marked retired." Only compares against
+      // currently-active entries -- an already-retired entry from an earlier amendment is
+      // expected to stay missing from a fresh compile and must not re-trigger this gate forever.
       const existing = await loadContractWorkflowRegistration(contract.clientId, contract.id)
-      const dropped = existing ? computeDroppedWorkflows(existing.workflows, new Set(registeredWorkflows.map(w => w.workflowName))) : []
+      const activeExisting = (existing?.workflows ?? []).filter(w => w.status === 'active')
+      const dropped = computeDroppedWorkflows(activeExisting, new Set(registeredWorkflows.map(w => w.workflowName)))
 
       if (dropped.length > 0 && flags['confirm-registration-drop'] !== true) {
         if (flags['json'] === true) {
           console.log(JSON.stringify({ ...buildResult, traceability: result.traceability, registrationRefused: true, droppedWorkflows: dropped.map(w => w.workflowName) }, null, 2))
         } else {
-          console.error(`\n✗ Refusing to save workflow registration -- this rebuild would silently stop tracking ${dropped.length} previously-registered workflow(s):`)
+          console.error(`\n✗ Refusing to save workflow registration -- this rebuild no longer produces ${dropped.length} currently-active previously-registered workflow(s):`)
           for (const w of dropped) console.error(`  - "${w.workflowName}" (was: ${w.n8nWorkflowId})`)
-          console.error(`\nThe pack itself was built successfully above -- only the registration write is refused, so "kairos ledger poll"/"kairos contract report" keep relying on the PREVIOUS registration for ${dropped.length === 1 ? 'this workflow' : 'these workflows'} until you decide.`)
-          console.error(`Re-run with --confirm-registration-drop if you intend to stop tracking ${dropped.length === 1 ? 'it' : 'them'}.`)
+          console.error(`\nThe pack itself was built successfully above -- only the registration write is refused, so "kairos ledger poll"/"kairos contract report" keep polling the PREVIOUS workflow(s) for ${dropped.length === 1 ? 'this name' : 'these names'} until you decide (nothing is ever silently un-polled -- registration is append-only).`)
+          console.error(`Re-run with --confirm-registration-drop to mark ${dropped.length === 1 ? 'it' : 'them'} retired -- their history stays in the registration file, just no longer polled.`)
         }
         process.exit(2)
       }
+
+      // Confirmed drops are marked retired, not deleted -- registration is append-only, so this
+      // is the one place `status` ever transitions away from 'active' in this v0 (no separate
+      // retire command exists yet). The retired entries are included in the write so the merge
+      // in saveContractWorkflowRegistration() actually updates their status, not just leaves
+      // them untouched at 'active'.
+      const retiredEntries = dropped.map(w => ({ ...w, status: 'retired' as const }))
 
       const { path: registrationPath } = await saveContractWorkflowRegistration({
         contractId: contract.id,
         contractVersion: contract.version,
         clientId: contract.clientId,
-        workflows: registeredWorkflows,
-        registeredAt: new Date().toISOString(),
+        workflows: [...registeredWorkflows, ...retiredEntries],
+        registeredAt,
       })
       console.error(`Registered ${registeredWorkflows.length} workflow(s) for evidence polling ("kairos ledger poll"): ${registrationPath}`)
       if (dropped.length > 0) {
-        console.error(`⚠ Stopped tracking ${dropped.length} previously-registered workflow(s) (--confirm-registration-drop was passed): ${dropped.map(w => w.workflowName).join(', ')}`)
+        console.error(`⚠ Marked ${dropped.length} previously-registered workflow(s) retired (--confirm-registration-drop was passed): ${dropped.map(w => w.workflowName).join(', ')} -- no longer polled, but still present in the registration file's own history.`)
       }
     }
   }
 
   if (buildResult.escalation) process.exit(2)
   if (compilerVerificationHasGaps) process.exit(2)
-}
-
-/**
- * P0 measurement-integrity fix (2026-07-20): store.ts's saveProcessContract() has no
- * update/versioning semantics at all -- its own doc comment says so -- it just overwrites
- * `<id>.json` in place. Silently overwriting a saved contract with a DIFFERENT version (e.g. a
- * state renamed, an SLA restructured) orphans every ProofLedger entry that referenced the old
- * contract's own ids: stateReachSignals() just stops matching them against the new contract
- * shape, and historical evidence silently vanishes from SLA/report computations -- no error, no
- * warning, just a quietly emptier-looking history. Returns the existing version only when a real
- * conflict exists (same id, different version) -- null otherwise (nothing saved yet, or an
- * exact-version re-save, which is not a conflict).
- */
-async function checkContractVersionConflict(clientId: string, contract: import('./promise/types.js').ProcessContract): Promise<number | null> {
-  const { loadProcessContract } = await import('./promise/store.js')
-  const existing = await loadProcessContract(clientId, contract.id)
-  return existing && existing.version !== contract.version ? existing.version : null
 }
 
 /**
@@ -2295,9 +2300,11 @@ async function handleContractImport(positional: string[], flags: Record<string, 
     console.error('kairos contract compile itself uses. Contract provenance/version/status are')
     console.error('preserved exactly as given -- never rewritten, never bumped -- importing is not')
     console.error('authoring. Also refuses (exit 2, nothing written) if a contract already exists')
-    console.error('at this id with a DIFFERENT version -- overwriting it in place would silently')
-    console.error('orphan any ProofLedger evidence recorded against the old version\'s own state/')
-    console.error('transition/SLA ids. Pass --confirm-version-change to overwrite anyway.')
+    console.error('at this id with a DIFFERENT version -- pass --confirm-version-change to proceed;')
+    console.error('the prior version is archived first (kairos contract versions/diff can still')
+    console.error('read it), never destroyed, but ProofLedger evidence recorded against its own')
+    console.error('state/transition/SLA ids may no longer match the newly-imported shape. For a')
+    console.error('reviewed diff before writing anything, use "kairos contract amend" instead.')
     process.exit(1)
   }
 
@@ -2339,7 +2346,9 @@ async function handleContractImport(positional: string[], flags: Record<string, 
     process.exit(2)
   }
 
-  const existingVersion = await checkContractVersionConflict(clientId, contract)
+  const { loadProcessContract, amendProcessContract } = await import('./promise/store.js')
+  const existing = await loadProcessContract(clientId, contract.id)
+  const existingVersion = existing && existing.version !== contract.version ? existing.version : null
   if (existingVersion !== null && flags['confirm-version-change'] !== true) {
     if (flags['json'] === true) {
       console.log(JSON.stringify({ imported: false, versionConflict: { existingVersion, attemptedVersion: contract.version } }, null, 2))
@@ -2349,12 +2358,15 @@ async function handleContractImport(positional: string[], flags: Record<string, 
     console.error(`A contract with id "${contract.id}" already exists at version ${existingVersion}, but this file is version ${contract.version}.`)
     console.error(`Overwriting it would silently orphan any ProofLedger evidence recorded against the old version's own state/transition/SLA ids --`)
     console.error(`stateReachSignals() would simply stop matching those ids against the new contract shape.`)
-    console.error(`Re-run with --confirm-version-change if you understand this and want to proceed anyway.`)
+    console.error(`Re-run with --confirm-version-change if you understand this and want to proceed anyway (the old version is archived first, never destroyed).`)
     process.exit(2)
   }
 
-  const { saveProcessContract } = await import('./promise/store.js')
-  const { path } = await saveProcessContract(contract)
+  // Roadmap item 12 (docs/plans/contract-evolution-ops-roadmap-plan.md §3, item 12): routes
+  // through the same archive-before-overwrite primitive `kairos contract amend --confirm` uses,
+  // so import never destroys a prior version either -- the gap this whole item exists to close
+  // applies to both call sites, not just the new one.
+  const { path } = await amendProcessContract(contract, existingVersion !== null ? existing! : undefined, 'contract_import')
 
   if (flags['json'] === true) {
     console.log(JSON.stringify({ imported: true, path, validationIssues: issues, ...(existingVersion !== null ? { overwroteVersion: existingVersion } : {}) }, null, 2))
@@ -2363,7 +2375,7 @@ async function handleContractImport(positional: string[], flags: Record<string, 
 
   console.log(`✓ Imported "${contract.name}" (${contract.id} v${contract.version}) to: ${path}`)
   if (existingVersion !== null) {
-    console.log(`⚠ Overwrote an existing contract at v${existingVersion} (--confirm-version-change was passed). Ledger evidence recorded against the old version's own ids may no longer match this contract's current shape.`)
+    console.log(`⚠ Archived the prior version (v${existingVersion}, --confirm-version-change was passed) and overwrote the live contract. Ledger evidence recorded against the old version's own ids may no longer match this contract's current shape -- run "kairos contract versions ${contract.id} --client-id ${clientId}" to see it, or "kairos contract diff" to compare.`)
   }
   if (warnings.length > 0) {
     console.log(`\n${warnings.length} warning(s):`)
@@ -2375,6 +2387,255 @@ async function handleContractImport(positional: string[], flags: Record<string, 
     for (const a of needsConfirmation) console.log(`  ? ${a.text}`)
   }
   console.log(`\nRun "kairos contract compile ${filePath} --build" to generate and register its workflows.`)
+}
+
+async function handleContractVersions(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const contractId = positional[1]
+  const clientId = typeof flags['client-id'] === 'string' ? flags['client-id'] : undefined
+
+  if (!contractId || !clientId) {
+    console.error('Usage: kairos contract versions <contract-id> --client-id <slug> [--json]')
+    console.error('')
+    console.error('Lists every archived (superseded) version of a saved contract, newest first,')
+    console.error('plus the current live version. Empty archive list is normal for a contract')
+    console.error('that has never been amended/re-imported over a different version.')
+    process.exit(1)
+  }
+
+  const { loadProcessContract, listContractVersions } = await import('./promise/store.js')
+  const live = await loadProcessContract(clientId, contractId)
+  if (!live) {
+    console.error(`No ProcessContract found for client "${clientId}" with id "${contractId}".`)
+    process.exit(1)
+  }
+  const archived = await listContractVersions(clientId, contractId)
+
+  if (flags['json'] === true) {
+    console.log(JSON.stringify({ liveVersion: live.version, archived }, null, 2))
+    return
+  }
+
+  console.log(`${live.name} (${contractId}) — Version History`)
+  console.log('─'.repeat(50))
+  console.log(`  v${live.version}  (live)`)
+  for (const record of archived) {
+    console.log(`  v${record.contract.version}  superseded ${record.supersededAt} (${record.supersededBy})`)
+  }
+  if (archived.length === 0) {
+    console.log('\n(No archived versions -- this contract has never been amended/re-imported over a different version.)')
+  } else {
+    console.log(`\nRun "kairos contract diff ${contractId} --client-id ${clientId} --from <v> --to <v>" to compare any two.`)
+  }
+}
+
+/** Resolves a specific version number to a real ProcessContract -- either the live one (if `v`
+ * matches its own version) or an archived one. Shared by diff/amend so both commands resolve
+ * versions identically rather than two subtly different lookup paths. */
+async function resolveContractVersion(clientId: string, contractId: string, version: number): Promise<import('./promise/types.js').ProcessContract | null> {
+  const { loadProcessContract, loadContractVersion } = await import('./promise/store.js')
+  const live = await loadProcessContract(clientId, contractId)
+  if (live && live.version === version) return live
+  return loadContractVersion(clientId, contractId, version)
+}
+
+function printContractDiff(diff: import('./promise/diff-types.js').ContractDiff): void {
+  console.log(`Diff: v${diff.fromVersion} -> v${diff.toVersion}`)
+  console.log('─'.repeat(50))
+  if (diff.changes.length === 0) {
+    console.log('(No differences.)')
+    return
+  }
+  for (const c of diff.changes) {
+    const icon = c.breaking ? '✗ BREAKING' : '  compatible'
+    console.log(`  [${icon}] ${c.changeType} ${c.path}`)
+    console.log(`      ${c.reason}`)
+  }
+  console.log('')
+  console.log(diff.hasBreakingChanges
+    ? `${diff.changes.filter(c => c.breaking).length} of ${diff.changes.length} change(s) are BREAKING -- existing ProofLedger/ExceptionDesk evidence recorded under v${diff.fromVersion} may be misinterpreted against v${diff.toVersion}'s shape for the affected ids.`
+    : `All ${diff.changes.length} change(s) are compatible -- existing evidence should still be correctly interpreted under the new version.`)
+}
+
+async function handleContractDiff(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const contractId = positional[1]
+  const clientId = typeof flags['client-id'] === 'string' ? flags['client-id'] : undefined
+  const fromRaw = typeof flags['from'] === 'string' ? flags['from'] : undefined
+  const toRaw = typeof flags['to'] === 'string' ? flags['to'] : undefined
+
+  if (!contractId || !clientId || !fromRaw || !toRaw) {
+    console.error('Usage: kairos contract diff <contract-id> --client-id <slug> --from <v> --to <v> [--json]')
+    console.error('')
+    console.error('Pure, offline structural diff between two versions of a saved contract (the')
+    console.error('live version, or any archived one from "kairos contract versions"). Classifies')
+    console.error('each change as breaking (could cause existing ProofLedger/ExceptionDesk')
+    console.error('evidence to be misinterpreted against the new shape) or compatible -- see')
+    console.error('src/promise/diff.ts\'s own doc comment for the full field-by-field rule.')
+    console.error('Never writes anything.')
+    process.exit(1)
+  }
+
+  const fromVersion = parseInt(fromRaw, 10)
+  const toVersion = parseInt(toRaw, 10)
+  const [from, to] = await Promise.all([
+    resolveContractVersion(clientId, contractId, fromVersion),
+    resolveContractVersion(clientId, contractId, toVersion),
+  ])
+  if (!from) {
+    console.error(`No version ${fromVersion} found for contract "${contractId}" (client "${clientId}") -- neither live nor archived.`)
+    process.exit(1)
+  }
+  if (!to) {
+    console.error(`No version ${toVersion} found for contract "${contractId}" (client "${clientId}") -- neither live nor archived.`)
+    process.exit(1)
+  }
+
+  const { diffProcessContracts } = await import('./promise/diff.js')
+  const diff = diffProcessContracts(from, to)
+
+  if (flags['json'] === true) {
+    console.log(JSON.stringify(diff, null, 2))
+    return
+  }
+  printContractDiff(diff)
+}
+
+async function handleContractAmend(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const contractId = positional[1]
+  const clientId = typeof flags['client-id'] === 'string' ? flags['client-id'] : undefined
+  const newFile = typeof flags['new'] === 'string' ? flags['new'] : undefined
+
+  if (!contractId || !clientId || !newFile) {
+    console.error('Usage: kairos contract amend <contract-id> --client-id <slug> --new <file.json> [--confirm] [--confirm-breaking-with-active-instances] [--json]')
+    console.error('')
+    console.error('Without --confirm (the default): validates the new contract, shows the diff')
+    console.error('against the current live version and its breaking/compatible classification,')
+    console.error('and writes nothing -- a preview, same posture as "contract compile" without')
+    console.error('--build.')
+    console.error('')
+    console.error('With --confirm: also archives the current version (never destroyed -- see')
+    console.error('"kairos contract versions") and saves the new one as live. Refuses (exit 2,')
+    console.error('nothing written) if the new contract fails validation or has a blocking')
+    console.error('assumption (same gate as "contract import"), OR if the diff has any breaking')
+    console.error('change while this contract currently has any in_progress promise instance --')
+    console.error('pass --confirm-breaking-with-active-instances too if you understand an')
+    console.error('in-flight instance\'s evidence may be misinterpreted against the new shape and')
+    console.error('want to proceed anyway.')
+    console.error('')
+    console.error('Never recompiles or redeploys anything -- run')
+    console.error('"kairos contract compile <file.json> --build" yourself afterward.')
+    process.exit(1)
+  }
+
+  const { readFile } = await import('node:fs/promises')
+  let next: import('./promise/types.js').ProcessContract
+  try {
+    const content = await readFile(newFile, 'utf-8')
+    next = JSON.parse(content) as import('./promise/types.js').ProcessContract
+  } catch (err) {
+    console.error(`Could not read or parse ${newFile}: ${err instanceof Error ? err.message : String(err)}`)
+    process.exit(1)
+  }
+
+  if (next.clientId !== clientId) {
+    console.error(`Refusing to amend: the new contract's own clientId is "${next.clientId}", not "${clientId}" -- --client-id must match exactly.`)
+    process.exit(1)
+  }
+  if (next.id !== contractId) {
+    console.error(`Refusing to amend: the new contract's own id is "${next.id}", not "${contractId}" -- an amendment must keep the same contract id (a different id is a new contract, not an amendment of this one).`)
+    process.exit(1)
+  }
+
+  const { loadProcessContract, amendProcessContract } = await import('./promise/store.js')
+  const current = await loadProcessContract(clientId, contractId)
+  if (!current) {
+    console.error(`No existing ProcessContract found for client "${clientId}" with id "${contractId}" -- nothing to amend. Use "kairos contract import" for a first import.`)
+    process.exit(1)
+  }
+  if (current.version === next.version) {
+    console.error(`Refusing to amend: the new contract's version (${next.version}) is the same as the current live version -- bump ProcessContract.version in the new file first, so this amendment is distinguishable from the version it supersedes.`)
+    process.exit(1)
+  }
+
+  const { validateProcessContract } = await import('./promise/validate.js')
+  const issues = validateProcessContract(next)
+  const errors = issues.filter(i => i.severity === 'error')
+  const warnings = issues.filter(i => i.severity === 'warn')
+  const blocking = next.assumptions.filter(a => a.type === 'blocking')
+
+  if (errors.length > 0 || blocking.length > 0) {
+    if (flags['json'] === true) {
+      console.log(JSON.stringify({ amended: false, validationIssues: issues, blockingAssumptions: blocking }, null, 2))
+      process.exit(2)
+    }
+    console.error(`\nRefusing to amend "${contractId}" -- nothing written.`)
+    if (errors.length > 0) {
+      console.error(`\nValidation errors:`)
+      for (const e of errors) console.error(`  ✗ [Rule ${e.rule}] ${e.message}${e.path ? ` (${e.path})` : ''}`)
+    }
+    if (blocking.length > 0) {
+      console.error(`\nBlocking assumptions:`)
+      for (const a of blocking) console.error(`  ✗ ${a.text}`)
+    }
+    process.exit(2)
+  }
+
+  const { diffProcessContracts } = await import('./promise/diff.js')
+  const diff = diffProcessContracts(current, next)
+
+  const confirm = flags['confirm'] === true
+  if (!confirm) {
+    if (flags['json'] === true) {
+      console.log(JSON.stringify({ amended: false, preview: true, diff, validationIssues: issues }, null, 2))
+      return
+    }
+    printContractDiff(diff)
+    console.log(`\n(Preview only -- nothing written. Re-run with --confirm to apply.)`)
+    return
+  }
+
+  // Active-instance version pinning (roadmap item 12, docs/plans/
+  // contract-evolution-ops-roadmap-plan.md §3, item 12, design-verification note resolved
+  // before implementation): a breaking amendment is refused by default while any promise
+  // instance is still in_progress, since checkSlaCompliance()/classifyPromiseInstance() have no
+  // version-cohort logic (they match every entry against ONE current contract shape) -- an
+  // in-flight instance's already-recorded evidence could be silently reinterpreted against ids
+  // that now mean something structurally different. Reuses only already-shipped, read-only
+  // functions; does not touch sla-compliance.ts/report.ts at all.
+  if (diff.hasBreakingChanges && flags['confirm-breaking-with-active-instances'] !== true) {
+    const { getProofLedgerEntries } = await import('./promise/ledger-store.js')
+    const { loadExceptionDeskItems } = await import('./promise/exception-store.js')
+    const { buildPromiseReportData } = await import('./promise/report.js')
+    const entries = await getProofLedgerEntries(clientId, contractId, 10000)
+    const exceptions = await loadExceptionDeskItems(clientId, contractId)
+    const reportData = buildPromiseReportData(current, entries, exceptions)
+    const inProgressCount = reportData.instanceCounts.in_progress
+
+    if (inProgressCount > 0) {
+      if (flags['json'] === true) {
+        console.log(JSON.stringify({ amended: false, refusedBreakingWithActiveInstances: true, inProgressCount, diff }, null, 2))
+        process.exit(2)
+      }
+      console.error(`\nRefusing to amend "${contractId}" -- nothing written.`)
+      console.error(`This amendment has ${diff.changes.filter(c => c.breaking).length} breaking change(s), and ${inProgressCount} promise instance(s) are currently in_progress under the CURRENT version.`)
+      console.error(`Their already-recorded evidence may be misinterpreted against the new contract shape for the affected ids -- see the diff above for exactly which ones.`)
+      console.error(`Either wait for those instances to reach a terminal outcome, or re-run with --confirm --confirm-breaking-with-active-instances if you understand the risk and want to proceed anyway.`)
+      process.exit(2)
+    }
+  }
+
+  const { path, archivedVersion } = await amendProcessContract(next, current, 'contract_amend')
+
+  if (flags['json'] === true) {
+    console.log(JSON.stringify({ amended: true, path, archivedVersion, diff }, null, 2))
+    return
+  }
+  printContractDiff(diff)
+  console.log(`\n✓ Amended "${next.name}" (${contractId}): v${archivedVersion} archived, v${next.version} is now live. Path: ${path}`)
+  if (warnings.length > 0) {
+    console.log(`\n${warnings.length} warning(s):`)
+    for (const w of warnings) console.log(`  ⚠ [Rule ${w.rule}] ${w.message}${w.path ? ` (${w.path})` : ''}`)
+  }
+  console.log(`\nNothing was recompiled or redeployed. Run "kairos contract compile ${newFile} --build" to generate and register updated workflows.`)
 }
 
 async function handleContractReport(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
@@ -2468,6 +2729,21 @@ async function handleContract(positional: string[], flags: Record<string, string
     return
   }
 
+  if (subcommand === 'versions') {
+    await handleContractVersions(positional, flags)
+    return
+  }
+
+  if (subcommand === 'diff') {
+    await handleContractDiff(positional, flags)
+    return
+  }
+
+  if (subcommand === 'amend') {
+    await handleContractAmend(positional, flags)
+    return
+  }
+
   if (subcommand === 'intake') {
     await handleContractIntake(positional.slice(1), flags)
     return
@@ -2492,6 +2768,9 @@ async function handleContract(positional: string[], flags: Record<string, string
     console.error('       kairos contract compile <file.json> [--build] [--dry-run] [--json]')
     console.error('       kairos contract validate <file.json> [--json]')
     console.error('       kairos contract import <file.json> --client-id <slug> [--confirm-version-change] [--json]')
+    console.error('       kairos contract versions <contract-id> --client-id <slug> [--json]')
+    console.error('       kairos contract diff <contract-id> --client-id <slug> --from <v> --to <v> [--json]')
+    console.error('       kairos contract amend <contract-id> --client-id <slug> --new <file.json> [--confirm] [--confirm-breaking-with-active-instances] [--json]')
     console.error('       kairos contract report <contract-id> --client-id <slug> [--from <date>] [--to <date>] [--bundle <dir>] [--json]')
     console.error('')
     console.error('plan drafts a ProcessContract from a plain-language description via an LLM,')
@@ -2531,6 +2810,23 @@ async function handleContract(positional: string[], flags: Record<string, string
     console.error('overwrite an already-saved contract at a DIFFERENT version unless')
     console.error('--confirm-version-change is passed -- overwriting silently would orphan any')
     console.error("ProofLedger evidence recorded against the old version's own ids.")
+    console.error('')
+    console.error('versions lists every archived (superseded) version of a saved contract, newest')
+    console.error('first -- empty until the contract has been amended/re-imported at least once.')
+    console.error('')
+    console.error('diff renders a structural diff between two versions of a saved contract --')
+    console.error('what changed, and whether each change is classified breaking (could cause')
+    console.error('existing ProofLedger/ExceptionDesk evidence to be misinterpreted against the')
+    console.error('new shape) or compatible. Pure, offline, no writes.')
+    console.error('')
+    console.error('amend previews (default) or applies (--confirm) replacing a saved contract')
+    console.error('with a new version from a file -- always shows the diff and its breaking/')
+    console.error('compatible classification first. --confirm validates (same gate as import),')
+    console.error('archives the current version (never destroyed, see versions/diff above), then')
+    console.error('saves the new one. Refuses a breaking amendment while any promise instance is')
+    console.error('still in_progress unless --confirm-breaking-with-active-instances is also')
+    console.error('passed -- amending never recompiles/redeploys anything; run')
+    console.error('"kairos contract compile <file.json> --build" yourself afterward.')
     console.error('')
     console.error('report generates a client-facing promise-report.md from ProofLedger +')
     console.error('ExceptionDesk data -- see "kairos contract report" with no args for detail.')
@@ -2612,8 +2908,12 @@ async function handleLedgerPoll(positional: string[], flags: Record<string, stri
 
   const { loadContractWorkflowRegistration } = await import('./promise/registry.js')
   const registration = await loadContractWorkflowRegistration(clientId, contractId)
-  if (!registration || registration.workflows.length === 0) {
-    console.error('No workflows registered for this contract yet.')
+  const activeWorkflows = registration?.workflows.filter(w => w.status === 'active') ?? []
+  if (activeWorkflows.length === 0) {
+    console.error('No active workflows registered for this contract.')
+    if (registration && registration.workflows.length > activeWorkflows.length) {
+      console.error(`(${registration.workflows.length - activeWorkflows.length} registered workflow(s) exist but are retired -- see "kairos contract report" for their historical evidence.)`)
+    }
     console.error('Run "kairos contract compile <file.json> --build" (without --dry-run) first --')
     console.error('registration happens automatically once a real build succeeds.')
     process.exit(1)
@@ -2630,7 +2930,7 @@ async function handleLedgerPoll(positional: string[], flags: Record<string, stri
   const limit = typeof flags['limit'] === 'string' ? parseInt(flags['limit'], 10) : 20
 
   const results: Array<{ workflowName: string } & Awaited<ReturnType<typeof pollWorkflowEvidence>>> = []
-  for (const wf of registration.workflows) {
+  for (const wf of activeWorkflows) {
     const watermark = await loadContractPollWatermark(clientId, contractId, wf.n8nWorkflowId)
     const result = await pollWorkflowEvidence(contract, wf.n8nWorkflowId, client, watermark, limit, wf.sourceElements)
     await appendProofLedgerEntries(clientId, contractId, result.entries)
@@ -3398,8 +3698,9 @@ async function runContractComplianceTick(
 
   const { loadContractWorkflowRegistration } = await import('./promise/registry.js')
   const registration = await loadContractWorkflowRegistration(clientId, contractId)
-  if (!registration || registration.workflows.length === 0) {
-    console.error(`[contracts] No workflows registered for contract "${contractId}" -- skipping this tick. Run "kairos contract compile <file.json> --build" first.`)
+  const activeWorkflows = registration?.workflows.filter(w => w.status === 'active') ?? []
+  if (activeWorkflows.length === 0) {
+    console.error(`[contracts] No active workflows registered for contract "${contractId}" -- skipping this tick. Run "kairos contract compile <file.json> --build" first.`)
     return
   }
 
@@ -3408,7 +3709,7 @@ async function runContractComplianceTick(
   const { pollWorkflowEvidence } = await import('./promise/ledger.js')
   const { loadContractPollWatermark, saveContractPollWatermark, appendProofLedgerEntries, getProofLedgerEntries } = await import('./promise/ledger-store.js')
 
-  for (const wf of registration.workflows) {
+  for (const wf of activeWorkflows) {
     const watermark = await loadContractPollWatermark(clientId, contractId, wf.n8nWorkflowId)
     const result = await pollWorkflowEvidence(contract, wf.n8nWorkflowId, client, watermark, 20, wf.sourceElements)
     await appendProofLedgerEntries(clientId, contractId, result.entries)

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir, homedir } from 'node:os'
 import { join } from 'node:path'
-import { saveProcessContract, loadProcessContract, listProcessContracts } from '../../../src/promise/store.js'
+import { saveProcessContract, loadProcessContract, listProcessContracts, amendProcessContract, listContractVersions, loadContractVersion } from '../../../src/promise/store.js'
 import type { ProcessContract } from '../../../src/promise/types.js'
 
 function makeContract(overrides: Partial<ProcessContract> = {}): ProcessContract {
@@ -70,7 +70,7 @@ describe('saveProcessContract / loadProcessContract / listProcessContracts', () 
     expect(loaded).toBeNull()
   })
 
-  it('re-saving the same id overwrites (no versioning in Phase 0, by design)', async () => {
+  it('re-saving the same id overwrites, no archive -- saveProcessContract() itself stays a plain overwrite by design; amendProcessContract() below is the versioning-aware path', async () => {
     await saveProcessContract(makeContract({ name: 'Original Name' }))
     await saveProcessContract(makeContract({ name: 'Updated Name' }))
     const loaded = await loadProcessContract('test-client', 'test-contract')
@@ -109,5 +109,84 @@ describe('saveProcessContract / loadProcessContract / listProcessContracts', () 
 
     const list = await listProcessContracts('test-client')
     expect(list.map(c => c.id)).toEqual(['good-contract'])
+  })
+})
+
+// Roadmap item 12 (docs/plans/contract-evolution-ops-roadmap-plan.md §3, item 12): the version
+// archival this whole item exists to add -- store.ts's own doc comment (Phase 0) predicted this
+// exact "later phase" by name.
+describe('amendProcessContract / listContractVersions / loadContractVersion -- version archival', () => {
+  it('behaves exactly like saveProcessContract when there is no prior version to archive', async () => {
+    const contract = makeContract()
+    const { path, archivedVersion } = await amendProcessContract(contract, undefined, 'contract_amend')
+    expect(archivedVersion).toBeUndefined()
+    const loaded = await loadProcessContract('test-client', 'test-contract')
+    expect(loaded).toEqual(contract)
+    expect(path).toContain('test-contract.json')
+
+    const versions = await listContractVersions('test-client', 'test-contract')
+    expect(versions).toEqual([]) // nothing archived -- there was no prior version
+  })
+
+  it('archives the prior version before saving the new one, and the live contract is the new one', async () => {
+    const v1 = makeContract({ version: 1, name: 'v1 name' })
+    await saveProcessContract(v1)
+
+    const v2 = makeContract({ version: 2, name: 'v2 name' })
+    const { archivedVersion } = await amendProcessContract(v2, v1, 'contract_amend')
+    expect(archivedVersion).toBe(1)
+
+    const live = await loadProcessContract('test-client', 'test-contract')
+    expect(live!.version).toBe(2)
+    expect(live!.name).toBe('v2 name')
+  })
+
+  it('the archived version is loadable, byte-for-byte, via loadContractVersion -- "old-version load"', async () => {
+    const v1 = makeContract({ version: 1, name: 'v1 name' })
+    await saveProcessContract(v1)
+    const v2 = makeContract({ version: 2, name: 'v2 name' })
+    await amendProcessContract(v2, v1, 'contract_amend')
+
+    const archived = await loadContractVersion('test-client', 'test-contract', 1)
+    expect(archived).toEqual(v1)
+  })
+
+  it('loadContractVersion returns null for a version that was never archived (e.g. the current live version)', async () => {
+    const v1 = makeContract({ version: 1 })
+    await saveProcessContract(v1)
+    const result = await loadContractVersion('test-client', 'test-contract', 1)
+    expect(result).toBeNull()
+  })
+
+  it('multiple amendments archive every superseded version -- history is never overwritten or lost', async () => {
+    const v1 = makeContract({ version: 1 })
+    await saveProcessContract(v1)
+    const v2 = makeContract({ version: 2 })
+    await amendProcessContract(v2, v1, 'contract_amend')
+    const v3 = makeContract({ version: 3 })
+    await amendProcessContract(v3, v2, 'contract_amend')
+
+    const versions = await listContractVersions('test-client', 'test-contract')
+    expect(versions.map(r => r.contract.version)).toEqual([2, 1]) // newest-archived first
+    expect(await loadContractVersion('test-client', 'test-contract', 1)).toEqual(v1)
+    expect(await loadContractVersion('test-client', 'test-contract', 2)).toEqual(v2)
+    expect((await loadProcessContract('test-client', 'test-contract'))!.version).toBe(3)
+  })
+
+  it('records supersededBy and a real supersededAt timestamp on the archived record', async () => {
+    const v1 = makeContract({ version: 1 })
+    await saveProcessContract(v1)
+    const v2 = makeContract({ version: 2 })
+    const before = new Date().toISOString()
+    await amendProcessContract(v2, v1, 'contract_import')
+    const versions = await listContractVersions('test-client', 'test-contract')
+    expect(versions[0]!.supersededBy).toBe('contract_import')
+    expect(versions[0]!.supersededAt >= before).toBe(true)
+  })
+
+  it('listContractVersions returns an empty array, not a throw, for a contract that was never amended', async () => {
+    await saveProcessContract(makeContract())
+    const versions = await listContractVersions('test-client', 'test-contract')
+    expect(versions).toEqual([])
   })
 })
