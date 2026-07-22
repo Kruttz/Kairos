@@ -80,6 +80,7 @@ console.log(pack.testChecklist)               // how to verify each workflow
 | Proposes evidence-linked contract amendments from real ProofLedger/ExceptionDesk patterns, and lets a human preview/apply a real, version-archived amendment (`kairos contract evolve`, `kairos contract amend`/`versions`/`diff`) | Any automatic contract change, ever — every proposal requires human accept/reject, every amendment requires explicit `--confirm`, and a breaking amendment is refused outright while any promise instance is still in flight unless explicitly overridden |
 | Translates real, conservative Promise Report counts into an optional dollar/time value estimate — but only for the exact multipliers a human explicitly supplies (`kairos contract value`) | Any invented, inferred, or benchmarked dollar/time figure — every value line shows its own `count × assumption` formula, and the command refuses outright rather than guess a missing currency |
 | Finds candidate processes worth building a ProcessContract for, from a single human-supplied CSV export — 10 narrow heuristic checks, evidence-graded, never proven failures (`kairos scout analyze`) | Any live API/OAuth connector, any scheduled/continuous scanning, any per-worker scoring, or any automatic contract/automation creation — findings are read-only text a human hand-copies into `contract intake`/`contract plan` themselves |
+| Records a real human's accept/reject decision on a Contract Evolution proposal as a local, per-client LearningNote, with a structural guardrail against ever promoting synthetic-only evidence (`kairos learn candidates`/`list`/`show`/`promote`/`reject`) | Any automatic prompt, validator, scenario, compiler, contract, or workflow change from a promoted note — promotion only ever flips the note's own local status; no cross-client learning, no hosted service, no dashboard |
 | Documents assumptions, open questions, and test steps | — |
 | Syncs node types from your live instance | — |
 | Learns from prior builds and failures | — |
@@ -1216,6 +1217,25 @@ kairos contract evolve list <contract-id> --client-id acme
 kairos contract evolve show <contract-id> <proposal-id> --client-id acme
 kairos contract evolve accept <contract-id> <proposal-id> --client-id acme --reason "worth revisiting"
 kairos contract evolve reject <contract-id> <proposal-id> --client-id acme --reason "intentional, staff confirm"
+
+# Self-Tuning Flywheel v0 (roadmap item 15): a local, human-gated record of what was actually
+# learned from real Contract Evolution decisions. `learn candidates` reads THIS contract's own
+# already-decided (accepted/applied/rejected) amendment proposals and records each decision as a
+# LearningNote -- evidence a real human judged a real detected pattern, either way. An undecided
+# ("proposed") proposal produces nothing. Notes are stored per client, across all of that
+# client's contracts -- never across clients, never a hosted service, never a dashboard.
+# `learn promote`/`reject` only ever flip a note's OWN local status -- it never changes a prompt,
+# a validator rule, a contract, or a workflow; there is no code path anywhere in this codebase
+# that mutates any of those from a learning note. A note derived entirely from synthetic
+# (harness-only) evidence is flagged in its own provenance and can never be promoted -- refused
+# outright, before any write happens. Re-running candidates refreshes the same note per proposal
+# rather than duplicating it, and never resets a human's prior promote/reject decision.
+kairos learn candidates <contract-id> --client-id acme
+kairos learn list --client-id acme
+kairos learn list --client-id acme --status candidate
+kairos learn show <note-id> --client-id acme
+kairos learn promote <note-id> --client-id acme --reason "confirmed real pattern"
+kairos learn reject <note-id> --client-id acme --reason "not a useful pattern"
 
 # Report what Kairos currently knows for this workflow -- which of the 9 named drift checks
 # have real data to evaluate ("captured") vs. which don't yet or structurally can't

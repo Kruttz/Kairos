@@ -50,6 +50,9 @@ Usage:
   kairos contract diff <contract-id> --client-id <slug> --from <v> --to <v> [--json]
   kairos contract amend <contract-id> --client-id <slug> --new <file.json> [--confirm] [--confirm-breaking-with-active-instances] [--from-proposal <id>] [--json]
   kairos contract evolve run|list|show|accept|reject <contract-id> [<proposal-id>] --client-id <slug> [--json]
+  kairos learn candidates <contract-id> --client-id <slug> [--json]
+  kairos learn list --client-id <slug> [--status <status>] [--json]
+  kairos learn show|promote|reject <note-id> --client-id <slug> [--reason <text>] [--json]
   kairos contract report <contract-id> --client-id <slug> [--from <date>] [--to <date>] [--bundle <dir>] [--json]
   kairos contract value <contract-id> --client-id <slug> [--assumptions <file.json>] [--from <date>] [--to <date>] [--bundle <dir>] [--json]
   kairos ledger poll <contract-id> --client-id <slug> [--limit <n>] [--json]
@@ -374,6 +377,32 @@ Contract options (ProcessContract v0, Phase 0+1+2+5 -- see docs/plans/process-co
                                   rejected in this codebase's own history for exactly this risk.
                                   Without --bundle, prints only; with --bundle <dir>, also writes
                                   automation-value-report.md + a manifest there.
+
+Learn options (Self-Tuning Flywheel v0, roadmap item 15, see docs/plans/
+contract-evolution-ops-roadmap-plan.md §15):
+  learn candidates <contract-id> Item 11 (contract evolve) produces proposals; a human accepts or
+    --client-id <slug>           rejects each one. "learn candidates" reads THIS contract's own
+                                  already-decided (accepted/applied/rejected) proposals and
+                                  records each decision as a LearningNote -- evidence a real human
+                                  judged a real detected pattern, either way. An undecided
+                                  ("proposed") proposal produces nothing. Re-running refreshes the
+                                  same note per proposal rather than duplicating it, and never
+                                  resets a human's prior promote/reject decision on that note.
+  learn list --client-id <slug>  Lists (optionally --status-filtered: candidate/promoted/rejected)
+    [--status <status>]          every learning note for this client, across ALL of that client's
+                                  contracts -- notes are stored per client, never across clients,
+                                  never in a hosted service, never in a dashboard.
+  learn show <note-id>           Shows one note in full, including its evidence and full
+    --client-id <slug>           status-change history.
+  learn promote <note-id>        Marks a note reviewed-and-kept (promote) or reviewed-and-
+    --client-id <slug>           discarded (reject, --reason required). Either way, this ONLY
+    [--reason <text>]            flips the note's own local status -- it never changes a prompt, a
+  learn reject <note-id>         validator rule, a contract, or a workflow; no automatic prompt/
+    --client-id <slug>           validator/scenario/compiler change exists anywhere in this
+    --reason <text>              codebase triggered by it. A note derived entirely from synthetic
+                                  (harness-only) evidence -- i.e. sourced from a harness_mismatch
+                                  category proposal -- is flagged in its own provenance and
+                                  "learn promote" refuses it outright, before any write happens.
 
 Ledger options (ProofLedger v0, Phase 3 -- see docs/plans/process-contract-promise-engine-plan.md §6):
   ledger poll <contract-id>      Polls n8n execution data (read-only -- GET only, never a write)
@@ -2935,6 +2964,176 @@ async function handleContractEvolve(positional: string[], flags: Record<string, 
   }
 }
 
+function learningNoteStatusIcon(status: import('./promise/learning-types.js').LearningNoteStatus): string {
+  return { candidate: '?', promoted: '✓', rejected: '✗' }[status]
+}
+
+function printLearningNote(n: import('./promise/learning-types.js').LearningNote, verbose: boolean): void {
+  console.log(`  [${learningNoteStatusIcon(n.status)} ${n.status}] ${n.id}`)
+  console.log(`      contract: ${n.provenance.contractId}   category: ${n.provenance.proposalCategory}   proposal decision: ${n.provenance.decision}${n.provenance.synthetic ? '   (synthetic evidence -- cannot be promoted)' : ''}`)
+  console.log(`      ${n.summary}`)
+  console.log(`      next action: ${n.recommendedNextAction}`)
+  if (verbose) {
+    console.log(`      evidence:`)
+    for (const e of n.provenance.evidence) console.log(`        - ${e.kind}: ${e.id}`)
+  }
+}
+
+/**
+ * Self-Tuning Flywheel v0 (roadmap item 15, docs/plans/contract-evolution-ops-roadmap-plan.md
+ * §15). Codex's own scope, adopted verbatim: "Item 11 produces proposals. Humans accept/reject
+ * proposals. Item 15 records those decisions as candidate learning notes with provenance. A
+ * human may later explicitly promote a note. Promotion should only mark the note as promoted
+ * locally; it should not mutate prompts/rules/code in v0." Fully standalone -- no other command
+ * anywhere in this codebase calls into learning.ts/learning-store.ts; there is no auto-invocation
+ * from `contract evolve accept/reject`, no hook, no integration point. Everything here is local,
+ * off-by-default (a human must explicitly run `learn candidates`), and read/write only against
+ * this client's own `~/.kairos/promise-ledger/<clientId>/learning-notes.json`.
+ */
+async function handleLearn(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
+  const subcommand = positional[0]
+  const clientId = typeof flags['client-id'] === 'string' ? flags['client-id'] : undefined
+  const validSubcommands = ['candidates', 'list', 'show', 'promote', 'reject']
+
+  if (!subcommand || !validSubcommands.includes(subcommand) || !clientId) {
+    console.error('Usage: kairos learn candidates <contract-id> --client-id <slug> [--json]')
+    console.error('       kairos learn list --client-id <slug> [--status <status>] [--json]')
+    console.error('       kairos learn show <note-id> --client-id <slug> [--json]')
+    console.error('       kairos learn promote <note-id> --client-id <slug> [--reason <text>] [--json]')
+    console.error('       kairos learn reject <note-id> --client-id <slug> --reason <text> [--json]')
+    console.error('')
+    console.error('Self-Tuning Flywheel v0: Item 11 (contract evolve) produces contract amendment')
+    console.error('proposals; a human accepts or rejects each one (audited, never automatic).')
+    console.error('"learn candidates" reads THIS contract\'s own already-decided (accepted/')
+    console.error('applied/rejected) proposals and records each decision as a LearningNote --')
+    console.error('evidence a real human judged a real detected pattern, either way. An undecided')
+    console.error('("proposed") proposal produces nothing. A note derived entirely from synthetic')
+    console.error('(harness-only) evidence is flagged and can never be promoted.')
+    console.error('')
+    console.error('Notes are stored per client, across all of that client\'s contracts -- never')
+    console.error('across clients, never a hosted service, never a dashboard. "learn promote"')
+    console.error('only ever flips a note\'s own local status -- it never changes a prompt, a')
+    console.error('validator rule, a contract, or a workflow; no automatic prompt/validator/')
+    console.error('scenario/compiler change exists anywhere in this codebase triggered by it.')
+    process.exit(1)
+  }
+
+  if (subcommand === 'candidates') {
+    const contractId = positional[1]
+    if (!contractId) {
+      console.error('Usage: kairos learn candidates <contract-id> --client-id <slug> [--json]')
+      process.exit(1)
+    }
+    const { loadProcessContract } = await import('./promise/store.js')
+    const contract = await loadProcessContract(clientId, contractId)
+    if (!contract) {
+      console.error(`No ProcessContract found for client "${clientId}" with id "${contractId}".`)
+      process.exit(1)
+    }
+
+    const { loadContractAmendmentProposals } = await import('./promise/evolution-store.js')
+    const { deriveLearningNotesFromProposals } = await import('./promise/learning.js')
+    const { upsertLearningNotes } = await import('./promise/learning-store.js')
+
+    const proposals = await loadContractAmendmentProposals(clientId, contractId)
+    const fresh = deriveLearningNotesFromProposals(proposals)
+    const merged = await upsertLearningNotes(clientId, fresh)
+    const freshIds = new Set(fresh.map(n => n.id))
+    const thisContract = merged.filter(n => n.provenance.contractId === contractId)
+
+    if (flags['json'] === true) {
+      console.log(JSON.stringify({ generated: fresh, allStoredForContract: thisContract }, null, 2))
+      return
+    }
+    console.log(`${contract.name} (${contractId}) — Learning Note candidates`)
+    console.log('─'.repeat(50))
+    if (fresh.length === 0) {
+      console.log('No decided (accepted/applied/rejected) proposals found -- run "kairos contract evolve run/accept/reject" first.')
+    } else {
+      for (const n of fresh) printLearningNote(n, false)
+    }
+    const untouchedCount = thisContract.filter(n => !freshIds.has(n.id)).length
+    if (untouchedCount > 0) {
+      console.log(`\n(${untouchedCount} previously-stored note(s) for this contract not refreshed this run -- their source proposal is no longer in 'accepted'/'applied'/'rejected' status.)`)
+    }
+    return
+  }
+
+  if (subcommand === 'list') {
+    const { loadLearningNotes } = await import('./promise/learning-store.js')
+    const notes = await loadLearningNotes(clientId)
+    const statusFilter = typeof flags['status'] === 'string' ? flags['status'] : undefined
+    const filtered = statusFilter ? notes.filter(n => n.status === statusFilter) : notes
+
+    if (flags['json'] === true) {
+      console.log(JSON.stringify(filtered, null, 2))
+      return
+    }
+    console.log(`Learning notes for client "${clientId}"${statusFilter ? ` (status: ${statusFilter})` : ''}`)
+    console.log('─'.repeat(50))
+    if (filtered.length === 0) {
+      console.log('(None. Run "kairos learn candidates <contract-id>" first.)')
+      return
+    }
+    for (const n of filtered) printLearningNote(n, false)
+    return
+  }
+
+  const noteId = positional[1]
+  if (!noteId) {
+    console.error(`Usage: kairos learn ${subcommand} <note-id> --client-id <slug> [--json]`)
+    process.exit(1)
+  }
+
+  if (subcommand === 'show') {
+    const { loadLearningNotes } = await import('./promise/learning-store.js')
+    const notes = await loadLearningNotes(clientId)
+    const n = notes.find(x => x.id === noteId)
+    if (!n) {
+      console.error(`No learning note "${noteId}" found for client "${clientId}".`)
+      process.exit(1)
+    }
+    if (flags['json'] === true) {
+      console.log(JSON.stringify(n, null, 2))
+      return
+    }
+    printLearningNote(n!, true)
+    if (n!.history.length > 0) {
+      console.log(`\n  history:`)
+      for (const h of n!.history) console.log(`    ${h.ts}  ${h.from ?? '(created)'} -> ${h.to}${h.reason ? `  (${h.reason})` : ''}`)
+    }
+    return
+  }
+
+  // subcommand === 'promote' | 'reject'
+  if (subcommand === 'reject' && typeof flags['reason'] !== 'string') {
+    console.error('Usage: kairos learn reject <note-id> --client-id <slug> --reason <text> [--json]')
+    process.exit(1)
+  }
+
+  const { updateLearningNoteStatus, SyntheticNotePromotionError } = await import('./promise/learning-store.js')
+  const reason = typeof flags['reason'] === 'string' ? flags['reason'] : undefined
+  let updated: import('./promise/learning-types.js').LearningNote | null
+  try {
+    updated = await updateLearningNoteStatus(clientId, noteId, subcommand === 'promote' ? 'promoted' : 'rejected', reason)
+  } catch (err) {
+    if (err instanceof SyntheticNotePromotionError) {
+      console.error(err.message)
+      process.exit(1)
+    }
+    throw err
+  }
+  if (!updated) {
+    console.error(`No learning note "${noteId}" found for client "${clientId}".`)
+    process.exit(1)
+  }
+  if (flags['json'] === true) {
+    console.log(JSON.stringify(updated, null, 2))
+    return
+  }
+  console.log(`✓ Note "${noteId}" marked ${updated!.status}.`)
+}
+
 async function handleContractReport(positional: string[], flags: Record<string, string | boolean>): Promise<void> {
   const contractId = positional[1]
   const clientId = typeof flags['client-id'] === 'string' ? flags['client-id'] : undefined
@@ -4888,6 +5087,9 @@ async function main(): Promise<void> {
       break
     case 'scout':
       await handleScout(positional, flags)
+      break
+    case 'learn':
+      await handleLearn(positional, flags)
       break
     case 'ledger':
       await handleLedger(positional, flags)
