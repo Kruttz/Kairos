@@ -75,6 +75,9 @@ console.log(pack.testChecklist)               // how to verify each workflow
 | Compiles a business promise (states, SLAs, owners, terminal outcomes) into workflows, tracks whether it was actually kept from real execution evidence, and opens/reports exceptions for a real miss (`kairos contract plan`/`compile`/`report`, `kairos watch --contracts`) | Autonomous business decisions — exception detection is automatic, but resolution is human-only, always, with no `--auto` mode at all |
 | Grades every promise instance from evidence: kept / at-risk / missed / unverifiable / in-progress (`kairos contract report`) — see [Promise Engine v0](#promise-engine-v0-processcontract--proofledger--exceptiondesk) | A guarantee that the promise was kept — a Promise Report is an evidence-graded evaluation against whatever n8n execution data exists, not a certification, and explicitly says so whenever evidence is incomplete |
 | Opens an ExceptionDesk item for time-based SLA/expiration drift (`kairos watch --contracts`) | An ExceptionDesk item for every miss — a fast terminal failure reached before any deadline passes (e.g. flagged "missing info" within minutes) is correctly counted in `contract report` but currently opens no ExceptionDesk item |
+| Drafts a ProcessContract via a guided 11-question interview instead of one free-text paragraph, and deterministically generates + evaluates synthetic business scenarios against it purely in-memory, no n8n (`kairos contract intake`, `kairos contract scenarios generate`, `kairos contract harness run`) | A substitute for a human deciding what the contract should actually say — synthesis is always validator-gated and human-reviewed, never auto-applied |
+| Checks a real sandboxed workflow's execution against a contract's own expected business outcome, alongside its existing structural/adversarial checks (`kairos replay run --contract`, `kairos chaos run --contract`) | A full end-to-end business-outcome proof from one execution — both are explicit that they verify intake evidence only, never state-transition evidence a separate processing workflow produces |
+| Proposes evidence-linked contract amendments from real ProofLedger/ExceptionDesk patterns, and lets a human preview/apply a real, version-archived amendment (`kairos contract evolve`, `kairos contract amend`/`versions`/`diff`) | Any automatic contract change, ever — every proposal requires human accept/reject, every amendment requires explicit `--confirm`, and a breaking amendment is refused outright while any promise instance is still in flight unless explicitly overridden |
 | Documents assumptions, open questions, and test steps | — |
 | Syncs node types from your live instance | — |
 | Learns from prior builds and failures | — |
@@ -813,16 +816,21 @@ try {
 
 Everything above (build/chaos/watch/repair/replay) verifies that a *workflow* behaves correctly. The Promise Engine is a separate, later layer that verifies something different: whether a *business commitment* — "every contact form submission gets acknowledged within an hour," "every order ships within 2 business days" — was actually kept, using nothing but real n8n execution evidence.
 
-The loop: a `ProcessContract` (states, transitions, SLAs, owners, terminal outcomes — drafted from a plain-language description via `kairos contract plan`, or written by hand) deterministically compiles into a `PackPlan` (`kairos contract compile`) and, once built and registered (`kairos contract import` + a real `contract compile --build`), `kairos ledger poll` extracts evidence from n8n execution data into a local, append-only `ProofLedger`. SLA/expiration compliance runs inside `kairos watch --contracts`, which opens `ExceptionDesk` items for real drift. `kairos contract report` reads the ledger and exception data back into a client-facing Promise Report.
+The loop: a `ProcessContract` (states, transitions, SLAs, owners, terminal outcomes — drafted from a plain-language description via `kairos contract plan`, a guided multi-turn interview via `kairos contract intake`, or written by hand) deterministically compiles into a `PackPlan` (`kairos contract compile`, which also structurally verifies every deployed workflow actually carries the evidence wiring the contract expects) and, once built and registered (`kairos contract import` + a real `contract compile --build`), `kairos ledger poll` extracts evidence from n8n execution data into a local, append-only `ProofLedger`. SLA/expiration compliance runs inside `kairos watch --contracts`, which opens `ExceptionDesk` items for real drift. `kairos contract report` reads the ledger and exception data back into a client-facing Promise Report.
+
+Before any of that touches n8n at all, `kairos contract scenarios generate` deterministically derives synthetic business scenarios from the contract (happy path, missing data, duplicate submission, after-hours, and more — no LLM call), and `kairos contract harness run` evaluates them through the exact same evidence-checking code production uses, purely in-memory — a deterministic Node-side simulation/assertion layer, not a runtime replacing n8n. The same scenarios extend into live infrastructure once workflows exist: `kairos replay run --contract`/`kairos chaos run --contract` inject a scenario's own intake payload against a real (sandboxed) workflow and check the resulting evidence against the contract's own expected outcome, reported alongside their existing structural diff/adversarial-payload checks, never instead of them.
+
+Once real evidence exists, `kairos contract evolve` treats the contract as a hypothesis, not permanent truth — it mines ProofLedger/ExceptionDesk patterns for SLA hotspots, never-reached states, and similar signals, and proposes (never applies) amendments a human can accept or reject. An accepted proposal still requires hand-authoring the new contract version; `kairos contract amend`/`versions`/`diff` are the only path that ever actually changes a saved contract — always previewable first, always archiving what it replaces, and refusing a breaking change while any promise instance is still in flight unless explicitly overridden.
 
 **Read this before treating a Promise Report as authoritative:**
 
-- **Evidence-graded, not a guarantee.** Every promise instance is classified `kept` / `at_risk` / `missed` / `unverifiable` / `in_progress` from whatever n8n execution evidence actually exists. `unverifiable` is never counted as `kept`, and the report always states plainly when evidence is incomplete. This is an evaluation against available evidence, not a certification that the business process is sound.
+- **Evidence-graded, not a guarantee.** Every promise instance is classified `kept` / `at_risk` / `missed` / `unverifiable` / `in_progress` from whatever n8n execution evidence actually exists. `unverifiable` is never counted as `kept`, and the report always states plainly when evidence is incomplete. This is an evaluation against available evidence, not a certification that the business process is sound. The same discipline applies to `contract evolve`'s own proposals (evidence-graded confidence, sample-size-aware, never a "the AI thinks so" judgment) and to `replay run --contract`/`chaos run --contract`'s own contract-outcome checks, which explicitly say so whenever they can only verify intake evidence, not a full end-to-end business outcome.
 - **ExceptionDesk only reacts to time-based drift.** Items are opened/refreshed only inside `kairos watch --contracts`, only for SLA/expiration-rule findings that are actually drifting. A terminal outcome reached quickly — a submission flagged "missing info" within minutes, well before any deadline passes — is correctly classified in `contract report` but currently produces **no** ExceptionDesk item. Use `contract report` for the complete picture; don't rely on ExceptionDesk alone to catch every miss.
 - **n8n is the current execution substrate.** Evidence extraction, correlation, and polling all read from n8n's own execution data (`ledger poll` is read-only — GET only, never a write). There is no other data source today.
+- **No autonomous contract changes, anywhere.** `contract evolve` only ever proposes; accept/reject only ever record a human decision; `contract amend` only ever writes a new version after explicit `--confirm`. Nothing in this whole arc edits a saved contract, recompiles, or redeploys anything without a human explicitly asking it to.
 - **Validated so far with real infrastructure and a synthetic end-to-end scenario, not yet with a real client's live production traffic.** The full contract → compile → workflows → ledger → SLA monitor → exceptions → report loop has been checkpointed against real n8n execution data and a hand-verified synthetic contact-form scenario (5 cases, a truth table written before running any code, zero mismatches). A first real shadow validation against a live business's actual event stream is still pending.
 
-Full CLI reference for `contract`/`ledger`/`exceptions` is in the [CLI](#cli) section below. Design rationale and every live-checkpoint finding: `docs/plans/process-contract-promise-engine-plan.md`.
+Full CLI reference for `contract`/`ledger`/`exceptions` is in the [CLI](#cli) section below. Design rationale and every live-checkpoint finding: `docs/plans/process-contract-promise-engine-plan.md` (original Promise Engine v0), `docs/plans/intake-scenario-harness-plan.md` (intake, scenarios, harness, replay/chaos contract-outcome checks, compiler verification), and `docs/plans/contract-evolution-ops-roadmap-plan.md` (evolution, amendment/diff).
 
 ---
 
@@ -946,6 +954,46 @@ kairos trace record <n8n-workflow-id>
 kairos contract plan "every referral gets contacted within 4 business hours, outcome logged" --client-id acme
 kairos contract plan "..." --client-id acme --json  # full PlanContractResult as JSON
 
+# Intake Interview v0 (roadmap item 4): a guided, multi-turn alternative to `contract plan`'s
+# one-shot free-text description -- 11 focused questions (what starts it, what counts as done,
+# branches, exceptions, owners, SLAs, evidence, handoffs, missing data, duplicates, what to
+# never automate), answered interactively at the terminal, with no LLM call per question. One
+# synthesis call at the end (same deterministic validator + human-review gate as `contract plan`)
+# drafts the contract, with up to 2 further bounded rounds of targeted follow-up questions if the
+# draft still has blocking assumptions or validation errors after the first attempt. Saves
+# progress after every answer -- safe to interrupt and resume. --context <file> includes a
+# plain-text file (e.g. an existing SOP snippet) verbatim as extra synthesis context -- no
+# document ingestion, chunking, or retrieval, just literal inclusion.
+kairos contract intake start --client-id acme
+kairos contract intake start --client-id acme --context ./notes.txt
+kairos contract intake start --client-id acme --resume <session-id>   # continue an interrupted session
+kairos contract intake status <session-id> --client-id acme           # progress + validation history for a session
+
+# Contract Scenario Generator (roadmap item 5): deterministically derives synthetic business
+# scenarios from a valid ProcessContract -- no LLM call, 7 v0 categories (happy_path,
+# missing_data, failure_terminal, no_response, duplicate_correlation, after_hours, in_progress).
+# Never fabricates evidence for a transition the contract has no EvidenceRequirement for -- a
+# category is honestly skipped (with a reason) rather than faked when the contract can't support
+# it. Each scenario carries its own expected report status/exception count, ready to feed
+# `contract harness run` below.
+kairos contract scenarios generate <file.json>
+kairos contract scenarios generate <file.json> --categories happy_path,missing_data
+kairos contract scenarios generate <file.json> --out ./scenarios --json
+
+# Kairos Contract Harness / Node Harness v0 (roadmap item 6): runs ContractScenarios through the
+# REAL checkSlaCompliance()/updateExceptionDesk()/classifyPromiseInstance() functions -- the
+# exact same code production evidence-checking uses -- purely in-memory, no n8n, no network, no
+# LLM call. Without --scenarios, generates scenarios for every category first (same as
+# `contract scenarios generate`). Compares each scenario's real evaluated outcome against its own
+# expected one and reports mismatches; exits 1 if any scenario fails. This is the deterministic
+# Node-side validation layer this whole arc's own "Node.js optional runtime" framing refers to --
+# a harness/simulation/assertion layer, not a runtime replacing n8n. A permanent golden-fixture
+# regression suite built on this same machinery (roadmap item 9) runs in CI on every change to
+# report.ts/sla-compliance.ts/exception-desk.ts, so a real logic regression in any of those fails
+# a test, not just a live checkpoint.
+kairos contract harness run <file.json>
+kairos contract harness run <file.json> --scenarios ./scenarios --json
+
 # Deterministically compile a valid ProcessContract into a PackPlan -- no LLM call in this step,
 # and traceability from every compiled workflow back to the exact contract element ids it came
 # from (e.g. which startCondition/transition/sla produced it). Without --build, only prints the
@@ -954,17 +1002,27 @@ kairos contract plan "..." --client-id acme --json  # full PlanContractResult as
 # (unless --dry-run) automatically registering the real deployed workflow ids against this
 # contract. `--dry-run` deliberately never registers fake/placeholder workflow ids -- there are no
 # real ones yet. Refuses to compile at all (exit 2, no plan produced) if the contract fails
-# validation or still has a blocking assumption. Deliberately does not attempt to prove the built
-# workflows fulfill the contract -- that verification is ProofLedger's job (`kairos ledger poll`
-# below). IMPORTANT: `compile` only ever reads the given file -- it never saves the contract
-# itself anywhere. `kairos ledger poll`/`watch --contracts`/`contract report` all need BOTH a
-# saved contract (`kairos contract import`, below) AND a real, non-dry-run build's workflow
-# registration before they have anything to find -- neither one alone is enough. A real rebuild
-# whose registration would silently stop tracking a previously-registered workflow (Finding 2 fix,
-# 2026-07-20 -- e.g. one workflow's generation failed this time, or the contract no longer
-# compiles it) refuses (exit 2) to save the new registration, naming exactly which workflow(s)
-# would be dropped -- the pack itself is still built, only the registration write is gated. Pass
-# --confirm-registration-drop if the drop is intentional.
+# validation or still has a blocking assumption. A real, non-dry-run build with at least one
+# deployed workflow also runs Contract Compiler Verification (roadmap item 10): fetches each
+# deployed workflow back from n8n (read-only) and statically checks it contains an evidence node
+# for every EvidenceRequirement, the correlation key referenced somewhere, and every start
+# condition covered -- structural presence only, never a runtime claim, but a gap here means
+# ProofLedger will silently never see that transition's evidence at all, surfaced loudly (exit 2)
+# even though it doesn't block the registration write itself. Full runtime proof that the built
+# workflows actually behave correctly is ProofLedger's own job (`kairos ledger poll` below) and,
+# for the intake moment specifically, the contract-outcome checks `replay run --contract`/
+# `chaos run --contract` (roadmap items 7/8) add further down. IMPORTANT: `compile` only ever
+# reads the given file -- it never saves the contract itself anywhere. `kairos ledger poll`/
+# `watch --contracts`/`contract report` all need BOTH a saved contract (`kairos contract import`,
+# below) AND a real, non-dry-run build's workflow registration before they have anything to find
+# -- neither one alone is enough. Workflow registration is append-only, keyed by the real n8n
+# workflow id (roadmap item 12) -- a recompile after an amendment never silently stops polling a
+# still-live prior workflow. If this rebuild no longer produces a workflow name that's currently
+# active (Finding 2 fix, 2026-07-20 -- e.g. one workflow's generation failed this time, or the
+# contract no longer compiles it), it refuses (exit 2) to save the new registration, naming
+# exactly which workflow(s) would be dropped -- the pack itself is still built, only the
+# registration write is gated. Pass --confirm-registration-drop to mark those entries retired
+# (no longer polled, but their full history stays in the registration file, never deleted).
 kairos contract compile <file.json>                       # print the compiled plan only
 kairos contract compile <file.json> --build --dry-run     # also generate + validate the workflows, skip deployment
 kairos contract compile <file.json> --json                # full CompileToPackPlanResult as JSON
@@ -981,14 +1039,32 @@ kairos contract validate <file.json> --json  # exact structured issues, not rend
 # written) on a validation error or a blocking assumption. `--client-id` must exactly match the
 # contract's own `clientId` field -- refuses rather than silently importing into the wrong
 # client's namespace. Provenance/version/status are preserved exactly as given, never rewritten
-# or bumped -- importing an existing contract is not authoring a new one. Also refuses (exit 2,
+# or bumped -- importing an existing contract is not authoring a new one. Refuses (exit 2,
 # nothing written) to overwrite an already-saved contract at a DIFFERENT version unless
-# --confirm-version-change is passed -- store.ts has no versioning semantics at all, so an
-# unconfirmed overwrite could silently orphan ProofLedger evidence recorded against the old
-# version's own state/transition/SLA ids.
+# --confirm-version-change is passed; even then, the prior version is archived first, never
+# destroyed (roadmap item 12 -- see `contract versions`/`contract diff`/`contract amend` below).
 kairos contract import <file.json> --client-id acme
 kairos contract import <file.json> --client-id acme --json
 kairos contract import <file.json> --client-id acme --confirm-version-change  # only after a version conflict was already reported and reviewed
+
+# Contract Amendment/Diff (roadmap item 12): real version history for a saved contract --
+# closes a real gap `store.ts` had until this shipped (a plain overwrite, no archive at all).
+# `versions` lists every archived (superseded) version, newest first, plus the current live one.
+# `diff` renders a pure, offline, field-by-field structural diff between any two versions (the
+# live one or any archived one) and classifies each change breaking (could cause existing
+# ProofLedger/ExceptionDesk evidence to be misinterpreted against the new shape -- e.g. a
+# transition's fromState/toState changing, an SLA's measuredFrom/expectedBy changing) or
+# compatible (e.g. an SLA duration number changing, a description edit). `amend` previews by
+# default (validates, shows the diff, writes nothing) and only applies with --confirm: archives
+# the current version, saves the new one as live, and refuses (exit 2) if the diff has any
+# breaking change while the contract currently has any in_progress promise instance -- an
+# in-flight instance's already-recorded evidence could be misinterpreted against the new shape --
+# unless --confirm-breaking-with-active-instances is also passed. Never recompiles or redeploys
+# anything; run `contract compile --build` yourself afterward.
+kairos contract versions <contract-id> --client-id acme
+kairos contract diff <contract-id> --client-id acme --from 1 --to 2
+kairos contract amend <contract-id> --client-id acme --new ./v2.json                 # preview only, nothing written
+kairos contract amend <contract-id> --client-id acme --new ./v2.json --confirm       # archive + apply
 
 # ProofLedger v0 (Phase 3): poll n8n execution data (read-only -- GET only, never a write) for
 # every workflow registered against a contract, extract evidence ONLY from the exact fields each
@@ -1069,6 +1145,30 @@ kairos contract report <contract-id> --client-id acme --from 2026-07-01 --to 202
 kairos contract report <contract-id> --client-id acme --bundle ./deliverables
 kairos contract report <contract-id> --client-id acme --json  # full PromiseReportData as JSON
 
+# Contract Evolution v0 (roadmap item 11): treats ProcessContract as a hypothesis, not permanent
+# truth. `run` reads this contract's own real ProofLedger + ExceptionDesk evidence (plus, with
+# --with-harness, generated-scenario mismatches -- always confidence 'low', never blended with
+# real-evidence confidence, since a harness failure is about internal consistency, not real
+# business behavior) and produces evidence-linked amendment proposals: SLA/expiration-rule
+# hotspots, states/evidence-backed transitions that are never reached, and a whole-contract
+# high-miss-rate signal -- frequency/existence findings only, never a specific replacement value
+# (e.g. never "3 attempts should become 2," which would need inferring a number from unstructured
+# data this v0 deliberately does not attempt). Read-only against the contract itself; writes only
+# to this contract's own stored proposal list. Re-running against unchanged evidence refreshes
+# existing proposals rather than duplicating them, and never resets a human's prior review
+# decision. `list`/`show` inspect stored proposals; `accept`/`reject` record a human decision
+# (audited, with a full status-change history) but do NOT change the contract either -- to
+# actually act on an accepted proposal, hand-author a new contract version yourself, then run
+# `contract amend ... --confirm --from-proposal <proposal-id>` (roadmap item 12's own diff/amend/
+# version gate is the only thing allowed to write a new contract version; a proposal never causes
+# an amendment by itself, only records that one already happened once it succeeds).
+kairos contract evolve run <contract-id> --client-id acme
+kairos contract evolve run <contract-id> --client-id acme --with-harness --json
+kairos contract evolve list <contract-id> --client-id acme
+kairos contract evolve show <contract-id> <proposal-id> --client-id acme
+kairos contract evolve accept <contract-id> <proposal-id> --client-id acme --reason "worth revisiting"
+kairos contract evolve reject <contract-id> <proposal-id> --client-id acme --reason "intentional, staff confirm"
+
 # Report what Kairos currently knows for this workflow -- which of the 9 named drift checks
 # have real data to evaluate ("captured") vs. which don't yet or structurally can't
 # ("skipped"), and why. Does not compute a verdict -- see "drift check" for that.
@@ -1125,6 +1225,19 @@ kairos replay run <n8n-workflow-id> --candidate ./candidate.json --client-id acm
 kairos replay run <n8n-workflow-id> --candidate ./candidate.json --client-id acme --verbose  # adds the technical, node-by-node detail underneath
 kairos replay run <n8n-workflow-id> --candidate ./candidate.json --client-id acme --json      # the exact structured report, not rendered text
 
+# --contract <file.json> (roadmap item 7) additionally links a ContractScenario to the candidate
+# replay: injects the scenario's own intake payload against the candidate workflow's real webhook
+# and checks the resulting evidence against the contract's own expected outcome, reported as a
+# SEPARATE "Contract Outcome Check" section alongside the structural diff above -- a clean
+# structural diff never masks a contract-outcome mismatch; the combined exit code is the worse of
+# the two. Honest about its own scope, always: this checks intake evidence only (the instance_start
+# a single workflow's own webhook produces), never a full end-to-end business-outcome proof --
+# compile.ts always splits a contract into separate intake/processing/SLA-escalation workflows,
+# so state-transition evidence normally comes from a differently-triggered processing workflow
+# this replay never touches. --scenario <id> narrows to one specific generated scenario.
+kairos replay run <n8n-workflow-id> --candidate ./candidate.json --client-id acme --contract ./contract.json
+kairos replay run <n8n-workflow-id> --candidate ./candidate.json --client-id acme --contract ./contract.json --scenario happy_path
+
 # Delete every captured payload for a workflow -- the revocation path for opted-in data.
 kairos replay purge <n8n-workflow-id> --client-id acme
 
@@ -1147,6 +1260,18 @@ kairos chaos audit <n8n-workflow-id> --json  # exact structured findings, not re
 # never for blocked-at-credential or silent misbehavior, which need a human judgment call.
 kairos chaos run <n8n-workflow-id>
 kairos chaos run <n8n-workflow-id> --json  # exact structured report, not rendered text
+
+# --contract <file.json> (roadmap item 8) additionally injects ProcessContract-derived business
+# scenarios -- happy path, a payload missing the contract's own correlation key field, and the
+# same payload submitted twice -- against this same workflow, alongside (never instead of) the
+# structural adversarial-payload run above, and reports expected business outcome vs actual
+# sandbox outcome for each. Only 3 of the 6 business-scenario categories map to a real, single-or-
+# double webhook injection at all (found and named explicitly, not assumed): failure-terminal
+# evidence and after-hours timing both depend on data a single intake webhook can't produce or
+# control, and "in progress" is structurally identical to happy path at the intake-payload level
+# -- every category this can't attempt is reported with its own honest reason, never silently
+# skipped.
+kairos chaos run <n8n-workflow-id> --contract ./contract.json
 
 # Continuously (or once, for cron/launchd) run drift check + diagnosis against deployed
 # workflows -- detect -> diagnose -> notify -> audit only, no propose/apply/rollback (that's

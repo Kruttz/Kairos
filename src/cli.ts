@@ -45,6 +45,10 @@ Usage:
   kairos contract compile <file.json> [--build] [--dry-run] [--json]
   kairos contract validate <file.json> [--json]
   kairos contract import <file.json> --client-id <slug> [--confirm-version-change] [--json]
+  kairos contract versions <contract-id> --client-id <slug> [--json]
+  kairos contract diff <contract-id> --client-id <slug> --from <v> --to <v> [--json]
+  kairos contract amend <contract-id> --client-id <slug> --new <file.json> [--confirm] [--confirm-breaking-with-active-instances] [--from-proposal <id>] [--json]
+  kairos contract evolve run|list|show|accept|reject <contract-id> [<proposal-id>] --client-id <slug> [--json]
   kairos contract report <contract-id> --client-id <slug> [--from <date>] [--to <date>] [--bundle <dir>] [--json]
   kairos ledger poll <contract-id> --client-id <slug> [--limit <n>] [--json]
   kairos ledger show <contract-id> --client-id <slug> [--instance <promise-instance-id>] [--json]
@@ -62,7 +66,7 @@ Usage:
   kairos replay run <n8n-workflow-id> --candidate <file> --client-id <slug> --contract <file.json> [--scenario <id>] [--verbose] [--json]
   kairos replay purge <n8n-workflow-id> --client-id <slug> [--json]
   kairos chaos audit <n8n-workflow-id> [--json]
-  kairos chaos run <n8n-workflow-id> [--json]
+  kairos chaos run <n8n-workflow-id> [--contract <file>] [--json]
   kairos watch --workflows <ids|all> [--interval <s>] [--on-drift <cmd>] [--once] [--json]
   kairos watch --contracts <contract-id>[,...] --client-id <slug> [--on-exception <cmd>] [--once] [--json]
   kairos repair propose <n8n-workflow-id> --client-id <slug> [--json]
@@ -244,7 +248,66 @@ Contract options (ProcessContract v0, Phase 0+1+2+5 -- see docs/plans/process-co
                                   own clientId field, so a contract can never be silently imported
                                   into the wrong client's namespace. Provenance/version/status are
                                   preserved exactly as given, never rewritten -- importing is not
-                                  authoring.
+                                  authoring. Refuses (exit 2, nothing written) to overwrite an
+                                  already-saved contract at a DIFFERENT version unless
+                                  --confirm-version-change is passed; even then the prior version
+                                  is archived first, never destroyed (roadmap item 12 -- see
+                                  contract versions/diff/amend below).
+  contract versions <id>         Contract Amendment/Diff (roadmap item 12, see docs/plans/
+    --client-id <slug>           contract-evolution-ops-roadmap-plan.md §12): lists every archived
+                                  (superseded) version of a saved contract, newest first, plus the
+                                  current live version -- empty until amended/re-imported at least
+                                  once.
+  contract diff <id>             Pure, offline, field-by-field structural diff between two
+    --client-id <slug>           versions of a saved contract (the live one or any archived one).
+    --from <v> --to <v>          Classifies each change breaking (could cause existing
+                                  ProofLedger/ExceptionDesk evidence to be misinterpreted against
+                                  the new shape -- e.g. a transition's fromState/toState changing,
+                                  an SLA's measuredFrom/expectedBy changing) or compatible (e.g. an
+                                  SLA duration number changing, a description edit). Never writes
+                                  anything.
+  contract amend <id>            Previews (default, nothing written) or applies (--confirm)
+    --client-id <slug>           replacing a saved contract with a new version from a file --
+    --new <file.json>            always shows the diff and its breaking/compatible classification
+    [--confirm]                  first. --confirm validates (same gate as import), archives the
+    [--confirm-breaking-with-    current version, then saves the new one as live. Refuses (exit 2)
+     active-instances]           a breaking amendment while any promise instance is still
+    [--from-proposal <id>]       in_progress unless --confirm-breaking-with-active-instances is
+                                  also passed -- an in-flight instance's already-recorded evidence
+                                  could be misinterpreted against the new shape. --from-proposal
+                                  <id> links this amendment back to a "contract evolve" proposal
+                                  once it succeeds, marking it applied with the resulting version
+                                  -- the proposal never causes the amendment, only records that one
+                                  already happened. Never recompiles or redeploys anything -- run
+                                  "contract compile <file.json> --build" yourself afterward.
+  contract evolve run <id>       Contract Evolution v0 (roadmap item 11, see docs/plans/contract-
+    --client-id <slug>           evolution-ops-roadmap-plan.md §11): treats ProcessContract as a
+    [--from/--to <date>]         hypothesis, not permanent truth. run reads this contract's own
+    [--with-harness]             real ProofLedger + ExceptionDesk evidence (plus, with
+                                  --with-harness, generated-scenario mismatches -- always
+                                  confidence 'low', never blended with real-evidence confidence,
+                                  since a harness failure is about internal consistency, not real
+                                  business behavior) and produces evidence-linked amendment
+                                  proposals: SLA/expiration-rule hotspots, never-reached states,
+                                  unused evidence-backed transitions, and a whole-contract
+                                  high-miss-rate signal -- frequency/existence findings only, never
+                                  a specific replacement value. Read-only against the contract;
+                                  writes only to this contract's own stored proposal list.
+                                  Re-running against unchanged evidence refreshes existing
+                                  proposals rather than duplicating them, and never resets a
+                                  human's prior review decision.
+  contract evolve list <id>      Lists (list, optionally --status-filtered) or shows one proposal
+    --client-id <slug>           (show <proposal-id>) in detail, including its evidence and full
+  contract evolve show <id>      status-change history.
+    <proposal-id> --client-id
+  contract evolve accept <id>    Records a human decision (audited, never automatic) -- does NOT
+    <proposal-id>                change the contract either way. To act on an accepted proposal,
+    --client-id <slug>           hand-author a new contract version yourself, then run "contract
+    [--reason <text>]            amend ... --confirm --from-proposal <proposal-id>" (item 12's own
+  contract evolve reject <id>    diff/amend/version gate is the only thing allowed to write a new
+    <proposal-id>                contract version).
+    --client-id <slug>
+    [--reason <text>]
   contract report <contract-id>  Client-facing promise report (Phase 5) from this contract's own
     --client-id <slug>           ProofLedger + ExceptionDesk data -- purely local, no network
     [--from/--to <iso-date>]     calls. --from/--to are plain ISO 8601 strings, compared
