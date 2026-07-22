@@ -3253,7 +3253,7 @@ async function handleChaos(positional: string[], flags: Record<string, string | 
 
   if ((subcommand !== 'audit' && subcommand !== 'run') || !n8nWorkflowId) {
     console.error('Usage: kairos chaos audit <n8n-workflow-id> [--json]')
-    console.error('       kairos chaos run <n8n-workflow-id> [--json]')
+    console.error('       kairos chaos run <n8n-workflow-id> [--contract <file>] [--json]')
     console.error('')
     console.error('audit statically predicts how this workflow would handle adversarial webhook')
     console.error('payloads (missing/null/wrong-type/oversized fields, injection-shaped strings,')
@@ -3271,6 +3271,12 @@ async function handleChaos(positional: string[], flags: Record<string, string | 
     console.error('test/demo setup), it refuses rather than risk confusing "production" with a')
     console.error('sandbox -- N8N_BASE_URL must be a genuinely different host (your real n8n) for')
     console.error('run to execute.')
+    console.error('')
+    console.error('run --contract <file.json> additionally injects ProcessContract-derived')
+    console.error('business scenarios (happy path, missing correlation key, duplicate')
+    console.error('correlation) against this same workflow, and reports expected business')
+    console.error('outcome vs actual sandbox outcome for each -- alongside, never instead of,')
+    console.error('the structural adversarial-payload run above.')
     process.exit(1)
   }
 
@@ -3297,10 +3303,35 @@ async function handleChaos(positional: string[], flags: Record<string, string | 
 
   const result = await runChaosSandbox(sandboxConfig, workflow)
 
-  if (flags['json'] === true) {
-    console.log(JSON.stringify(result, null, 2))
-  } else {
+  if (flags['json'] !== true) {
     console.log(formatChaosSandboxRunResult(result, n8nWorkflowId))
+  }
+
+  // Chaos Upgrade: business-level scenarios (roadmap item 8, docs/plans/
+  // intake-scenario-harness-plan.md §8) -- deliberately a separate, additive block, never
+  // conflated into runChaosSandbox() above: it needs a contract, the structural run above
+  // doesn't, and Codex's own scope explicitly requires "keep existing malformed-payload chaos
+  // behavior intact." Only runs when --contract is passed.
+  let contractChaosResult: import('./reliability/chaos/contract-outcome.js').ContractChaosRunResult | undefined
+  const contractFile = typeof flags['contract'] === 'string' ? flags['contract'] : undefined
+  if (contractFile) {
+    const contract = await readContractFile(contractFile)
+    const startCondition = contract.startConditions[0]
+    if (!startCondition) {
+      console.error(`⚠ Contract "${contract.id}" has no startConditions -- skipping contract-derived chaos.`)
+    } else {
+      const { runContractChaos, formatContractChaosRunResult } = await import('./reliability/chaos/contract-outcome.js')
+      console.error('\nRunning contract-derived chaos variants...')
+      contractChaosResult = await runContractChaos(sandboxConfig, workflow, contract, startCondition)
+      if (flags['json'] !== true) {
+        console.log('')
+        console.log(formatContractChaosRunResult(contractChaosResult, n8nWorkflowId))
+      }
+    }
+  }
+
+  if (flags['json'] === true) {
+    console.log(JSON.stringify({ ...result, ...(contractChaosResult ? { contractChaosResult } : {}) }, null, 2))
   }
 
   const telemetry = await createTelemetryCollector()
@@ -3323,8 +3354,13 @@ async function handleChaos(positional: string[], flags: Record<string, string | 
   // Exit 1 only for confirmed, unambiguous problems -- a real crash, or a payload that
   // couldn't be run at all. Never for blocked-at-credential (expected sandbox limitation, not
   // a finding) or silent misbehavior (may be an intentional difference -- needs a human to
-  // judge, not an automatic failure).
-  if (result.status !== 'completed' || result.summary.crashed > 0 || result.summary.incomplete > 0) {
+  // judge, not an automatic failure). A contract-derived chaos mismatch is treated the same way
+  // -- a confirmed problem, not a judgment call -- matching kairos replay run's own combined
+  // exit-code discipline for its own --contract flag.
+  const contractChaosFailed = contractChaosResult !== undefined && (contractChaosResult.status === 'completed'
+    ? contractChaosResult.outcomes.some(o => o.status !== 'checked' || !o.businessOutcomeMatched)
+    : contractChaosResult.status !== 'no_contract_scenarios')
+  if (result.status !== 'completed' || result.summary.crashed > 0 || result.summary.incomplete > 0 || contractChaosFailed) {
     process.exit(1)
   }
 }

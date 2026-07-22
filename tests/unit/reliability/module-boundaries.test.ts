@@ -6,6 +6,7 @@ const REPO_ROOT = join(__dirname, '../../..')
 const COMMUNITY_DIR = join(REPO_ROOT, 'src/reliability/community')
 const PROMISE_DIR = join(REPO_ROOT, 'src/promise')
 const REPLAY_DIR = join(REPO_ROOT, 'src/reliability/replay')
+const CHAOS_DIR = join(REPO_ROOT, 'src/reliability/chaos')
 
 /**
  * Enforces the G4 firewall (docs/plans/reliability-suite-plan.md §12, §10.6): the Phase 5
@@ -208,6 +209,64 @@ describe('module boundary: reliability/replay/ may only read pure promise/ modul
   it('no file under reliability/replay/ references a promise-engine storage path literally', () => {
     const violations: string[] = []
     for (const file of replayFiles()) {
+      const content = readFileSync(file, 'utf-8')
+      if (/['"`].*\.kairos[/\\](promise-ledger|contracts)['"`]/.test(content)) violations.push(file)
+    }
+    expect(violations, violations.join(', ')).toEqual([])
+  })
+})
+
+/**
+ * The Phase 8 (Chaos Upgrade, docs/plans/intake-scenario-harness-plan.md §8) analogue of the
+ * reliability/replay/ boundary directly above -- the first time anything under
+ * src/reliability/chaos/ needed to read src/promise/ at all. Same explicit ALLOW-list
+ * discipline, extended by exactly one entry (promise/scenario.js) over replay's own list: unlike
+ * reliability/replay/contract-outcome.ts, this module calls generateContractScenarios() itself
+ * (to derive its own contract-shaped chaos variants) rather than only consuming
+ * already-generated ContractScenario values -- still a pure, deterministic, file-I/O-free
+ * function, the same category of "safe to read" replay's own allow-list already established.
+ * The file-backed persistence layer stays forbidden for the same reason it's forbidden for
+ * replay: a sandbox execution's synthetic-context evidence must never be mistaken for, or
+ * accidentally written alongside, a real client's real ProofLedger/ExceptionDesk/contract files.
+ */
+describe('module boundary: reliability/chaos/ may only read pure promise/ modules, never the file-backed store layer', () => {
+  function chaosFiles(): string[] {
+    if (!existsSync(CHAOS_DIR)) return []
+    return readdirSync(CHAOS_DIR, { recursive: true })
+      .filter((f): f is string => typeof f === 'string' && f.endsWith('.ts') && !f.endsWith('.test.ts'))
+      .map(f => join(CHAOS_DIR, f))
+  }
+
+  const ALLOWED_PROMISE_IMPORTS = ['promise/ledger.js', 'promise/ledger-types.js', 'promise/types.js', 'promise/scenario-types.js', 'promise/scenario.js']
+  const FORBIDDEN_PROMISE_IMPORTS = ['promise/ledger-store.js', 'promise/exception-store.js', 'promise/store.js']
+
+  it('every promise/ import under reliability/chaos/ is on the explicit allow-list', () => {
+    const violations: string[] = []
+    for (const file of chaosFiles()) {
+      const content = readFileSync(file, 'utf-8')
+      const importMatches = content.matchAll(/from\s+['"](\.\.\/\.\.\/promise\/[^'"]+)['"]/g)
+      for (const m of importMatches) {
+        const normalized = m[1]!.replace(/^\.\.\/\.\.\//, '')
+        if (!ALLOWED_PROMISE_IMPORTS.includes(normalized)) violations.push(`${file} imports ${normalized}`)
+      }
+    }
+    expect(violations, violations.join(', ')).toEqual([])
+  })
+
+  it('no file under reliability/chaos/ imports the file-backed promise/ persistence layer', () => {
+    const violations: string[] = []
+    for (const file of chaosFiles()) {
+      const content = readFileSync(file, 'utf-8')
+      for (const forbidden of FORBIDDEN_PROMISE_IMPORTS) {
+        if (content.includes(forbidden)) violations.push(`${file} imports ${forbidden}`)
+      }
+    }
+    expect(violations, violations.join(', ')).toEqual([])
+  })
+
+  it('no file under reliability/chaos/ references a promise-engine storage path literally', () => {
+    const violations: string[] = []
+    for (const file of chaosFiles()) {
       const content = readFileSync(file, 'utf-8')
       if (/['"`].*\.kairos[/\\](promise-ledger|contracts)['"`]/.test(content)) violations.push(file)
     }
