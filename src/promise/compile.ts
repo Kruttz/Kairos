@@ -1,5 +1,5 @@
 import type { PackPlan, WorkflowPlan, TypedAssumption } from '../pack/pack-builder.js'
-import { validateProcessContract } from './validate.js'
+import { prepareContract, type WorkflowSlot, type ContractPreparationEscalation } from './decomposition.js'
 import type { ProcessContract, StartCondition } from './types.js'
 
 /**
@@ -30,16 +30,20 @@ import type { ProcessContract, StartCondition } from './types.js'
  * Per Codex's explicit caution: this module only produces a PackPlan. It does not attempt to
  * verify, simulate, or prove that a compiled workflow will actually fulfill the contract once
  * built -- that is ProofLedger's job (a later, unstarted phase), not this one's.
+ *
+ * Execution Substrate Boundary v0, Phase 2 (docs/plans/execution-substrate-boundary-plan.md §5):
+ * the "which workflows does this contract imply, and why" decision now lives in decomposition.ts
+ * as target-neutral WorkflowSlots, reached via prepareContract() -- this module's own job has
+ * narrowed to n8n's specific prose generation for each slot decomposeContract() produces. The
+ * validation-then-blocking-assumptions gate and both escalation strings are unchanged, just
+ * relocated; compileToPackPlan()'s observable output is identical to before this refactor.
  */
 
-export interface CompileEscalationInfo {
-  reason: string
-  questions: string[]
-  /** validation_errors takes priority when both are present -- structural correctness (can this
-   * contract even be reasoned about at all) is checked before business-completeness (does a
-   * human still need to resolve something). */
-  source: 'validation_errors' | 'blocking_assumptions'
-}
+/** Backward-compatible alias -- the canonical definition now lives in decomposition.ts
+ * (`ContractPreparationEscalation`), the target-neutral module that actually produces this
+ * value. Kept exported under this name so nothing that already imports `CompileEscalationInfo`
+ * from compile.ts needs to change. */
+export type CompileEscalationInfo = ContractPreparationEscalation
 
 /** Which ProcessContract element IDs a given compiled WorkflowPlan was derived from -- e.g.
  * `startCondition:sc-intake`, `transition:t-received-to-attempted`, `sla:sla-first-contact`.
@@ -88,13 +92,8 @@ export function evidenceNodeName(transitionId: string): string {
   return `Kairos Evidence: ${transitionId}`
 }
 
-function buildIntakeWorkflow(
-  contract: ProcessContract,
-  sc: StartCondition,
-  index: number,
-  total: number
-): { workflow: WorkflowPlan; trace: ContractWorkflowTrace } {
-  const name = total === 1 ? `${contract.entity.name} Intake` : `${contract.entity.name} Intake ${index + 1}`
+function buildIntakeWorkflow(contract: ProcessContract, sc: StartCondition, slot: WorkflowSlot): WorkflowPlan {
+  const name = slot.name
   const initialState = lookupState(contract, sc.initialState)
   const owner = contract.owners.find(o => o.state === sc.initialState)
 
@@ -108,19 +107,14 @@ function buildIntakeWorkflow(
   if (owner) lines.push(`Responsible owner while in this state: ${owner.owner}.`)
 
   return {
-    workflow: {
-      name,
-      description: lines.join(' '),
-      purpose: `Captures every new ${contract.entity.name.toLowerCase()} the moment it arrives, per the "${contract.name}" promise.`,
-    },
-    trace: { workflowName: name, sourceElements: [`startCondition:${sc.id}`, `state:${sc.initialState}`, 'correlationKey'] },
+    name,
+    description: lines.join(' '),
+    purpose: `Captures every new ${contract.entity.name.toLowerCase()} the moment it arrives, per the "${contract.name}" promise.`,
   }
 }
 
-function buildProcessingWorkflow(contract: ProcessContract): { workflow: WorkflowPlan; trace: ContractWorkflowTrace } | null {
-  if (contract.transitions.length === 0) return null
-
-  const name = `${contract.entity.name} Processing & Outcome Logging`
+function buildProcessingWorkflow(contract: ProcessContract, slot: WorkflowSlot): WorkflowPlan {
+  const name = slot.name
   const lines: string[] = [
     `Part of the "${contract.name}" promise: ${contract.promise.text}`,
     `Receives outcome/event data for an existing ${contract.entity.name}, correlated via ${contract.correlationKey.fieldPath}, and updates its recorded state accordingly.`,
@@ -152,26 +146,15 @@ function buildProcessingWorkflow(contract: ProcessContract): { workflow: Workflo
   }
 
   return {
-    workflow: {
-      name,
-      description: lines.join(' '),
-      purpose: `Logs every state change and its supporting evidence for the "${contract.name}" promise.`,
-    },
-    trace: {
-      workflowName: name,
-      sourceElements: [
-        ...contract.transitions.map(t => `transition:${t.id}`),
-        ...contract.evidenceRequirements.map(e => `evidenceRequirement:${e.transitionId}`),
-      ],
-    },
+    name,
+    description: lines.join(' '),
+    purpose: `Logs every state change and its supporting evidence for the "${contract.name}" promise.`,
   }
 }
 
-function buildEscalationWorkflow(contract: ProcessContract): { workflow: WorkflowPlan; trace: ContractWorkflowTrace } | null {
+function buildEscalationWorkflow(contract: ProcessContract, slot: WorkflowSlot): WorkflowPlan {
   const expirationRules = contract.expirationRules ?? []
-  if (contract.sla.length === 0 && expirationRules.length === 0) return null
-
-  const name = `${contract.entity.name} SLA Escalation`
+  const name = slot.name
   const lines: string[] = [
     `Part of the "${contract.name}" promise: ${contract.promise.text}`,
     `Scheduled workflow that checks every open ${contract.entity.name} instance against its SLA deadlines and expiration rules, and raises exceptions for the ones that have breached.`,
@@ -203,69 +186,43 @@ function buildEscalationWorkflow(contract: ProcessContract): { workflow: Workflo
   }
 
   return {
-    workflow: {
-      name,
-      description: lines.join(' '),
-      purpose: `Ensures no ${contract.entity.name.toLowerCase()} silently misses a deadline the "${contract.name}" promise commits to.`,
-    },
-    trace: {
-      workflowName: name,
-      sourceElements: [
-        ...contract.sla.map(s => `sla:${s.id}`),
-        ...expirationRules.map(e => `expirationRule:${e.id}`),
-        ...contract.exceptions.map(e => `exception:${e.id}`),
-      ],
-    },
+    name,
+    description: lines.join(' '),
+    purpose: `Ensures no ${contract.entity.name.toLowerCase()} silently misses a deadline the "${contract.name}" promise commits to.`,
   }
 }
 
 export function compileToPackPlan(contract: ProcessContract): CompileToPackPlanResult {
-  const validationIssues = validateProcessContract(contract)
-  const errors = validationIssues.filter(i => i.severity === 'error')
-  if (errors.length > 0) {
+  const prepared = prepareContract(contract)
+  if (prepared.outcome === 'blocked') {
     return {
       plan: emptyPlanFor(contract),
       traceability: [],
-      escalation: {
-        reason: 'This ProcessContract fails deterministic validation and cannot be compiled until fixed. Run `kairos contract validate` for the full list.',
-        questions: errors.map(e => `[Rule ${e.rule}] ${e.message}${e.path ? ` (${e.path})` : ''}`),
-        source: 'validation_errors',
-      },
+      escalation: prepared.escalation,
     }
   }
 
-  const blocking = contract.assumptions.filter(a => a.type === 'blocking')
-  if (blocking.length > 0) {
-    return {
-      plan: emptyPlanFor(contract),
-      traceability: [],
-      escalation: {
-        reason: 'This ProcessContract has blocking assumptions that must be resolved before compiling. Resolve them (edit the contract and re-validate), or compile anyway once they no longer apply.',
-        questions: blocking.map(a => a.text),
-        source: 'blocking_assumptions',
-      },
-    }
-  }
-
+  const { slots } = prepared.decomposition
   const workflows: WorkflowPlan[] = []
   const traceability: ContractWorkflowTrace[] = []
 
+  const intakeSlots = slots.filter(s => s.kind === 'intake')
   for (let i = 0; i < contract.startConditions.length; i++) {
-    const { workflow, trace } = buildIntakeWorkflow(contract, contract.startConditions[i]!, i, contract.startConditions.length)
-    workflows.push(workflow)
-    traceability.push(trace)
+    const slot = intakeSlots[i]!
+    workflows.push(buildIntakeWorkflow(contract, contract.startConditions[i]!, slot))
+    traceability.push({ workflowName: slot.name, sourceElements: slot.sourceElements })
   }
 
-  const processing = buildProcessingWorkflow(contract)
-  if (processing) {
-    workflows.push(processing.workflow)
-    traceability.push(processing.trace)
+  const processingSlot = slots.find(s => s.kind === 'processing')
+  if (processingSlot) {
+    workflows.push(buildProcessingWorkflow(contract, processingSlot))
+    traceability.push({ workflowName: processingSlot.name, sourceElements: processingSlot.sourceElements })
   }
 
-  const escalation = buildEscalationWorkflow(contract)
-  if (escalation) {
-    workflows.push(escalation.workflow)
-    traceability.push(escalation.trace)
+  const escalationSlot = slots.find(s => s.kind === 'escalation')
+  if (escalationSlot) {
+    workflows.push(buildEscalationWorkflow(contract, escalationSlot))
+    traceability.push({ workflowName: escalationSlot.name, sourceElements: escalationSlot.sourceElements })
   }
 
   const assumptions: TypedAssumption[] = [
