@@ -1,0 +1,88 @@
+{
+  "plan": {
+    "businessContext": "P1 Incident Response (ProcessContract northwind-cloud-p1-incident-response v1): Every P1 incident is acknowledged within 15 minutes, updated every 30 minutes while open, and followed by a post-incident report within 3 business days of resolution.",
+    "workflows": [
+      {
+        "name": "Incident Intake",
+        "description": "Part of the \"P1 Incident Response\" promise: Every P1 incident is acknowledged within 15 minutes, updated every 30 minutes while open, and followed by a post-incident report within 3 business days of resolution. Trigger: PagerDuty incident.trigger webhook, filtered to severity=P1. A P1-severity incident is raised in the paging system On trigger, create a new Incident promise-instance record beginning in state \"raised\" (Raised: A P1 incident has been created and is awaiting acknowledgment.). Correlate this instance using body.incidentId (The unique incident ID assigned by the paging system (e.g. PagerDuty) when the incident is created) as the stable identifier -- capture and persist it exactly as received; every other workflow for this Incident must reference the same value. Responsible owner while in this state: on-call engineer.",
+        "purpose": "Captures every new incident the moment it arrives, per the \"P1 Incident Response\" promise."
+      },
+      {
+        "name": "Incident Processing & Outcome Logging",
+        "description": "Part of the \"P1 Incident Response\" promise: Every P1 incident is acknowledged within 15 minutes, updated every 30 minutes while open, and followed by a post-incident report within 3 business days of resolution. Receives outcome/event data for an existing Incident, correlated via body.incidentId, and updates its recorded state accordingly. When \"Acknowledged\" (An on-call engineer acknowledged the incident.) occurs while in state \"Raised\", transition to \"Acknowledged\". When \"Status Update Posted\" (A status update was posted to the incident channel.) occurs while in state \"Acknowledged\", transition to \"Open (Updating)\". When \"Status Update Posted\" (A status update was posted to the incident channel.) occurs while in state \"Open (Updating)\", transition to \"Open (Updating)\". When \"Incident Resolved\" (The incident was marked resolved.) occurs while in state \"Open (Updating)\", transition to \"Resolved\". When \"Severity Downgraded\" (The incident's severity was downgraded below P1.) occurs while in state \"Open (Updating)\", transition to \"Downgraded\". This is a terminal outcome: acceptable -- No longer a P1 -- this contract's obligations no longer apply. When \"Postmortem Submitted\" (A post-incident report was submitted.) occurs while in state \"Resolved\", transition to \"Postmortem Complete\". This is a terminal outcome: success -- The incident was fully handled, including the post-incident report. For transition \"t-raised-to-ack\", the node that sets these exact fields as evidence (acknowledgedBy, acknowledgedAt -- Who acknowledged the incident and when.) MUST be named exactly \"Kairos Evidence: t-raised-to-ack\" (a Set/Edit Fields node right after the fields are known is usually the right choice) so this evidence can be located programmatically later. Do not rename, skip, or merge this node with another one. For transition \"t-updating-self-loop\", the node that sets these exact fields as evidence (updateText, postedAt -- The status update text and when it was posted.) MUST be named exactly \"Kairos Evidence: t-updating-self-loop\" (a Set/Edit Fields node right after the fields are known is usually the right choice) so this evidence can be located programmatically later. Do not rename, skip, or merge this node with another one. Owners: \"raised\" is owned by on-call engineer; \"acknowledged\" is owned by on-call engineer; \"open_updating\" is owned by on-call engineer; \"resolved\" is owned by incident commander.",
+        "purpose": "Logs every state change and its supporting evidence for the \"P1 Incident Response\" promise."
+      },
+      {
+        "name": "Incident SLA Escalation",
+        "description": "Part of the \"P1 Incident Response\" promise: Every P1 incident is acknowledged within 15 minutes, updated every 30 minutes while open, and followed by a post-incident report within 3 business days of resolution. Scheduled workflow that checks every open Incident instance against its SLA deadlines and expiration rules, and raises exceptions for the ones that have breached. SLA \"sla-ack\": expected to reach state \"acknowledged\" within 15 minutes of entering state \"raised\". SLA \"sla-status-updates\": expected to reach state \"open_updating\" within 30 minutes of event \"status_update_posted\". Recurs every 30 minutes while the instance remains in state \"open_updating\". SLA \"sla-postmortem\": expected to reach state \"postmortem_complete\" within 3 business_days of entering state \"resolved\". Exception: when \"No acknowledgment 15 minutes after the incident was raised\", alert on-call engineer. Suggested action (advisory only, never auto-executed): Acknowledge the incident and begin response immediately; this SLA breach may trigger secondary on-call escalation per your paging policy. Business-hours-aware durations use this calendar: timezone America/Los_Angeles, hours mon 09:00-18:00, tue 09:00-18:00, wed 09:00-18:00, thu 09:00-18:00, fri 09:00-18:00.",
+        "purpose": "Ensures no incident silently misses a deadline the \"P1 Incident Response\" promise commits to."
+      }
+    ],
+    "assumptions": [
+      {
+        "type": "safe",
+        "text": "Assumed the ack and status-update SLAs run 24/7 (not business-hours-limited), matching real incident-response practice."
+      },
+      {
+        "type": "safe",
+        "text": "This pack was compiled from ProcessContract \"P1 Incident Response\" (id: northwind-cloud-p1-incident-response, v1). Edit the contract and recompile rather than hand-editing this plan."
+      }
+    ],
+    "sheetsColumns": [],
+    "testChecklist": [
+      {
+        "workflow": "Incident Intake",
+        "steps": [
+          "Manually trigger \"Incident Intake\" with representative data for a Incident.",
+          "Confirm the resulting state change and logged evidence match what the ProcessContract describes for this step."
+        ]
+      },
+      {
+        "workflow": "Incident Processing & Outcome Logging",
+        "steps": [
+          "Manually trigger \"Incident Processing & Outcome Logging\" with representative data for a Incident.",
+          "Confirm the resulting state change and logged evidence match what the ProcessContract describes for this step."
+        ]
+      },
+      {
+        "workflow": "Incident SLA Escalation",
+        "steps": [
+          "Manually trigger \"Incident SLA Escalation\" with representative data for a Incident.",
+          "Confirm the resulting state change and logged evidence match what the ProcessContract describes for this step."
+        ]
+      }
+    ]
+  },
+  "traceability": [
+    {
+      "workflowName": "Incident Intake",
+      "sourceElements": [
+        "startCondition:sc-p1-raised",
+        "state:raised",
+        "correlationKey"
+      ]
+    },
+    {
+      "workflowName": "Incident Processing & Outcome Logging",
+      "sourceElements": [
+        "transition:t-raised-to-ack",
+        "transition:t-ack-to-updating",
+        "transition:t-updating-self-loop",
+        "transition:t-updating-to-resolved",
+        "transition:t-updating-to-downgraded",
+        "transition:t-resolved-to-postmortem",
+        "evidenceRequirement:t-raised-to-ack",
+        "evidenceRequirement:t-updating-self-loop"
+      ]
+    },
+    {
+      "workflowName": "Incident SLA Escalation",
+      "sourceElements": [
+        "sla:sla-ack",
+        "sla:sla-status-updates",
+        "sla:sla-postmortem",
+        "exception:exc-missed-ack"
+      ]
+    }
+  ]
+}

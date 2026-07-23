@@ -1,0 +1,84 @@
+{
+  "plan": {
+    "businessContext": "Referral Intake & Contact (ProcessContract empire-homecare-referral-intake v1): Every referral is contacted within 4 business hours of intake, and the outcome is logged.",
+    "workflows": [
+      {
+        "name": "Referral Intake",
+        "description": "Part of the \"Referral Intake & Contact\" promise: Every referral is contacted within 4 business hours of intake, and the outcome is logged. Trigger: New row in the referral intake Google Sheet / webhook POST from the intake form. A new referral arrives via the intake form or Google Sheet row On trigger, create a new Referral promise-instance record beginning in state \"received\" (Received: The referral has arrived and is awaiting first contact.). Correlate this instance using body.phone (The referral's phone number, as submitted on the intake form) as the stable identifier -- capture and persist it exactly as received; every other workflow for this Referral must reference the same value. Responsible owner while in this state: intake coordinator.",
+        "purpose": "Captures every new referral the moment it arrives, per the \"Referral Intake & Contact\" promise."
+      },
+      {
+        "name": "Referral Processing & Outcome Logging",
+        "description": "Part of the \"Referral Intake & Contact\" promise: Every referral is contacted within 4 business hours of intake, and the outcome is logged. Receives outcome/event data for an existing Referral, correlated via body.phone, and updates its recorded state accordingly. When \"Call Attempted\" (A call attempt was logged, regardless of outcome.) occurs while in state \"Received\", transition to \"Contact Attempted\". When \"Call Answered\" (The referral answered the call.) occurs while in state \"Contact Attempted\", transition to \"Contacted\". When \"Appointment Scheduled\" (An appointment was booked.) occurs while in state \"Contacted\", transition to \"Scheduled\". This is a terminal outcome: success -- The referral was contacted and scheduled an appointment. When \"Customer Declined\" (The referral declined services.) occurs while in state \"Contacted\", transition to \"Declined\". This is a terminal outcome: acceptable -- The promise to attempt contact was kept even though the referral declined. For transition \"t-attempted-to-contacted\", the node that sets these exact fields as evidence (callOutcome, callTimestamp -- The call log entry recording the attempt's result.) MUST be named exactly \"Kairos Evidence: t-attempted-to-contacted\" (a Set/Edit Fields node right after the fields are known is usually the right choice) so this evidence can be located programmatically later. Do not rename, skip, or merge this node with another one. Owners: \"received\" is owned by intake coordinator; \"contact_attempted\" is owned by on-call rep.",
+        "purpose": "Logs every state change and its supporting evidence for the \"Referral Intake & Contact\" promise."
+      },
+      {
+        "name": "Referral SLA Escalation",
+        "description": "Part of the \"Referral Intake & Contact\" promise: Every referral is contacted within 4 business hours of intake, and the outcome is logged. Scheduled workflow that checks every open Referral instance against its SLA deadlines and expiration rules, and raises exceptions for the ones that have breached. SLA \"sla-first-contact\": expected to reach state \"contact_attempted\" within 4 business_hours of entering state \"received\". Expiration rule \"exp-no-answer\": if the instance remains in state \"contact_attempted\" for more than 24 business_hours with no qualifying transition, move it to \"no_answer\". Exception: when \"No contact-attempt evidence 4 business hours after intake\", alert intake coordinator. Suggested action (advisory only, never auto-executed): Call the referral immediately and log the outcome. Business-hours-aware durations use this calendar: timezone America/Denver, hours mon 08:00-17:00, tue 08:00-17:00, wed 08:00-17:00, thu 08:00-17:00, fri 08:00-17:00.",
+        "purpose": "Ensures no referral silently misses a deadline the \"Referral Intake & Contact\" promise commits to."
+      }
+    ],
+    "assumptions": [
+      {
+        "type": "needs_confirmation",
+        "text": "Assumed a 3-attempt cap before expiring to no_answer -- confirm this matches Empire's real call policy."
+      },
+      {
+        "type": "safe",
+        "text": "This pack was compiled from ProcessContract \"Referral Intake & Contact\" (id: empire-homecare-referral-intake, v1). Edit the contract and recompile rather than hand-editing this plan."
+      }
+    ],
+    "sheetsColumns": [],
+    "testChecklist": [
+      {
+        "workflow": "Referral Intake",
+        "steps": [
+          "Manually trigger \"Referral Intake\" with representative data for a Referral.",
+          "Confirm the resulting state change and logged evidence match what the ProcessContract describes for this step."
+        ]
+      },
+      {
+        "workflow": "Referral Processing & Outcome Logging",
+        "steps": [
+          "Manually trigger \"Referral Processing & Outcome Logging\" with representative data for a Referral.",
+          "Confirm the resulting state change and logged evidence match what the ProcessContract describes for this step."
+        ]
+      },
+      {
+        "workflow": "Referral SLA Escalation",
+        "steps": [
+          "Manually trigger \"Referral SLA Escalation\" with representative data for a Referral.",
+          "Confirm the resulting state change and logged evidence match what the ProcessContract describes for this step."
+        ]
+      }
+    ]
+  },
+  "traceability": [
+    {
+      "workflowName": "Referral Intake",
+      "sourceElements": [
+        "startCondition:sc-intake",
+        "state:received",
+        "correlationKey"
+      ]
+    },
+    {
+      "workflowName": "Referral Processing & Outcome Logging",
+      "sourceElements": [
+        "transition:t-received-to-attempted",
+        "transition:t-attempted-to-contacted",
+        "transition:t-contacted-to-scheduled",
+        "transition:t-contacted-to-declined",
+        "evidenceRequirement:t-attempted-to-contacted"
+      ]
+    },
+    {
+      "workflowName": "Referral SLA Escalation",
+      "sourceElements": [
+        "sla:sla-first-contact",
+        "expirationRule:exp-no-answer",
+        "exception:exc-missed-first-contact"
+      ]
+    }
+  ]
+}

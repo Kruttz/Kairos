@@ -1,0 +1,22 @@
+{
+  "plan": {
+    "businessContext": "Every referral is contacted within 4 business hours of intake, and the outcome is logged.",
+    "workflows": [],
+    "assumptions": [
+      {
+        "type": "blocking",
+        "text": "Empire has not yet confirmed the intake form vendor's real webhook payload shape -- the correlation key field path (body.phone) is assumed, not verified against a real submitted payload. Compiling and deploying against this assumption risks silently correlating no referrals at all if the real field path differs."
+      }
+    ],
+    "sheetsColumns": [],
+    "testChecklist": []
+  },
+  "traceability": [],
+  "escalation": {
+    "reason": "This ProcessContract has blocking assumptions that must be resolved before compiling. Resolve them (edit the contract and re-validate), or compile anyway once they no longer apply.",
+    "questions": [
+      "Empire has not yet confirmed the intake form vendor's real webhook payload shape -- the correlation key field path (body.phone) is assumed, not verified against a real submitted payload. Compiling and deploying against this assumption risks silently correlating no referrals at all if the real field path differs."
+    ],
+    "source": "blocking_assumptions"
+  }
+}

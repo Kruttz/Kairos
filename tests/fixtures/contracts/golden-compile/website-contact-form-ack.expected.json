@@ -1,0 +1,79 @@
+{
+  "plan": {
+    "businessContext": "Website Contact Form Acknowledgment (SYNTHETIC FIXTURE) (ProcessContract website-contact-form-ack v1): Every website contact form submission is acknowledged within 1 business hour, assigned to an owner, and flagged if required contact info is missing or no acknowledgment happens in time.",
+    "workflows": [
+      {
+        "name": "ContactFormSubmission Intake",
+        "description": "Part of the \"Website Contact Form Acknowledgment (SYNTHETIC FIXTURE)\" promise: Every website contact form submission is acknowledged within 1 business hour, assigned to an owner, and flagged if required contact info is missing or no acknowledgment happens in time. Trigger: webhook. A visitor submits the contact form. On trigger, create a new ContactFormSubmission promise-instance record beginning in state \"received\" (Received: Submission just arrived.). Correlate this instance using body.email (The submitter's email address (synthetic, .test TLD only).) as the stable identifier -- capture and persist it exactly as received; every other workflow for this ContactFormSubmission must reference the same value. Responsible owner while in this state: Support Team.",
+        "purpose": "Captures every new contactformsubmission the moment it arrives, per the \"Website Contact Form Acknowledgment (SYNTHETIC FIXTURE)\" promise."
+      },
+      {
+        "name": "ContactFormSubmission Processing & Outcome Logging",
+        "description": "Part of the \"Website Contact Form Acknowledgment (SYNTHETIC FIXTURE)\" promise: Every website contact form submission is acknowledged within 1 business hour, assigned to an owner, and flagged if required contact info is missing or no acknowledgment happens in time. Receives outcome/event data for an existing ContactFormSubmission, correlated via body.email, and updates its recorded state accordingly. When \"Acknowledge\" (An owner acknowledged the submission.) occurs while in state \"Received\", transition to \"Acknowledged\". This is a terminal outcome: success -- Submission was acknowledged in time with complete info. When \"Flag Missing Info\" (Required contact info was found missing.) occurs while in state \"Received\", transition to \"Missing Info\". This is a terminal outcome: failure -- Submission could not be actioned -- required contact info was missing. For transition \"t-received-to-acknowledged\", the node that sets these exact fields as evidence (ownerAssigned, acknowledgedVia -- The acknowledgment record: which owner handled it and how.) MUST be named exactly \"Kairos Evidence: t-received-to-acknowledged\" (a Set/Edit Fields node right after the fields are known is usually the right choice) so this evidence can be located programmatically later. Do not rename, skip, or merge this node with another one. For transition \"t-received-to-missinginfo\", the node that sets these exact fields as evidence (missingFields -- Which required field(s) were missing from the submission.) MUST be named exactly \"Kairos Evidence: t-received-to-missinginfo\" (a Set/Edit Fields node right after the fields are known is usually the right choice) so this evidence can be located programmatically later. Do not rename, skip, or merge this node with another one. Owners: \"received\" is owned by Support Team.",
+        "purpose": "Logs every state change and its supporting evidence for the \"Website Contact Form Acknowledgment (SYNTHETIC FIXTURE)\" promise."
+      },
+      {
+        "name": "ContactFormSubmission SLA Escalation",
+        "description": "Part of the \"Website Contact Form Acknowledgment (SYNTHETIC FIXTURE)\" promise: Every website contact form submission is acknowledged within 1 business hour, assigned to an owner, and flagged if required contact info is missing or no acknowledgment happens in time. Scheduled workflow that checks every open ContactFormSubmission instance against its SLA deadlines and expiration rules, and raises exceptions for the ones that have breached. SLA \"sla-ack-1bh\": expected to reach state \"acknowledged\" within 1 business_hours of entering state \"received\". Expiration rule \"exp-received-stuck\": if the instance remains in state \"received\" for more than 4 business_hours with no qualifying transition, move it to \"no_response\". Exception: when \"No acknowledgment sent within 1 business hour of submission\", alert Support Team. Suggested action (advisory only, never auto-executed): Contact the submitter directly and log the outcome. Business-hours-aware durations use this calendar: timezone America/New_York, hours mon 09:00-17:00, tue 09:00-17:00, wed 09:00-17:00, thu 09:00-17:00, fri 09:00-17:00.",
+        "purpose": "Ensures no contactformsubmission silently misses a deadline the \"Website Contact Form Acknowledgment (SYNTHETIC FIXTURE)\" promise commits to."
+      }
+    ],
+    "assumptions": [
+      {
+        "type": "safe",
+        "text": "This pack was compiled from ProcessContract \"Website Contact Form Acknowledgment (SYNTHETIC FIXTURE)\" (id: website-contact-form-ack, v1). Edit the contract and recompile rather than hand-editing this plan."
+      }
+    ],
+    "sheetsColumns": [],
+    "testChecklist": [
+      {
+        "workflow": "ContactFormSubmission Intake",
+        "steps": [
+          "Manually trigger \"ContactFormSubmission Intake\" with representative data for a ContactFormSubmission.",
+          "Confirm the resulting state change and logged evidence match what the ProcessContract describes for this step."
+        ]
+      },
+      {
+        "workflow": "ContactFormSubmission Processing & Outcome Logging",
+        "steps": [
+          "Manually trigger \"ContactFormSubmission Processing & Outcome Logging\" with representative data for a ContactFormSubmission.",
+          "Confirm the resulting state change and logged evidence match what the ProcessContract describes for this step."
+        ]
+      },
+      {
+        "workflow": "ContactFormSubmission SLA Escalation",
+        "steps": [
+          "Manually trigger \"ContactFormSubmission SLA Escalation\" with representative data for a ContactFormSubmission.",
+          "Confirm the resulting state change and logged evidence match what the ProcessContract describes for this step."
+        ]
+      }
+    ]
+  },
+  "traceability": [
+    {
+      "workflowName": "ContactFormSubmission Intake",
+      "sourceElements": [
+        "startCondition:sc-submitted",
+        "state:received",
+        "correlationKey"
+      ]
+    },
+    {
+      "workflowName": "ContactFormSubmission Processing & Outcome Logging",
+      "sourceElements": [
+        "transition:t-received-to-acknowledged",
+        "transition:t-received-to-missinginfo",
+        "evidenceRequirement:t-received-to-acknowledged",
+        "evidenceRequirement:t-received-to-missinginfo"
+      ]
+    },
+    {
+      "workflowName": "ContactFormSubmission SLA Escalation",
+      "sourceElements": [
+        "sla:sla-ack-1bh",
+        "expirationRule:exp-received-stuck",
+        "exception:exc-no-ack"
+      ]
+    }
+  ]
+}

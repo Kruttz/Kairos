@@ -1,0 +1,22 @@
+{
+  "plan": {
+    "businessContext": "Every referral is contacted within 4 business hours of intake, and the outcome is logged.",
+    "workflows": [],
+    "assumptions": [
+      {
+        "type": "needs_confirmation",
+        "text": "Assumed a 3-attempt cap before expiring to no_answer -- confirm this matches Empire's real call policy."
+      }
+    ],
+    "sheetsColumns": [],
+    "testChecklist": []
+  },
+  "traceability": [],
+  "escalation": {
+    "reason": "This ProcessContract fails deterministic validation and cannot be compiled until fixed. Run `kairos contract validate` for the full list.",
+    "questions": [
+      "[Rule 7] No terminal outcome has outcome: \"success\" -- this contract has no path to a kept promise at all"
+    ],
+    "source": "validation_errors"
+  }
+}
