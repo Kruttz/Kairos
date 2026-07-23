@@ -11,6 +11,10 @@
 // dynamically, deferring the @anthropic-ai/sdk resolution until a command that actually
 // generates something is invoked.
 import type { Kairos } from './client.js'
+// Execution Substrate Boundary v0, Phase 3 (docs/plans/execution-substrate-boundary-plan.md
+// §6.2) -- type-only, erased at compile time; safe at the top level for the same reason `Kairos`
+// above is (contract-deployer.ts itself imports nothing from '@anthropic-ai/sdk').
+import type { DeployedSlotResult } from './promise/targets/contract-deployer.js'
 import { FileLibrary } from './library/file-library.js'
 import { TemplateSyncer } from './templates/syncer.js'
 import { PatternAnalyzer } from './telemetry/pattern-analyzer.js'
@@ -518,6 +522,46 @@ function getEnvOrExit(name: string): string {
 async function resolveN8nApiClient(): Promise<import('./providers/n8n/api-client.js').N8nApiClient> {
   const { N8nApiClient } = await import('./providers/n8n/api-client.js')
   return new N8nApiClient(getEnvOrExit('N8N_BASE_URL'), getEnvOrExit('N8N_API_KEY'), CLI_LOGGER)
+}
+
+/** Execution Substrate Boundary v0, Phase 3 (docs/plans/execution-substrate-boundary-plan.md
+ * §6.2) -- three factories, split so credential requirements are structural (which function
+ * gets called), not a caller's own discipline.
+ *
+ * resolveContractCompiler(): zero-argument, zero-credential -- safe to call on the plan-only
+ * path, matching today's compileToPackPlan(contract) call (cli.ts, pre-Phase-3), which also
+ * needed none. */
+async function resolveContractCompiler(): Promise<import('./providers/n8n/contract-target.js').N8nContractCompiler> {
+  const { N8nContractCompiler } = await import('./providers/n8n/contract-target.js')
+  return new N8nContractCompiler()
+}
+
+/** Needs only an Anthropic key (via kairos/packBuilder) -- constructed unconditionally inside
+ * the --build branch, exactly where PackBuilder is constructed today, for BOTH a dry run and a
+ * real build. Never touches N8N_BASE_URL/N8N_API_KEY -- structurally cannot: N8nContractDeployer
+ * never imports N8nApiClient at all, and its constructor accepts only a PackBuilder. */
+async function resolveContractDeployer(anthropicApiKey: string, kairos: Kairos): Promise<import('./providers/n8n/contract-target.js').N8nContractDeployer> {
+  const { PackBuilder } = await import('./pack/pack-builder.js')
+  const { N8nContractDeployer } = await import('./providers/n8n/contract-target.js')
+  return new N8nContractDeployer(new PackBuilder({ anthropicApiKey, kairos }))
+}
+
+/** A SEPARATE, third factory -- constructed ONLY after a real deployment happened, reproducing
+ * today's exact gate: NOT dry-run, NOT blocked, AND at least one slot actually deployed. This is
+ * the fix for the credential regression an earlier design draft had: an earlier draft's single
+ * resolveContractDeployTarget() constructed N8nApiClient unconditionally on every --build call,
+ * including --build --dry-run, which this codebase's real behavior has never required n8n
+ * credentials for. Reuses resolveN8nApiClient() (Phase 1's own de-dup helper), whose own doc
+ * comment already anticipated this exact call site. */
+async function resolveVerificationTarget(): Promise<{
+  deploymentLookup: import('./providers/n8n/deployment-lookup.js').N8nDeploymentLookup
+  verifier: import('./providers/n8n/compiler-verifier.js').N8nCompilerVerifier
+}> {
+  const apiClient = await resolveN8nApiClient()
+  const { N8nDeploymentLookup } = await import('./providers/n8n/deployment-lookup.js')
+  const { N8nCompilerVerifier } = await import('./providers/n8n/compiler-verifier.js')
+  const deploymentLookup = new N8nDeploymentLookup(apiClient)
+  return { deploymentLookup, verifier: new N8nCompilerVerifier(deploymentLookup) }
 }
 
 function parseArgs(argv: string[]): { command: string; positional: string[]; flags: Record<string, string | boolean> } {
@@ -2221,8 +2265,19 @@ async function handleContractCompile(positional: string[], flags: Record<string,
     process.exit(1)
   }
 
-  const { compileToPackPlan } = await import('./promise/compile.js')
-  const result = compileToPackPlan(contract)
+  // Execution Substrate Boundary v0, Phase 3 (docs/plans/execution-substrate-boundary-plan.md
+  // §6.2): the plan-only path now goes through the boundary's own zero-credential compiler
+  // factory rather than calling compileToPackPlan() directly -- structurally the same call
+  // (N8nContractCompiler.compileContract() is a thin wrapper that changes nothing about
+  // compileToPackPlan()'s own behavior), reshaped here into the CLI's own pre-existing
+  // {plan, traceability, escalation?} shape so every line below (and this command's own --json
+  // output shape, a real external compatibility surface) is byte-for-byte unchanged.
+  const compileResult = (await resolveContractCompiler()).compileContract(contract)
+  const result: { plan: typeof compileResult.artifact; traceability: typeof compileResult.traceability; escalation?: typeof compileResult.escalation } = {
+    plan: compileResult.artifact,
+    traceability: compileResult.traceability,
+    ...(compileResult.escalation ? { escalation: compileResult.escalation } : {}),
+  }
 
   if (result.escalation) {
     if (flags['json'] === true) {
@@ -2262,10 +2317,12 @@ async function handleContractCompile(positional: string[], flags: Record<string,
   }
 
   const anthropicKey = getEnvOrExit('ANTHROPIC_API_KEY')
-  const { PackBuilder } = await import('./pack/pack-builder.js')
   const isDryRun = flags['dry-run'] === true
   const kairos = isDryRun ? await createDryRunClient() : await createClient()
-  const builder = new PackBuilder({ anthropicApiKey: anthropicKey, kairos })
+  // Execution Substrate Boundary v0, Phase 3 (docs/plans/execution-substrate-boundary-plan.md
+  // §6.2): needs only the Anthropic key already read above -- never touches
+  // N8N_BASE_URL/N8N_API_KEY, for a dry run or a real build alike.
+  const deployer = await resolveContractDeployer(anthropicKey, kairos)
 
   console.error(`\n${contract.name} — Compiled Workflows (${result.plan.workflows.length})\n`)
   for (let i = 0; i < result.plan.workflows.length; i++) {
@@ -2292,14 +2349,19 @@ async function handleContractCompile(positional: string[], flags: Record<string,
   }
 
   console.error('\nBuilding...\n')
-  const buildResult = await builder.build(result.plan, {
+  const deployResult = await deployer.deployArtifact(result.plan, {
     dryRun: isDryRun,
     activate: flags['activate'] === true,
     buildDespiteBlocking: flags['despite-blocking'] === true,
-    onProgress: (wf, i, total) => {
-      console.error(`  [${i + 1}/${total}] ${wf.name}...`)
+    onProgress: (name, i, total) => {
+      console.error(`  [${i + 1}/${total}] ${name}...`)
     },
   })
+  // .raw is genuinely WorkflowPackResult-typed here, no cast -- resolveContractDeployer() above
+  // returns a concretely n8n-typed N8nContractDeployer, not a type-erased interface reference
+  // (§6.2). Kept under the same name the rest of this function already uses below (JSON output,
+  // printPackResult(), pack persistence) so none of that code needs to change.
+  const buildResult = deployResult.raw
 
   if (flags['json'] === true) {
     console.log(JSON.stringify({ ...buildResult, traceability: result.traceability }, null, 2))
@@ -2320,26 +2382,35 @@ async function handleContractCompile(positional: string[], flags: Record<string,
   // to register, and a blocked build (escalation) never built anything either. Without this
   // registration, `kairos ledger poll` has no way to know which n8n workflow ids implement this
   // contract at all (the Phase 3 design spike's own named gap, plan doc §6.0).
+  //
+  // Execution Substrate Boundary v0, Phase 3 (docs/plans/execution-substrate-boundary-plan.md
+  // §6.2): this compound condition is the exact translation of the pre-boundary nested gate
+  // (!isDryRun && !buildResult.escalation, then registeredWorkflows.length > 0) into the new
+  // vocabulary. `outcome !== 'generated'` is implied by "some slot deployed" (an all-'generated'
+  // outcome means zero 'deployed' slots, by construction) but is kept explicit here, matching
+  // the accepted plan text verbatim -- a defensive, belt-and-suspenders second check on the same
+  // fact, not a behavior change.
   let compilerVerificationHasGaps = false
-  if (!isDryRun && !buildResult.escalation) {
+  if (deployResult.outcome !== 'blocked' && deployResult.outcome !== 'generated' && !isDryRun && deployResult.slots.some(s => s.outcome === 'deployed')) {
     const registeredAt = new Date().toISOString()
-    const registeredWorkflows = buildResult.workflows
-      .filter((w): w is typeof w & { workflowId: string } => w.workflowId !== null && !w.error)
-      .map(w => ({
-        // Execution Substrate Boundary v0, Phase 1 (docs/plans/execution-substrate-boundary-plan.md
-        // §6.6): targetId/targetDeploymentId dual-written alongside the still-present legacy
-        // n8nWorkflowId alias, mechanically -- no interface/behavior change this phase.
-        targetId: 'n8n' as const,
-        targetDeploymentId: w.workflowId,
-        n8nWorkflowId: w.workflowId,
-        workflowName: w.name,
-        sourceElements: result.traceability.find(t => t.workflowName === w.name)?.sourceElements ?? [],
-        contractVersion: contract.version,
-        status: 'active' as const,
-        registeredAt,
-      }))
+    const deployedSlots = deployResult.slots.filter(
+      (s): s is Extract<DeployedSlotResult, { outcome: 'deployed' }> => s.outcome === 'deployed'
+    )
+    const registeredWorkflows = deployedSlots.map(s => ({
+      // Execution Substrate Boundary v0, Phase 1 (docs/plans/execution-substrate-boundary-plan.md
+      // §6.6): targetId/targetDeploymentId dual-written alongside the still-present legacy
+      // n8nWorkflowId alias, mechanically -- no interface/behavior change this phase.
+      targetId: 'n8n' as const,
+      targetDeploymentId: s.ref.targetDeploymentId,
+      n8nWorkflowId: s.ref.targetDeploymentId,
+      workflowName: s.slotName,
+      sourceElements: result.traceability.find(t => t.workflowName === s.slotName)?.sourceElements ?? [],
+      contractVersion: contract.version,
+      status: 'active' as const,
+      registeredAt,
+    }))
 
-    if (registeredWorkflows.length > 0) {
+    {
       // Contract Compiler Verification (roadmap item 10, docs/plans/intake-scenario-harness-plan.md
       // §10): fetches each just-deployed workflow's REAL JSON back from n8n (read-only GET) and
       // statically checks it against the contract's own requirements -- an evidence node for every
@@ -2349,24 +2420,17 @@ async function handleContractCompile(positional: string[], flags: Record<string,
       // workflows and this registration are both still real and correct, and refusing to track
       // them at all would throw away visibility into every OTHER evidence requirement that IS
       // correctly wired. Sets the command's own exit code at the very end instead.
-      const n8nBaseUrl = getEnvOrExit('N8N_BASE_URL')
-      const n8nApiKey = getEnvOrExit('N8N_API_KEY')
-      const { N8nApiClient } = await import('./providers/n8n/api-client.js')
-      const { verifyCompiledWorkflows } = await import('./promise/compiler-verify.js')
-      const apiClient = new N8nApiClient(n8nBaseUrl, n8nApiKey, CLI_LOGGER)
-
-      const fetchedWorkflows: import('./promise/compiler-verify.js').CompiledWorkflowForVerification[] = []
-      const fetchErrors: string[] = []
-      for (const w of registeredWorkflows) {
-        try {
-          const real = await apiClient.getWorkflow(w.n8nWorkflowId)
-          fetchedWorkflows.push({ workflowName: w.workflowName, workflow: { nodes: real.nodes } })
-        } catch (err) {
-          fetchErrors.push(`"${w.workflowName}" (${w.n8nWorkflowId}): ${err instanceof Error ? err.message : String(err)}`)
-        }
-      }
-
-      const verification = verifyCompiledWorkflows(contract, fetchedWorkflows, result.traceability)
+      //
+      // Execution Substrate Boundary v0, Phase 3 (§6.2, correction 1): resolveVerificationTarget()
+      // constructs N8nApiClient HERE, only after a real, non-dry-run, non-blocked deployment
+      // already produced at least one real targetDeploymentId -- never unconditionally on every
+      // --build call, including --build --dry-run.
+      const { verifier } = await resolveVerificationTarget()
+      const { verification, fetchErrors } = await verifier.verifyCompiledArtifact(
+        contract,
+        deployedSlots.map(s => ({ slotName: s.slotName, ref: s.ref })),
+        result.traceability
+      )
       compilerVerificationHasGaps = verification.verdict === 'gaps_found'
 
       if (flags['json'] === true) {
