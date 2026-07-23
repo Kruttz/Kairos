@@ -4,8 +4,11 @@ import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { extractExecutionEvidence, pollWorkflowEvidence, hashCorrelationKeyValue, type RawExecutionDetail } from '../../../src/promise/ledger.js'
 import { evidenceNodeName } from '../../../src/promise/compile.js'
+import { N8nExecutionHistorySource } from '../../../src/providers/n8n/execution-history.js'
+import { N8nEvidenceNormalizer } from '../../../src/providers/n8n/evidence.js'
+import type { N8nApiClient } from '../../../src/providers/n8n/api-client.js'
 import type { ProcessContract } from '../../../src/promise/types.js'
-import type { PollableN8nClient } from '../../../src/promise/ledger-types.js'
+import type { ContractPollWatermark } from '../../../src/promise/ledger-types.js'
 
 const FIXTURES_DIR = join(__dirname, '../../fixtures/contracts')
 
@@ -395,16 +398,47 @@ describe('hashCorrelationKeyValue', () => {
   })
 })
 
-function mockClient(executions: Array<{ id: string; startedAt: string; data?: unknown }>): PollableN8nClient {
+/** Execution Substrate Boundary v0, Phase 4 (docs/plans/execution-substrate-boundary-plan.md
+ * §6.4) -- a fake N8nApiClient (getExecutions/getExecution only, the two real methods
+ * N8nExecutionHistorySource actually calls), not a fake ExecutionHistorySource/EvidenceNormalizer
+ * directly. This drives pollWorkflowEvidence() below through the REAL, unmodified
+ * N8nExecutionHistorySource/N8nEvidenceNormalizer adapter classes, so these tests exercise the
+ * genuine Phase 4 boundary end to end, not a synthetic re-implementation of it. */
+function mockClient(executions: Array<{ id: string; startedAt: string; data?: unknown }>): N8nApiClient {
   // Real n8n /executions list order confirmed in the Phase 3 spike: most-recent-first.
   const sorted = [...executions].sort((a, b) => b.startedAt.localeCompare(a.startedAt))
   return {
-    getExecutions: async (_workflowId, filter) => sorted.slice(0, filter?.limit ?? 20).map(e => ({ id: e.id, startedAt: e.startedAt })),
-    getExecution: async (id) => {
+    getExecutions: async (_workflowId?: string, filter?: { limit?: number }) => sorted.slice(0, filter?.limit ?? 20).map(e => ({ id: e.id, startedAt: e.startedAt })),
+    getExecution: async (id: string) => {
       const found = executions.find(e => e.id === id)!
       return { id: found.id, startedAt: found.startedAt, data: found.data }
     },
-  }
+  } as unknown as N8nApiClient
+}
+
+/** Calls the REAL, refactored pollWorkflowEvidence() with a TargetDeploymentRef and real
+ * N8nExecutionHistorySource/N8nEvidenceNormalizer instances, while keeping every one of this
+ * file's own call sites' argument list unchanged (same positional args, same order) as before
+ * this phase -- only the function name at each call site changes, so the diff stays minimal and
+ * each test's own historical intent (proving a specific extraction/watermark/gap behavior) stays
+ * exactly legible. */
+async function pollN8n(
+  contract: ProcessContract,
+  targetDeploymentId: string,
+  apiClient: N8nApiClient,
+  watermark: ContractPollWatermark | null,
+  limit = 20,
+  sourceElements: string[] = [],
+) {
+  return pollWorkflowEvidence(
+    contract,
+    { targetId: 'n8n', targetDeploymentId },
+    new N8nExecutionHistorySource(apiClient),
+    new N8nEvidenceNormalizer(),
+    watermark,
+    limit,
+    sourceElements,
+  )
 }
 
 describe('pollWorkflowEvidence', () => {
@@ -415,7 +449,7 @@ describe('pollWorkflowEvidence', () => {
       { id: 'e2', startedAt: '2026-07-20T10:00:00.000Z', data: makeExecutionData([triggerNode('555-0002'), evidenceNode({ callOutcome: 'no_answer', callTimestamp: 't2' })]) },
     ])
 
-    const result = await pollWorkflowEvidence(contract, 'wf-1', client, null)
+    const result = await pollN8n(contract, 'wf-1', client, null)
 
     expect(result.executionsChecked).toBe(2)
     expect(result.entries.map(e => e.sourceExecutionId)).toEqual(['e1', 'e2']) // oldest to newest
@@ -438,7 +472,7 @@ describe('pollWorkflowEvidence', () => {
     ])
     const watermark = { contractId: contract.id, targetId: 'n8n', targetDeploymentId: 'wf-1', n8nWorkflowId: 'wf-1', lastProcessedExecutionId: 'e1', lastProcessedStartedAt: '2026-07-20T09:00:00.000Z', updatedAt: 'x' }
 
-    const result = await pollWorkflowEvidence(contract, 'wf-1', client, watermark)
+    const result = await pollN8n(contract, 'wf-1', client, watermark)
 
     expect(result.executionsChecked).toBe(1)
     expect(result.entries.map(e => e.sourceExecutionId)).toEqual(['e2'])
@@ -453,7 +487,7 @@ describe('pollWorkflowEvidence', () => {
     ])
     const watermark = { contractId: contract.id, targetId: 'n8n', targetDeploymentId: 'wf-1', n8nWorkflowId: 'wf-1', lastProcessedExecutionId: 'e1', lastProcessedStartedAt: '2026-07-20T09:00:00.000Z', updatedAt: 'x' }
 
-    const result = await pollWorkflowEvidence(contract, 'wf-1', client, watermark)
+    const result = await pollN8n(contract, 'wf-1', client, watermark)
     expect(result.entries.map(e => e.sourceExecutionId)).toEqual(['e2'])
   })
 
@@ -464,7 +498,7 @@ describe('pollWorkflowEvidence', () => {
     ])
     const watermark = { contractId: contract.id, targetId: 'n8n', targetDeploymentId: 'wf-1', n8nWorkflowId: 'wf-1', lastProcessedExecutionId: 'e1', lastProcessedStartedAt: '2026-07-20T09:00:00.000Z', updatedAt: 'x' }
 
-    const result = await pollWorkflowEvidence(contract, 'wf-1', client, watermark)
+    const result = await pollN8n(contract, 'wf-1', client, watermark)
     expect(result.executionsChecked).toBe(0)
     expect(result.entries).toEqual([])
   })
@@ -479,7 +513,7 @@ describe('pollWorkflowEvidence', () => {
     // may have been too small to reach it.
     const watermark = { contractId: contract.id, targetId: 'n8n', targetDeploymentId: 'wf-1', n8nWorkflowId: 'wf-1', lastProcessedExecutionId: 'e1', lastProcessedStartedAt: '2026-07-20T08:00:00.000Z', updatedAt: 'x' }
 
-    const result = await pollWorkflowEvidence(contract, 'wf-1', client, watermark, 2)
+    const result = await pollN8n(contract, 'wf-1', client, watermark, 2)
     expect(result.possibleGap).toBe(true)
   })
 
@@ -488,7 +522,7 @@ describe('pollWorkflowEvidence', () => {
     const client = mockClient([
       { id: 'e1', startedAt: '2026-07-20T09:00:00.000Z', data: makeExecutionData([triggerNode('555-0001'), evidenceNode({ callOutcome: 'no_answer', callTimestamp: 't1' })]) },
     ])
-    const result = await pollWorkflowEvidence(contract, 'wf-1', client, null)
+    const result = await pollN8n(contract, 'wf-1', client, null)
     expect(result.possibleGap).toBe(false)
   })
 
@@ -497,7 +531,7 @@ describe('pollWorkflowEvidence', () => {
     const client = mockClient([])
     const watermark = { contractId: contract.id, targetId: 'n8n', targetDeploymentId: 'wf-1', n8nWorkflowId: 'wf-1', lastProcessedExecutionId: 'e1', lastProcessedStartedAt: '2026-07-20T09:00:00.000Z', updatedAt: 'x' }
 
-    const result = await pollWorkflowEvidence(contract, 'wf-1', client, watermark)
+    const result = await pollN8n(contract, 'wf-1', client, watermark)
     expect(result.executionsChecked).toBe(0)
     expect(result.newWatermark).toEqual(watermark)
   })
@@ -510,7 +544,7 @@ describe('pollWorkflowEvidence', () => {
       { id: 'e3', startedAt: '2026-07-20T11:00:00.000Z', data: makeExecutionData([triggerNode('555-0003'), ['Some Other Node', {}]]) }, // skipped
     ])
 
-    const result = await pollWorkflowEvidence(contract, 'wf-1', client, null)
+    const result = await pollN8n(contract, 'wf-1', client, null)
     expect(result.outcomes.map(o => o.outcome)).toEqual(['extracted', 'unverifiable', 'skipped'])
     expect(result.entries).toHaveLength(2) // skipped never produces an entry
   })
@@ -529,7 +563,7 @@ describe('pollWorkflowEvidence', () => {
       { id: 'e2', startedAt: '2026-07-20T10:00:00.000Z', data: makeExecutionData([triggerNode('555-0002'), evidenceNode({ callOutcome: 'no_answer' })]) },
     ])
 
-    const result = await pollWorkflowEvidence(contract, 'wf-1', client, null)
+    const result = await pollN8n(contract, 'wf-1', client, null)
     expect(result.unattributedCount).toBe(1)
     expect(result.entries).toHaveLength(1) // only e2's real (attributed) unverifiable entry
     expect(result.newWatermark.cumulativeUnattributedCount).toBe(1)
@@ -540,14 +574,14 @@ describe('pollWorkflowEvidence', () => {
     const firstClient = mockClient([
       { id: 'e1', startedAt: '2026-07-20T09:00:00.000Z', data: makeExecutionData([['Webhook: Intake', { headers: {} }], evidenceNode({ callOutcome: 'no_answer', callTimestamp: 't1' })]) },
     ])
-    const firstResult = await pollWorkflowEvidence(contract, 'wf-1', firstClient, null)
+    const firstResult = await pollN8n(contract, 'wf-1', firstClient, null)
     expect(firstResult.newWatermark.cumulativeUnattributedCount).toBe(1)
 
     const secondClient = mockClient([
       { id: 'e1', startedAt: '2026-07-20T09:00:00.000Z', data: makeExecutionData([['Webhook: Intake', { headers: {} }], evidenceNode({ callOutcome: 'no_answer', callTimestamp: 't1' })]) },
       { id: 'e2', startedAt: '2026-07-20T10:00:00.000Z', data: makeExecutionData([['Webhook: Intake', { headers: {} }], evidenceNode({ callOutcome: 'no_answer', callTimestamp: 't2' })]) },
     ])
-    const secondResult = await pollWorkflowEvidence(contract, 'wf-1', secondClient, firstResult.newWatermark)
+    const secondResult = await pollN8n(contract, 'wf-1', secondClient, firstResult.newWatermark)
     expect(secondResult.unattributedCount).toBe(1) // only e2 is new this poll
     expect(secondResult.newWatermark.cumulativeUnattributedCount).toBe(2) // 1 (carried forward) + 1 (this poll)
   })
@@ -559,7 +593,7 @@ describe('pollWorkflowEvidence', () => {
     ])
     // A watermark shaped exactly like one written before this fix -- no cumulativeUnattributedCount field at all.
     const legacyWatermark = { contractId: contract.id, targetId: 'n8n', targetDeploymentId: 'wf-1', n8nWorkflowId: 'wf-1', lastProcessedExecutionId: 'e0', lastProcessedStartedAt: '2026-07-20T08:00:00.000Z', updatedAt: 'x' }
-    const result = await pollWorkflowEvidence(contract, 'wf-1', client, legacyWatermark)
+    const result = await pollN8n(contract, 'wf-1', client, legacyWatermark)
     expect(result.unattributedCount).toBe(0)
     expect(result.newWatermark.cumulativeUnattributedCount).toBe(0)
   })
@@ -570,7 +604,7 @@ describe('pollWorkflowEvidence', () => {
       { id: 'e1', startedAt: '2026-07-20T09:00:00.000Z', data: makeExecutionData([triggerNode('555-0001')]) },
     ])
 
-    const result = await pollWorkflowEvidence(contract, 'wf-intake', client, null, 20, ['startCondition:sc-intake', 'state:received', 'correlationKey'])
+    const result = await pollN8n(contract, 'wf-intake', client, null, 20, ['startCondition:sc-intake', 'state:received', 'correlationKey'])
     expect(result.entries).toHaveLength(1)
     expect(result.entries[0]!.kind).toBe('instance_start')
   })
@@ -581,7 +615,7 @@ describe('pollWorkflowEvidence', () => {
       { id: 'e1', startedAt: '2026-07-20T09:00:00.000Z', data: makeExecutionData([triggerNode('555-0001')]) },
     ])
 
-    const result = await pollWorkflowEvidence(contract, 'wf-processing', client, null, 20, ['transition:t-received-to-attempted'])
+    const result = await pollN8n(contract, 'wf-processing', client, null, 20, ['transition:t-received-to-attempted'])
     expect(result.entries).toEqual([])
     expect(result.outcomes[0]!.outcome).toBe('skipped')
   })

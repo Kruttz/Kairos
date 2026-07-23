@@ -70,11 +70,19 @@ export interface ProofLedgerEntry {
    * this field is always present. */
   eventTime?: string
 
-  /** Which compiled n8n workflow this entry came from. */
+  /** Execution Substrate Boundary v0, Phase 4 (docs/plans/execution-substrate-boundary-plan.md
+   * §6.4, §9). Optional, not required -- absent on every entry written before this phase (no
+   * migration, no backfill; old entries remain readable exactly as they are). Every entry
+   * constructed by extractNormalizedEvidence() from this phase forward always populates it, from
+   * the real TargetDeploymentRef the poll was run against. Never fabricated for a legacy entry
+   * that lacks it -- absence here honestly means "predates target tracking," not "assume n8n." */
+  targetId?: TargetId
+  /** Which compiled workflow this entry came from -- `TargetDeploymentRef.targetDeploymentId`
+   * for the target it was polled from (n8nWorkflowId for n8n, unchanged). */
   sourceWorkflowId: string
-  /** Binds to n8n's own execution id, the same identity ExecutionTrace.executionId already uses
-   * -- a ProofLedger entry and a drift-check trace for the same real execution can be
-   * cross-referenced without a second id scheme. */
+  /** Binds to the target's own execution id, the same identity ExecutionTrace.executionId
+   * already uses for n8n -- a ProofLedger entry and a drift-check trace for the same real
+   * execution can be cross-referenced without a second id scheme. */
   sourceExecutionId: string
 
   status: ProofStatus
@@ -208,13 +216,4 @@ export interface PollContractResult {
    * every poll is carried on `ContractPollWatermark.cumulativeUnattributedCount` below so
    * `kairos contract report` can warn about it too, without needing to re-poll. */
   unattributedCount: number
-}
-
-/** The two n8n API methods ledger.ts actually calls, typed narrowly rather than as the full
- * N8nApiClient -- mirrors every other injectable-for-tests interface in this arc (plan.ts's
- * AnthropicMessagesClient, apply.ts's runReplayFn) so tests can supply a mock without needing to
- * satisfy N8nApiClient's much larger real surface. */
-export interface PollableN8nClient {
-  getExecutions(workflowId: string, filter?: { limit?: number }): Promise<Array<{ id: string; startedAt: string | null }>>
-  getExecution(id: string, options?: { includeData?: boolean }): Promise<{ id: string; startedAt: string | null; data?: unknown }>
 }

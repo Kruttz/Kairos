@@ -1,3 +1,5 @@
+import type { TargetId } from './targets/types.js'
+
 /**
  * Contract Evolution v0 (roadmap item 11, docs/plans/contract-evolution-ops-roadmap-plan.md §3,
  * item 11). Types only -- see src/promise/evolution.ts for the pure detection logic and
@@ -25,6 +27,14 @@ export type AmendmentEvidenceRefKind = 'ledger_entry' | 'exception_item' | 'harn
 export interface AmendmentEvidenceRef {
   kind: AmendmentEvidenceRefKind
   id: string
+  /** Execution Substrate Boundary v0, Phase 4 (docs/plans/execution-substrate-boundary-plan.md
+   * §6.8). NEW, optional. Threaded through only for `kind: 'ledger_entry'` refs, from the source
+   * ProofLedgerEntry.targetId (itself optional -- absent on a legacy entry, and left absent here
+   * too rather than fabricated). `kind: 'exception_item'` refs never carry it at all --
+   * ExceptionDeskItem has no targetId field to read one from, and this module does not invent
+   * one. `kind: 'harness_scenario'` refs never carry it either -- a harness scenario has no real
+   * deployment/execution concept to begin with. */
+  targetId?: TargetId
 }
 
 export type ProposalStatus = 'proposed' | 'accepted' | 'rejected' | 'applied'

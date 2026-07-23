@@ -3630,17 +3630,22 @@ async function handleLedgerPoll(positional: string[], flags: Record<string, stri
 
   const { pollWorkflowEvidence } = await import('./promise/ledger.js')
   const { loadContractPollWatermark, saveContractPollWatermark, appendProofLedgerEntries } = await import('./promise/ledger-store.js')
+  // Execution Substrate Boundary v0, Phase 4 (docs/plans/execution-substrate-boundary-plan.md
+  // §6.4): pollWorkflowEvidence() is now target-neutral -- constructed once here (neither
+  // depends on which registered workflow is being polled) and passed a TargetDeploymentRef per
+  // iteration below, in place of the old bare n8nWorkflowId + n8n-specific client.
+  const { N8nExecutionHistorySource } = await import('./providers/n8n/execution-history.js')
+  const { N8nEvidenceNormalizer } = await import('./providers/n8n/evidence.js')
+  const historySource = new N8nExecutionHistorySource(client)
+  const normalizer = new N8nEvidenceNormalizer()
 
   const limit = typeof flags['limit'] === 'string' ? parseInt(flags['limit'], 10) : 20
 
   const results: Array<{ workflowName: string } & Awaited<ReturnType<typeof pollWorkflowEvidence>>> = []
   for (const wf of activeWorkflows) {
-    // Execution Substrate Boundary v0, Phase 1 (docs/plans/execution-substrate-boundary-plan.md
-    // §6.7): loadContractPollWatermark() now takes a TargetDeploymentRef. pollWorkflowEvidence()'s
-    // own signature stays n8n-specific until Phase 4 -- targetDeploymentId (canonical, always
-    // populated) is passed where n8nWorkflowId (now optional) used to be.
-    const watermark = await loadContractPollWatermark(clientId, contractId, { targetId: wf.targetId, targetDeploymentId: wf.targetDeploymentId })
-    const result = await pollWorkflowEvidence(contract, wf.targetDeploymentId, client, watermark, limit, wf.sourceElements)
+    const ref = { targetId: wf.targetId, targetDeploymentId: wf.targetDeploymentId }
+    const watermark = await loadContractPollWatermark(clientId, contractId, ref)
+    const result = await pollWorkflowEvidence(contract, ref, historySource, normalizer, watermark, limit, wf.sourceElements)
     await appendProofLedgerEntries(clientId, contractId, result.entries)
     await saveContractPollWatermark(clientId, result.newWatermark)
     results.push({ workflowName: wf.workflowName, ...result })
@@ -4486,12 +4491,17 @@ async function runContractComplianceTick(
   const client = new N8nApiClient(n8nBaseUrl, n8nApiKey, CLI_LOGGER)
   const { pollWorkflowEvidence } = await import('./promise/ledger.js')
   const { loadContractPollWatermark, saveContractPollWatermark, appendProofLedgerEntries, getProofLedgerEntries } = await import('./promise/ledger-store.js')
+  // Execution Substrate Boundary v0, Phase 4 (docs/plans/execution-substrate-boundary-plan.md
+  // §6.4): same target-neutral construction as handleLedgerPoll above.
+  const { N8nExecutionHistorySource } = await import('./providers/n8n/execution-history.js')
+  const { N8nEvidenceNormalizer } = await import('./providers/n8n/evidence.js')
+  const historySource = new N8nExecutionHistorySource(client)
+  const normalizer = new N8nEvidenceNormalizer()
 
   for (const wf of activeWorkflows) {
-    // Execution Substrate Boundary v0, Phase 1 (docs/plans/execution-substrate-boundary-plan.md
-    // §6.7): loadContractPollWatermark() now takes a TargetDeploymentRef.
-    const watermark = await loadContractPollWatermark(clientId, contractId, { targetId: wf.targetId, targetDeploymentId: wf.targetDeploymentId })
-    const result = await pollWorkflowEvidence(contract, wf.targetDeploymentId, client, watermark, 20, wf.sourceElements)
+    const ref = { targetId: wf.targetId, targetDeploymentId: wf.targetDeploymentId }
+    const watermark = await loadContractPollWatermark(clientId, contractId, ref)
+    const result = await pollWorkflowEvidence(contract, ref, historySource, normalizer, watermark, 20, wf.sourceElements)
     await appendProofLedgerEntries(clientId, contractId, result.entries)
     await saveContractPollWatermark(clientId, result.newWatermark)
   }

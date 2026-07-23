@@ -5,6 +5,7 @@ import type { ProofLedgerEntry } from './ledger-types.js'
 import type { ExceptionDeskItem } from './exception-types.js'
 import type { HarnessResult } from './harness-types.js'
 import type { ContractAmendmentProposal, AmendmentCategory, AmendmentEvidenceRef } from './evolution-types.js'
+import type { TargetId } from './targets/types.js'
 
 /**
  * Contract Evolution v0 (roadmap item 11, docs/plans/contract-evolution-ops-roadmap-plan.md §3,
@@ -83,13 +84,27 @@ function makeProposalId(contractId: string, contractVersion: number, category: A
   return `${contractId}-v${contractVersion}-${category}-${safeElement}`
 }
 
+/** Execution Substrate Boundary v0, Phase 4 (docs/plans/execution-substrate-boundary-plan.md
+ * §6.8): ledgerEntryIds carries each source ProofLedgerEntry's own optional targetId alongside
+ * its id, rather than a bare id string, so detectRateHotspot() below can thread it through into
+ * the AmendmentEvidenceRef it builds -- a bare string[] has nowhere to carry that information at
+ * all. */
+interface LedgerEntryRef {
+  id: string
+  targetId?: TargetId
+}
+
 interface RateHotspotInput {
   elementId: string
   kind: 'sla' | 'expiration'
   drifting: number
   evaluated: number
-  ledgerEntryIds: string[]
+  ledgerEntryIds: LedgerEntryRef[]
   exceptionItemIds: string[]
+}
+
+function toLedgerEntryRefs(entries: ProofLedgerEntry[]): AmendmentEvidenceRef[] {
+  return entries.map((e): AmendmentEvidenceRef => ({ kind: 'ledger_entry', id: e.id, ...(e.targetId ? { targetId: e.targetId } : {}) }))
 }
 
 function detectRateHotspot(contract: ProcessContract, input: RateHotspotInput): ContractAmendmentProposal | null {
@@ -100,8 +115,11 @@ function detectRateHotspot(contract: ProcessContract, input: RateHotspotInput): 
   const category: AmendmentCategory = input.kind === 'sla' ? 'sla_threshold_hotspot' : 'expiration_rule_hotspot'
   const label = input.kind === 'sla' ? 'SLA' : 'Expiration rule'
   const pct = Math.round(rate * 100)
+  // kind: 'ledger_entry' refs carry targetId, threaded from the source ProofLedgerEntry (plan
+  // §6.8); kind: 'exception_item' refs never do -- ExceptionDeskItem has no targetId field to
+  // read one from, and none is fabricated here.
   const evidence: AmendmentEvidenceRef[] = [
-    ...input.ledgerEntryIds.map((id): AmendmentEvidenceRef => ({ kind: 'ledger_entry', id })),
+    ...input.ledgerEntryIds.map((le): AmendmentEvidenceRef => ({ kind: 'ledger_entry', id: le.id, ...(le.targetId ? { targetId: le.targetId } : {}) })),
     ...input.exceptionItemIds.map((id): AmendmentEvidenceRef => ({ kind: 'exception_item', id })),
   ]
   if (evidence.length === 0) return null
@@ -133,7 +151,7 @@ function detectSlaAndExpirationHotspots(contract: ProcessContract, entries: Proo
     const relevant = findings.filter(f => f.kind === 'sla' && f.slaId === sla.id)
     const evaluated = relevant.filter(f => f.status === 'healthy' || f.status === 'drifting')
     const drifting = evaluated.filter(f => f.status === 'drifting')
-    const ledgerEntryIds = entries.filter(e => drifting.some(f => f.promiseInstanceId === e.promiseInstanceId)).map(e => e.id)
+    const ledgerEntryIds = entries.filter(e => drifting.some(f => f.promiseInstanceId === e.promiseInstanceId)).map((e): LedgerEntryRef => ({ id: e.id, ...(e.targetId ? { targetId: e.targetId } : {}) }))
     const exceptionItemIds = exceptions.filter(x => x.slaId === sla.id).map(x => x.id)
     const proposal = detectRateHotspot(contract, { elementId: sla.id, kind: 'sla', drifting: drifting.length, evaluated: evaluated.length, ledgerEntryIds, exceptionItemIds })
     if (proposal) proposals.push(proposal)
@@ -143,7 +161,7 @@ function detectSlaAndExpirationHotspots(contract: ProcessContract, entries: Proo
     const relevant = findings.filter(f => f.kind === 'expiration' && f.expirationRuleId === rule.id)
     const evaluated = relevant.filter(f => f.status === 'healthy' || f.status === 'drifting')
     const drifting = evaluated.filter(f => f.status === 'drifting')
-    const ledgerEntryIds = entries.filter(e => drifting.some(f => f.promiseInstanceId === e.promiseInstanceId)).map(e => e.id)
+    const ledgerEntryIds = entries.filter(e => drifting.some(f => f.promiseInstanceId === e.promiseInstanceId)).map((e): LedgerEntryRef => ({ id: e.id, ...(e.targetId ? { targetId: e.targetId } : {}) }))
     const exceptionItemIds = exceptions.filter(x => x.expirationRuleId === rule.id).map(x => x.id)
     const proposal = detectRateHotspot(contract, { elementId: rule.id, kind: 'expiration', drifting: drifting.length, evaluated: evaluated.length, ledgerEntryIds, exceptionItemIds })
     if (proposal) proposals.push(proposal)
@@ -170,7 +188,7 @@ function detectUnreachedStates(contract: ProcessContract, entries: ProofLedgerEn
   // cite the real entries that establish `totalInstances` is a genuine, non-trivial sample, so
   // "we looked, across N real instances, and it wasn't there" is itself traceable to real data,
   // never an empty evidence array (this file's own invariant, matching evolution-types.ts).
-  const sampleEvidence: AmendmentEvidenceRef[] = entries.map(e => ({ kind: 'ledger_entry', id: e.id }))
+  const sampleEvidence: AmendmentEvidenceRef[] = toLedgerEntryRefs(entries)
 
   const proposals: ContractAmendmentProposal[] = []
   for (const state of contract.states) {
@@ -204,7 +222,7 @@ function detectUnusedTransitions(contract: ProcessContract, entries: ProofLedger
   if (totalInstances < MIN_EXISTENCE_SAMPLE_SIZE) return []
 
   const observedTransitionIds = new Set(entries.filter(e => e.kind === 'evidence' && e.transitionId).map(e => e.transitionId!))
-  const sampleEvidence: AmendmentEvidenceRef[] = entries.map(e => ({ kind: 'ledger_entry', id: e.id }))
+  const sampleEvidence: AmendmentEvidenceRef[] = toLedgerEntryRefs(entries)
   const proposals: ContractAmendmentProposal[] = []
 
   for (const req of contract.evidenceRequirements) {
@@ -240,7 +258,7 @@ function detectHighMissRate(contract: ProcessContract, entries: ProofLedgerEntry
   if (rate < HIGH_MISS_RATE_THRESHOLD) return []
 
   const missedIds = data.instances.filter(i => i.status === 'missed').map(i => i.promiseInstanceId)
-  const evidence: AmendmentEvidenceRef[] = entries.filter(e => missedIds.includes(e.promiseInstanceId)).map(e => ({ kind: 'ledger_entry', id: e.id }))
+  const evidence: AmendmentEvidenceRef[] = toLedgerEntryRefs(entries.filter(e => missedIds.includes(e.promiseInstanceId)))
   if (evidence.length === 0) return []
 
   const pct = Math.round(rate * 100)

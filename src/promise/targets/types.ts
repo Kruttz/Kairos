@@ -78,3 +78,40 @@ export interface TargetCapabilities {
   implemented: ImplementedCapabilities
   reliability: InformationalReliabilityCapabilities
 }
+
+/**
+ * Execution Substrate Boundary v0, Phase 4 (docs/plans/execution-substrate-boundary-plan.md
+ * §6.4). Normalized evidence shape -- built from Kairos concepts (an execution reference, event
+ * time, transition id, evidence fields), never from n8n's own runData shape. A target's own
+ * EvidenceNormalizer is responsible for producing this; the neutral extractor
+ * (src/promise/evidence-extraction.ts) never parses raw execution data itself.
+ */
+export interface EvidenceFieldItem {
+  fields: Record<string, unknown>
+  /** OPTIONAL, opaque, target-provided item-uniqueness key. When absent,
+   * extractNormalizedEvidence() falls back to the item's own array index within its containing
+   * list -- so a target that doesn't populate this can never produce colliding multi-item
+   * evidence ids. Never interpreted by neutral logic beyond "these two items are different." For
+   * n8n, this is always populated with the exact run.branch.item positional string the
+   * pre-boundary extractor used to build entry ids from directly -- byte-identical ledger entry
+   * ids for n8n depend on this. */
+  sourceItemRef?: string
+}
+
+export interface NormalizedTransitionEvidence {
+  /** Already resolved by the target's own normalizer -- e.g. n8n's normalizer resolves a node
+   * name back to this transitionId via evidenceNodeName(); the neutral extractor never knows a
+   * node-naming convention exists at all. */
+  transitionId: string
+  items: EvidenceFieldItem[]
+}
+
+export interface NormalizedExecution {
+  executionRef: string
+  /** Nullable, mirroring n8n's own execution.startedAt -- the neutral extractor applies its own
+   * fallback logic (to poll-time "now") rather than the normalizer silently picking one. */
+  eventTime: string | null
+  /** Fed to the existing, unchanged findStartCondition()-driven instance_start logic. */
+  initiatingItems: EvidenceFieldItem[]
+  transitionEvidence: NormalizedTransitionEvidence[]
+}

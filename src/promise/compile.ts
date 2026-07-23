@@ -1,5 +1,6 @@
 import type { PackPlan, WorkflowPlan, TypedAssumption } from '../pack/pack-builder.js'
 import { prepareContract, type WorkflowSlot, type ContractPreparationEscalation } from './decomposition.js'
+import { evidenceNodeName } from '../providers/n8n/evidence.js'
 import type { ProcessContract, StartCondition } from './types.js'
 
 /**
@@ -81,16 +82,20 @@ function lookupState(contract: ProcessContract, id: string) {
  * Evidence-node marker convention -- Phase 3's first named prerequisite (Codex, 2026-07-20):
  * "compiled workflows need predictable node names/markers so Kairos knows where to extract
  * evidence." The compiled description instructs the LLM-based codegen to name the exact node
- * that sets a given EvidenceRequirement's fields using this convention, so ProofLedger's poller
- * (src/promise/ledger.ts) can find it deterministically by name in a real execution's runData,
- * rather than guessing from field names -- nothing about a generated workflow's structure
- * otherwise guarantees a stable name (the Phase 3 design spike's Finding 6, plan doc §6.0).
- * Exported so ledger.ts imports this exact format rather than a second, driftable copy of the
- * same string.
+ * that sets a given EvidenceRequirement's fields using this convention, so ProofLedger's n8n
+ * normalizer (src/providers/n8n/evidence.ts) can find it deterministically by name in a real
+ * execution's runData, rather than guessing from field names -- nothing about a generated
+ * workflow's structure otherwise guarantees a stable name (the Phase 3 design spike's Finding 6,
+ * plan doc §6.0).
+ *
+ * Execution Substrate Boundary v0, Phase 4 (docs/plans/execution-substrate-boundary-plan.md
+ * §6.4): the canonical definition now lives in src/providers/n8n/evidence.ts (a mechanical
+ * relocation -- node-name marker interpretation is n8n-specific, and the neutral extraction
+ * layer must never know this convention exists at all). Re-exported here under this exact name
+ * so this module's own prose-generation use below, and every existing external importer
+ * (compiler-verify.ts, and this file's own tests), needs zero changes.
  */
-export function evidenceNodeName(transitionId: string): string {
-  return `Kairos Evidence: ${transitionId}`
-}
+export { evidenceNodeName }
 
 function buildIntakeWorkflow(contract: ProcessContract, sc: StartCondition, slot: WorkflowSlot): WorkflowPlan {
   const name = slot.name

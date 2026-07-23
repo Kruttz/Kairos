@@ -78,6 +78,26 @@ describe('appendProofLedgerEntries / getProofLedgerEntries', () => {
     expect(await getProofLedgerEntries(CLIENT_A, 'nobody-ever-wrote-here')).toEqual([])
   })
 
+  // Execution Substrate Boundary v0, Phase 4 (docs/plans/execution-substrate-boundary-plan.md
+  // §6.4, §9): ProofLedgerEntry.targetId is new and optional -- old entries written before this
+  // phase never had this field on disk at all. No migration, no backfill: this proves the read
+  // path handles a genuinely legacy-shaped line (targetId entirely absent, not merely undefined)
+  // exactly as it always has, alongside a new-shaped entry that does carry it, in the same file.
+  it('a legacy entry with no targetId field at all on disk remains readable, unchanged, alongside a new entry that has one', async () => {
+    const legacyLine = JSON.stringify(makeEntry({ id: 'legacy-1', sourceExecutionId: 'legacy-1' })) + '\n'
+    const dir = join(scratchHome, '.kairos', 'promise-ledger', CLIENT_A, 'c1')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'ledger.jsonl'), legacyLine, 'utf-8')
+    expect(legacyLine).not.toContain('targetId') // sanity check on the fixture itself
+
+    await appendProofLedgerEntries(CLIENT_A, 'c1', [makeEntry({ id: 'new-1', sourceExecutionId: 'new-1', targetId: 'n8n' })])
+
+    const entries = await getProofLedgerEntries(CLIENT_A, 'c1')
+    expect(entries.map(e => e.id)).toEqual(['legacy-1', 'new-1'])
+    expect(entries[0]!.targetId).toBeUndefined()
+    expect(entries[1]!.targetId).toBe('n8n')
+  })
+
   it('respects the limit, keeping the most recent entries', async () => {
     for (let i = 0; i < 5; i++) await appendProofLedgerEntries(CLIENT_A, 'c1', [makeEntry({ id: `e${i}`, sourceExecutionId: `e${i}` })])
     const entries = await getProofLedgerEntries(CLIENT_A, 'c1', 2)
