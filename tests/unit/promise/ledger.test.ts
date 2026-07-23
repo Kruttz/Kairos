@@ -422,7 +422,7 @@ describe('pollWorkflowEvidence', () => {
     expect(result.possibleGap).toBe(false)
     expect(result.newWatermark).toEqual({
       contractId: contract.id,
-      n8nWorkflowId: 'wf-1',
+      targetId: 'n8n', targetDeploymentId: 'wf-1', n8nWorkflowId: 'wf-1',
       lastProcessedExecutionId: 'e2',
       lastProcessedStartedAt: '2026-07-20T10:00:00.000Z',
       updatedAt: result.newWatermark.updatedAt,
@@ -436,7 +436,7 @@ describe('pollWorkflowEvidence', () => {
       { id: 'e1', startedAt: '2026-07-20T09:00:00.000Z', data: makeExecutionData([triggerNode('555-0001'), evidenceNode({ callOutcome: 'no_answer', callTimestamp: 't1' })]) },
       { id: 'e2', startedAt: '2026-07-20T10:00:00.000Z', data: makeExecutionData([triggerNode('555-0002'), evidenceNode({ callOutcome: 'no_answer', callTimestamp: 't2' })]) },
     ])
-    const watermark = { contractId: contract.id, n8nWorkflowId: 'wf-1', lastProcessedExecutionId: 'e1', lastProcessedStartedAt: '2026-07-20T09:00:00.000Z', updatedAt: 'x' }
+    const watermark = { contractId: contract.id, targetId: 'n8n', targetDeploymentId: 'wf-1', n8nWorkflowId: 'wf-1', lastProcessedExecutionId: 'e1', lastProcessedStartedAt: '2026-07-20T09:00:00.000Z', updatedAt: 'x' }
 
     const result = await pollWorkflowEvidence(contract, 'wf-1', client, watermark)
 
@@ -451,7 +451,7 @@ describe('pollWorkflowEvidence', () => {
       { id: 'e1', startedAt: '2026-07-20T09:00:00.000Z', data: makeExecutionData([triggerNode('555-0001'), evidenceNode({ callOutcome: 'no_answer', callTimestamp: 't1' })]) },
       { id: 'e2', startedAt: '2026-07-20T09:00:00.000Z', data: makeExecutionData([triggerNode('555-0002'), evidenceNode({ callOutcome: 'no_answer', callTimestamp: 't2' })]) },
     ])
-    const watermark = { contractId: contract.id, n8nWorkflowId: 'wf-1', lastProcessedExecutionId: 'e1', lastProcessedStartedAt: '2026-07-20T09:00:00.000Z', updatedAt: 'x' }
+    const watermark = { contractId: contract.id, targetId: 'n8n', targetDeploymentId: 'wf-1', n8nWorkflowId: 'wf-1', lastProcessedExecutionId: 'e1', lastProcessedStartedAt: '2026-07-20T09:00:00.000Z', updatedAt: 'x' }
 
     const result = await pollWorkflowEvidence(contract, 'wf-1', client, watermark)
     expect(result.entries.map(e => e.sourceExecutionId)).toEqual(['e2'])
@@ -462,7 +462,7 @@ describe('pollWorkflowEvidence', () => {
     const client = mockClient([
       { id: 'e1', startedAt: '2026-07-20T09:00:00.000Z', data: makeExecutionData([triggerNode('555-0001'), evidenceNode({ callOutcome: 'no_answer', callTimestamp: 't1' })]) },
     ])
-    const watermark = { contractId: contract.id, n8nWorkflowId: 'wf-1', lastProcessedExecutionId: 'e1', lastProcessedStartedAt: '2026-07-20T09:00:00.000Z', updatedAt: 'x' }
+    const watermark = { contractId: contract.id, targetId: 'n8n', targetDeploymentId: 'wf-1', n8nWorkflowId: 'wf-1', lastProcessedExecutionId: 'e1', lastProcessedStartedAt: '2026-07-20T09:00:00.000Z', updatedAt: 'x' }
 
     const result = await pollWorkflowEvidence(contract, 'wf-1', client, watermark)
     expect(result.executionsChecked).toBe(0)
@@ -477,7 +477,7 @@ describe('pollWorkflowEvidence', () => {
     ])
     // Watermark references an execution ('e1') that isn't even in this fetched page -- the page
     // may have been too small to reach it.
-    const watermark = { contractId: contract.id, n8nWorkflowId: 'wf-1', lastProcessedExecutionId: 'e1', lastProcessedStartedAt: '2026-07-20T08:00:00.000Z', updatedAt: 'x' }
+    const watermark = { contractId: contract.id, targetId: 'n8n', targetDeploymentId: 'wf-1', n8nWorkflowId: 'wf-1', lastProcessedExecutionId: 'e1', lastProcessedStartedAt: '2026-07-20T08:00:00.000Z', updatedAt: 'x' }
 
     const result = await pollWorkflowEvidence(contract, 'wf-1', client, watermark, 2)
     expect(result.possibleGap).toBe(true)
@@ -495,7 +495,7 @@ describe('pollWorkflowEvidence', () => {
   it('leaves the watermark unchanged when there are no executions at all', async () => {
     const contract = empireHomecare()
     const client = mockClient([])
-    const watermark = { contractId: contract.id, n8nWorkflowId: 'wf-1', lastProcessedExecutionId: 'e1', lastProcessedStartedAt: '2026-07-20T09:00:00.000Z', updatedAt: 'x' }
+    const watermark = { contractId: contract.id, targetId: 'n8n', targetDeploymentId: 'wf-1', n8nWorkflowId: 'wf-1', lastProcessedExecutionId: 'e1', lastProcessedStartedAt: '2026-07-20T09:00:00.000Z', updatedAt: 'x' }
 
     const result = await pollWorkflowEvidence(contract, 'wf-1', client, watermark)
     expect(result.executionsChecked).toBe(0)
@@ -558,7 +558,7 @@ describe('pollWorkflowEvidence', () => {
       { id: 'e1', startedAt: '2026-07-20T09:00:00.000Z', data: makeExecutionData([triggerNode('555-0001'), evidenceNode({ callOutcome: 'no_answer', callTimestamp: 't1' })]) },
     ])
     // A watermark shaped exactly like one written before this fix -- no cumulativeUnattributedCount field at all.
-    const legacyWatermark = { contractId: contract.id, n8nWorkflowId: 'wf-1', lastProcessedExecutionId: 'e0', lastProcessedStartedAt: '2026-07-20T08:00:00.000Z', updatedAt: 'x' }
+    const legacyWatermark = { contractId: contract.id, targetId: 'n8n', targetDeploymentId: 'wf-1', n8nWorkflowId: 'wf-1', lastProcessedExecutionId: 'e0', lastProcessedStartedAt: '2026-07-20T08:00:00.000Z', updatedAt: 'x' }
     const result = await pollWorkflowEvidence(contract, 'wf-1', client, legacyWatermark)
     expect(result.unattributedCount).toBe(0)
     expect(result.newWatermark.cumulativeUnattributedCount).toBe(0)

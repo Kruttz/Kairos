@@ -2,7 +2,8 @@ import { appendFile, mkdir, readFile, writeFile, rename, chmod } from 'node:fs/p
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { acquireFileLock } from '../utils/file-lock.js'
-import type { ProofLedgerEntry, ContractPollWatermark } from './ledger-types.js'
+import { normalizeContractPollWatermark, type ProofLedgerEntry, type ContractPollWatermark, type PersistedContractPollWatermark } from './ledger-types.js'
+import { targetRefKey, type TargetDeploymentRef } from './targets/types.js'
 
 /**
  * ProofLedger v0 persistence (Phase 3, plan doc §6.3). Two files per contract, mirroring
@@ -81,18 +82,46 @@ export async function getProofLedgerEntries(clientId: string, contractId: string
   return entries.slice(-limit)
 }
 
-async function readWatermarks(clientId: string, contractId: string): Promise<Record<string, ContractPollWatermark>> {
+async function readWatermarks(clientId: string, contractId: string): Promise<Record<string, PersistedContractPollWatermark>> {
   try {
     const raw = await readFile(watermarksPath(clientId, contractId), 'utf-8')
-    return JSON.parse(raw) as Record<string, ContractPollWatermark>
+    return JSON.parse(raw) as Record<string, PersistedContractPollWatermark>
   } catch {
     return {}
   }
 }
 
-export async function loadContractPollWatermark(clientId: string, contractId: string, n8nWorkflowId: string): Promise<ContractPollWatermark | null> {
+/** The legacy bare-key form of a ref -- only meaningful for `targetId === 'n8n'`, since that is
+ * the only target whose watermarks could ever have been written before this phase existed. */
+function watermarkLegacyKey(ref: TargetDeploymentRef): string | null {
+  return ref.targetId === 'n8n' ? ref.targetDeploymentId : null
+}
+
+/** Execution Substrate Boundary v0, Phase 1 (docs/plans/execution-substrate-boundary-plan.md
+ * §6.7). watermarks.json's own top-level shape is UNCHANGED (still `Record<string,
+ * PersistedContractPollWatermark>`) -- only the KEY FORMAT for entries written from this phase
+ * forward changes, which is why no whole-file migration is ever required; old bare-keyed entries
+ * and new composite-keyed entries simply coexist as ordinary sibling keys in the same object.
+ *
+ * Reads by the collision-safe composite key (`targetRefKey()`, escaping both components so a
+ * `:` inside either one can never be mistaken for the key's own delimiter) first, falling back
+ * to the legacy bare key only for `targetId === 'n8n'` -- a pre-boundary file, which only ever
+ * had bare keys, still resolves correctly for the one target that could have written it.
+ *
+ * When BOTH the composite and legacy keys exist for the same deployment -- e.g. a binary from
+ * before this phase polls the same workflow *after* a phase-aware binary already wrote both
+ * keys, updating only the legacy one -- this returns whichever has the newer `updatedAt`, never
+ * blindly preferring the composite key. Without this, a stale composite-keyed watermark could
+ * silently shadow a genuinely more recent legacy-keyed one written by an older binary. */
+export async function loadContractPollWatermark(clientId: string, contractId: string, ref: TargetDeploymentRef): Promise<ContractPollWatermark | null> {
   const all = await readWatermarks(clientId, contractId)
-  return all[n8nWorkflowId] ?? null
+  const composite = all[targetRefKey(ref)]
+  const legacyKey = watermarkLegacyKey(ref)
+  const legacy = legacyKey ? all[legacyKey] : undefined
+  const winner =
+    composite && legacy ? (composite.updatedAt >= legacy.updatedAt ? composite : legacy)
+    : (composite ?? legacy)
+  return winner ? normalizeContractPollWatermark(winner) : null
 }
 
 /** Locked (P0 measurement-integrity fix, 2026-07-20): this is a real read-modify-write cycle
@@ -105,7 +134,14 @@ export async function loadContractPollWatermark(clientId: string, contractId: st
  * `clientId` is a separate parameter, not a field on `ContractPollWatermark` itself (Finding 1
  * fix, 2026-07-20) -- that type is constructed inside ledger.ts, a pure extraction module with
  * no storage/client concept at all, and stays that way; clientId is purely a storage-layer
- * concern, entering only here. */
+ * concern, entering only here.
+ *
+ * Writes the collision-safe composite key (Execution Substrate Boundary v0, Phase 1, plan §6.7)
+ * and, for `targetId === 'n8n'` only, ALSO the legacy bare key -- an honest claim, stated
+ * precisely: this EXPLICITLY REWRITES the legacy entry for whichever deployment is currently
+ * being saved, every time, keeping it fresh for old-binary reads rather than leaving it frozen
+ * after a single write. Every OTHER entry already in the file (a different deployment id, or a
+ * different target's entries entirely) is left completely untouched. */
 export async function saveContractPollWatermark(clientId: string, watermark: ContractPollWatermark): Promise<void> {
   const dir = contractLedgerDir(clientId, watermark.contractId)
   await mkdir(dir, { recursive: true })
@@ -113,7 +149,9 @@ export async function saveContractPollWatermark(clientId: string, watermark: Con
   const releaseLock = await acquireFileLock(`${path}.lock`)
   try {
     const all = await readWatermarks(clientId, watermark.contractId)
-    all[watermark.n8nWorkflowId] = watermark
+    all[targetRefKey(watermark)] = watermark
+    const legacyKey = watermarkLegacyKey(watermark)
+    if (legacyKey) all[legacyKey] = watermark
     const tmpPath = `${path}.tmp`
     await writeFile(tmpPath, JSON.stringify(all, null, 2) + '\n', 'utf-8')
     await chmod(tmpPath, 0o600)

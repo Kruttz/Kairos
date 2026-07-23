@@ -503,6 +503,23 @@ function getEnvOrExit(name: string): string {
   return val
 }
 
+/** Execution Substrate Boundary v0, Phase 1 (docs/plans/execution-substrate-boundary-plan.md
+ * §13, §15) -- a plain, n8n-specific de-duplication helper, with no target concept of any kind.
+ * Used at `handleLedgerPoll`, which reads N8N_BASE_URL/N8N_API_KEY directly at its own call
+ * site. NOT used by `runContractComplianceTick` (called from `handleWatch --contracts`), which
+ * already receives already-resolved `n8nBaseUrl`/`n8nApiKey` as parameters from its own caller
+ * (shared with the unrelated, out-of-scope `--workflows` tick path) -- restructuring that
+ * parameter-passing is outside this phase's mechanical scope. NOT wired into
+ * `handleContractCompile`'s own compiler-verification construction site, which is Phase 3's own
+ * scope (the real `DeploymentLookup`/`TargetCompilerVerifier` interfaces), nor into any of the
+ * 12+ other, non-contract `N8nApiClient` construction sites elsewhere in this file
+ * (`sync-nodes`, `pack export`, `pack wire`, `trace record`, `chaos`/`replay --live`), which
+ * remain explicitly out of scope for this whole arc. */
+async function resolveN8nApiClient(): Promise<import('./providers/n8n/api-client.js').N8nApiClient> {
+  const { N8nApiClient } = await import('./providers/n8n/api-client.js')
+  return new N8nApiClient(getEnvOrExit('N8N_BASE_URL'), getEnvOrExit('N8N_API_KEY'), CLI_LOGGER)
+}
+
 function parseArgs(argv: string[]): { command: string; positional: string[]; flags: Record<string, string | boolean> } {
   const args = argv.slice(2)
   const command = args[0] ?? ''
@@ -2309,6 +2326,11 @@ async function handleContractCompile(positional: string[], flags: Record<string,
     const registeredWorkflows = buildResult.workflows
       .filter((w): w is typeof w & { workflowId: string } => w.workflowId !== null && !w.error)
       .map(w => ({
+        // Execution Substrate Boundary v0, Phase 1 (docs/plans/execution-substrate-boundary-plan.md
+        // §6.6): targetId/targetDeploymentId dual-written alongside the still-present legacy
+        // n8nWorkflowId alias, mechanically -- no interface/behavior change this phase.
+        targetId: 'n8n' as const,
+        targetDeploymentId: w.workflowId,
         n8nWorkflowId: w.workflowId,
         workflowName: w.name,
         sourceElements: result.traceability.find(t => t.workflowName === w.name)?.sourceElements ?? [],
@@ -2374,14 +2396,16 @@ async function handleContractCompile(positional: string[], flags: Record<string,
       // expected to stay missing from a fresh compile and must not re-trigger this gate forever.
       const existing = await loadContractWorkflowRegistration(contract.clientId, contract.id)
       const activeExisting = (existing?.workflows ?? []).filter(w => w.status === 'active')
-      const dropped = computeDroppedWorkflows(activeExisting, new Set(registeredWorkflows.map(w => w.workflowName)))
+      // Scoped by targetId (docs/plans/execution-substrate-boundary-plan.md §6.6) -- this n8n
+      // rebuild must never report a different target's own workflows as "dropped."
+      const dropped = computeDroppedWorkflows(activeExisting, new Set(registeredWorkflows.map(w => w.workflowName)), 'n8n')
 
       if (dropped.length > 0 && flags['confirm-registration-drop'] !== true) {
         if (flags['json'] === true) {
           console.log(JSON.stringify({ ...buildResult, traceability: result.traceability, registrationRefused: true, droppedWorkflows: dropped.map(w => w.workflowName) }, null, 2))
         } else {
           console.error(`\n✗ Refusing to save workflow registration -- this rebuild no longer produces ${dropped.length} currently-active previously-registered workflow(s):`)
-          for (const w of dropped) console.error(`  - "${w.workflowName}" (was: ${w.n8nWorkflowId})`)
+          for (const w of dropped) console.error(`  - "${w.workflowName}" (was: ${w.targetDeploymentId})`)
           console.error(`\nThe pack itself was built successfully above -- only the registration write is refused, so "kairos ledger poll"/"kairos contract report" keep polling the PREVIOUS workflow(s) for ${dropped.length === 1 ? 'this name' : 'these names'} until you decide (nothing is ever silently un-polled -- registration is append-only).`)
           console.error(`Re-run with --confirm-registration-drop to mark ${dropped.length === 1 ? 'it' : 'them'} retired -- their history stays in the registration file, just no longer polled.`)
         }
@@ -3180,7 +3204,9 @@ async function handleContractReport(positional: string[], flags: Record<string, 
   const registration = await loadContractWorkflowRegistration(clientId, contractId)
   let unattributedExecutionCount = 0
   for (const wf of registration?.workflows ?? []) {
-    const watermark = await loadContractPollWatermark(clientId, contractId, wf.n8nWorkflowId)
+    // Execution Substrate Boundary v0, Phase 1 (docs/plans/execution-substrate-boundary-plan.md
+    // §6.7): loadContractPollWatermark() now takes a TargetDeploymentRef, not a bare id string.
+    const watermark = await loadContractPollWatermark(clientId, contractId, { targetId: wf.targetId, targetDeploymentId: wf.targetDeploymentId })
     unattributedExecutionCount += watermark?.cumulativeUnattributedCount ?? 0
   }
 
@@ -3271,7 +3297,9 @@ async function handleContractValue(positional: string[], flags: Record<string, s
   const registration = await loadContractWorkflowRegistration(clientId, contractId)
   let unattributedExecutionCount = 0
   for (const wf of registration?.workflows ?? []) {
-    const watermark = await loadContractPollWatermark(clientId, contractId, wf.n8nWorkflowId)
+    // Execution Substrate Boundary v0, Phase 1 (docs/plans/execution-substrate-boundary-plan.md
+    // §6.7): loadContractPollWatermark() now takes a TargetDeploymentRef, not a bare id string.
+    const watermark = await loadContractPollWatermark(clientId, contractId, { targetId: wf.targetId, targetDeploymentId: wf.targetDeploymentId })
     unattributedExecutionCount += watermark?.cumulativeUnattributedCount ?? 0
   }
 
@@ -3534,10 +3562,7 @@ async function handleLedgerPoll(positional: string[], flags: Record<string, stri
     process.exit(1)
   }
 
-  const n8nBaseUrl = getEnvOrExit('N8N_BASE_URL')
-  const n8nApiKey = getEnvOrExit('N8N_API_KEY')
-  const { N8nApiClient } = await import('./providers/n8n/api-client.js')
-  const client = new N8nApiClient(n8nBaseUrl, n8nApiKey, CLI_LOGGER)
+  const client = await resolveN8nApiClient()
 
   const { pollWorkflowEvidence } = await import('./promise/ledger.js')
   const { loadContractPollWatermark, saveContractPollWatermark, appendProofLedgerEntries } = await import('./promise/ledger-store.js')
@@ -3546,8 +3571,12 @@ async function handleLedgerPoll(positional: string[], flags: Record<string, stri
 
   const results: Array<{ workflowName: string } & Awaited<ReturnType<typeof pollWorkflowEvidence>>> = []
   for (const wf of activeWorkflows) {
-    const watermark = await loadContractPollWatermark(clientId, contractId, wf.n8nWorkflowId)
-    const result = await pollWorkflowEvidence(contract, wf.n8nWorkflowId, client, watermark, limit, wf.sourceElements)
+    // Execution Substrate Boundary v0, Phase 1 (docs/plans/execution-substrate-boundary-plan.md
+    // §6.7): loadContractPollWatermark() now takes a TargetDeploymentRef. pollWorkflowEvidence()'s
+    // own signature stays n8n-specific until Phase 4 -- targetDeploymentId (canonical, always
+    // populated) is passed where n8nWorkflowId (now optional) used to be.
+    const watermark = await loadContractPollWatermark(clientId, contractId, { targetId: wf.targetId, targetDeploymentId: wf.targetDeploymentId })
+    const result = await pollWorkflowEvidence(contract, wf.targetDeploymentId, client, watermark, limit, wf.sourceElements)
     await appendProofLedgerEntries(clientId, contractId, result.entries)
     await saveContractPollWatermark(clientId, result.newWatermark)
     results.push({ workflowName: wf.workflowName, ...result })
@@ -3565,7 +3594,7 @@ async function handleLedgerPoll(positional: string[], flags: Record<string, stri
     const unverifiable = r.outcomes.filter(o => o.outcome === 'unverifiable').length
     const skipped = r.outcomes.filter(o => o.outcome === 'skipped').length
 
-    console.log(`\n${r.workflowName} (${r.n8nWorkflowId})`)
+    console.log(`\n${r.workflowName} (${r.targetDeploymentId})`)
     console.log(`  Checked: ${r.executionsChecked} execution(s) -- extracted: ${extracted}, unverifiable: ${unverifiable}, skipped: ${skipped}`)
     if (r.possibleGap) {
       console.log(`  ⚠ Every fetched execution was new -- the poll window may be smaller than the real gap since the last check. Consider --limit or polling more often.`)
@@ -4395,8 +4424,10 @@ async function runContractComplianceTick(
   const { loadContractPollWatermark, saveContractPollWatermark, appendProofLedgerEntries, getProofLedgerEntries } = await import('./promise/ledger-store.js')
 
   for (const wf of activeWorkflows) {
-    const watermark = await loadContractPollWatermark(clientId, contractId, wf.n8nWorkflowId)
-    const result = await pollWorkflowEvidence(contract, wf.n8nWorkflowId, client, watermark, 20, wf.sourceElements)
+    // Execution Substrate Boundary v0, Phase 1 (docs/plans/execution-substrate-boundary-plan.md
+    // §6.7): loadContractPollWatermark() now takes a TargetDeploymentRef.
+    const watermark = await loadContractPollWatermark(clientId, contractId, { targetId: wf.targetId, targetDeploymentId: wf.targetDeploymentId })
+    const result = await pollWorkflowEvidence(contract, wf.targetDeploymentId, client, watermark, 20, wf.sourceElements)
     await appendProofLedgerEntries(clientId, contractId, result.entries)
     await saveContractPollWatermark(clientId, result.newWatermark)
   }

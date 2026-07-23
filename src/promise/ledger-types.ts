@@ -1,3 +1,6 @@
+import { GuardError } from '../errors/guard-error.js'
+import type { TargetId } from './targets/types.js'
+
 /**
  * ProofLedger v0 (Phase 3, docs/plans/process-contract-promise-engine-plan.md §6). Types only --
  * see src/promise/ledger.ts for the extraction/poll logic and src/promise/ledger-store.ts for
@@ -85,10 +88,23 @@ export interface ProofLedgerEntry {
 /** Prerequisite 2 (Codex, 2026-07-20): "ProofLedger cannot only read latest execution... it
  * needs 'last processed execution id/time' per workflow/contract so evidence is not missed or
  * double-counted." One watermark per (contractId, n8nWorkflowId) pair -- a contract can compile
- * to more than one workflow (src/promise/compile.ts), and each is polled independently. */
+ * to more than one workflow (src/promise/compile.ts), and each is polled independently.
+ *
+ * **Execution Substrate Boundary v0, Phase 1 (docs/plans/execution-substrate-boundary-plan.md
+ * §6.7):** `n8nWorkflowId` is demoted from the sole identifier to an optional, n8n-only legacy
+ * alias; `targetId`/`targetDeploymentId` are the canonical pair. See
+ * `PersistedContractPollWatermark`/`normalizeContractPollWatermark()` below for the raw-vs-
+ * canonical split, and `src/promise/ledger-store.ts` for the collision-safe key design (a plain
+ * `n8nWorkflowId`-only key cannot distinguish two different targets that happen to reuse the same
+ * deployment-id string) and the staleness-aware read that follows from it. */
 export interface ContractPollWatermark {
   contractId: string
-  n8nWorkflowId: string
+  targetId: TargetId
+  targetDeploymentId: string
+  /** LEGACY. Optional, populated (dual-written) only for `targetId === 'n8n'` -- exists purely
+   * so a binary from before this phase, which only ever knew this field, can still read a file
+   * this phase's code wrote. */
+  n8nWorkflowId?: string
   /** Comparison key. n8n execution ids were confirmed numeric/increasing in the Phase 3 spike's
    * real data, but that format isn't part of n8n's documented public contract -- startedAt (ISO
    * 8601, always present, safely string-comparable) is the actual ordering signal this module
@@ -103,6 +119,40 @@ export interface ContractPollWatermark {
    * callers should read `watermark.cumulativeUnattributedCount ?? 0`. Lets `kairos contract
    * report` warn about invisible-failure executions without re-polling n8n. */
   cumulativeUnattributedCount?: number
+}
+
+/**
+ * The RAW, on-disk shape a watermark entry may take -- either legacy (`n8nWorkflowId` only) or
+ * target-aware (`targetId`/`targetDeploymentId`, optionally with a dual-written `n8nWorkflowId`
+ * alias). Exported only so `src/promise/ledger-store.ts` (a different file) can type its own
+ * `readWatermarks()` internals against it -- never consumed anywhere else; every other module
+ * only ever sees the canonical `ContractPollWatermark` above, produced by
+ * `normalizeContractPollWatermark()` below.
+ */
+export interface PersistedContractPollWatermark {
+  contractId: string
+  targetId?: TargetId
+  targetDeploymentId?: string
+  n8nWorkflowId?: string
+  lastProcessedExecutionId: string
+  lastProcessedStartedAt: string
+  updatedAt: string
+  cumulativeUnattributedCount?: number
+}
+
+/** The single, required normalization point for watermarks (docs/plans/
+ * execution-substrate-boundary-plan.md §6.7), mirroring `registry.ts`'s own
+ * `normalizeRegisteredWorkflow()` exactly. A record with only `n8nWorkflowId` (pre-boundary)
+ * normalizes to `targetId: 'n8n'`, `targetDeploymentId: <that value>`; a record already carrying
+ * `targetId`/`targetDeploymentId` (post-boundary) passes through unchanged. */
+export function normalizeContractPollWatermark(raw: PersistedContractPollWatermark): ContractPollWatermark {
+  if (raw.targetId && raw.targetDeploymentId) {
+    return { ...raw, targetId: raw.targetId, targetDeploymentId: raw.targetDeploymentId }
+  }
+  if (!raw.n8nWorkflowId) {
+    throw new GuardError(`Watermark for contract "${raw.contractId}" has neither targetId/targetDeploymentId nor a legacy n8nWorkflowId -- corrupt watermark record.`)
+  }
+  return { ...raw, targetId: 'n8n', targetDeploymentId: raw.n8nWorkflowId, n8nWorkflowId: raw.n8nWorkflowId }
 }
 
 /** Per-execution outcome, returned to the caller (CLI/report) but never itself written to the
@@ -130,9 +180,17 @@ export interface PollExecutionOutcome {
   attributedToInstance: boolean
 }
 
+/** Execution Substrate Boundary v0, Phase 1 (docs/plans/execution-substrate-boundary-plan.md
+ * §6.4): `n8nWorkflowId` demoted to an optional, n8n-only legacy alias; `targetId`/
+ * `targetDeploymentId` are canonical, mirroring `ContractPollWatermark`'s own fix above exactly
+ * -- both changes land in this same phase, since neither needs any new interface, only a
+ * mechanical dual-write at the one place (`pollWorkflowEvidence()`, src/promise/ledger.ts) that
+ * constructs this type. */
 export interface PollContractResult {
   contractId: string
-  n8nWorkflowId: string
+  targetId: TargetId
+  targetDeploymentId: string
+  n8nWorkflowId?: string
   executionsChecked: number
   entries: ProofLedgerEntry[]
   outcomes: PollExecutionOutcome[]

@@ -337,10 +337,19 @@ export async function pollWorkflowEvidence(
   const unattributedCount = outcomes.filter(o => o.outcome !== 'skipped' && !o.attributedToInstance).length
   const cumulativeUnattributedCount = (watermark?.cumulativeUnattributedCount ?? 0) + unattributedCount
 
+  // Execution Substrate Boundary v0, Phase 1 (docs/plans/execution-substrate-boundary-plan.md
+  // §6.4, §6.7): targetId/targetDeploymentId are dual-written alongside the still-required
+  // n8nWorkflowId parameter below -- this function's own signature stays n8n-specific until
+  // Phase 4's ExecutionHistorySource/EvidenceNormalizer refactor; only the RESULT shapes
+  // (ContractPollWatermark, PollContractResult) gain the canonical fields this phase,
+  // mechanically, so every other Promise Engine module can already read them everywhere else in
+  // the codebase without waiting for Phase 4.
   const newest = summaries[0]
   const newWatermark: ContractPollWatermark = newest
     ? {
         contractId: contract.id,
+        targetId: 'n8n',
+        targetDeploymentId: n8nWorkflowId,
         n8nWorkflowId,
         lastProcessedExecutionId: newest.id,
         lastProcessedStartedAt: newest.startedAt ?? (watermark?.lastProcessedStartedAt ?? ''),
@@ -349,6 +358,8 @@ export async function pollWorkflowEvidence(
       }
     : (watermark ?? {
         contractId: contract.id,
+        targetId: 'n8n',
+        targetDeploymentId: n8nWorkflowId,
         n8nWorkflowId,
         lastProcessedExecutionId: '',
         lastProcessedStartedAt: '',
@@ -358,6 +369,8 @@ export async function pollWorkflowEvidence(
 
   return {
     contractId: contract.id,
+    targetId: 'n8n',
+    targetDeploymentId: n8nWorkflowId,
     n8nWorkflowId,
     executionsChecked: ordered.length,
     entries,

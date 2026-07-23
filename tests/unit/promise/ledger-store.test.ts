@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtemp, rm, stat, writeFile, mkdir } from 'node:fs/promises'
+import { mkdtemp, rm, stat, writeFile, mkdir, readdir, readFile } from 'node:fs/promises'
 import { tmpdir, homedir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -9,6 +9,7 @@ import {
   saveContractPollWatermark,
 } from '../../../src/promise/ledger-store.js'
 import type { ProofLedgerEntry, ContractPollWatermark } from '../../../src/promise/ledger-types.js'
+import { targetRefKey } from '../../../src/promise/targets/types.js'
 
 const CLIENT_A = 'empire-homecare'
 const CLIENT_B = 'a-different-client'
@@ -144,9 +145,12 @@ describe('appendProofLedgerEntries / getProofLedgerEntries', () => {
 })
 
 function makeWatermark(overrides: Partial<ContractPollWatermark> = {}): ContractPollWatermark {
+  const targetDeploymentId = overrides.targetDeploymentId ?? overrides.n8nWorkflowId ?? 'wf-1'
   return {
     contractId: 'empire-homecare-referral-intake',
-    n8nWorkflowId: 'wf-1',
+    targetId: 'n8n',
+    targetDeploymentId,
+    n8nWorkflowId: targetDeploymentId,
     lastProcessedExecutionId: 'exec-5',
     lastProcessedStartedAt: '2026-07-20T09:00:00.000Z',
     updatedAt: '2026-07-20T09:05:00.000Z',
@@ -154,30 +158,32 @@ function makeWatermark(overrides: Partial<ContractPollWatermark> = {}): Contract
   }
 }
 
+const N8N_REF = { targetId: 'n8n', targetDeploymentId: 'wf-1' }
+
 describe('saveContractPollWatermark / loadContractPollWatermark', () => {
   it('round-trips a watermark', async () => {
     await saveContractPollWatermark(CLIENT_A, makeWatermark())
-    const loaded = await loadContractPollWatermark(CLIENT_A, 'empire-homecare-referral-intake', 'wf-1')
+    const loaded = await loadContractPollWatermark(CLIENT_A, 'empire-homecare-referral-intake', N8N_REF)
     expect(loaded).toEqual(makeWatermark())
   })
 
   it('returns null, not a throw, when nothing was ever saved', async () => {
-    expect(await loadContractPollWatermark(CLIENT_A, 'nobody', 'nothing')).toBeNull()
+    expect(await loadContractPollWatermark(CLIENT_A, 'nobody', { targetId: 'n8n', targetDeploymentId: 'nothing' })).toBeNull()
   })
 
   it('re-saving the same (contract, workflow) pair overwrites', async () => {
     await saveContractPollWatermark(CLIENT_A, makeWatermark({ lastProcessedExecutionId: 'exec-5' }))
     await saveContractPollWatermark(CLIENT_A, makeWatermark({ lastProcessedExecutionId: 'exec-9' }))
-    const loaded = await loadContractPollWatermark(CLIENT_A, 'empire-homecare-referral-intake', 'wf-1')
+    const loaded = await loadContractPollWatermark(CLIENT_A, 'empire-homecare-referral-intake', N8N_REF)
     expect(loaded!.lastProcessedExecutionId).toBe('exec-9')
   })
 
   it('stores multiple workflows for the same contract independently, side by side', async () => {
-    await saveContractPollWatermark(CLIENT_A, makeWatermark({ n8nWorkflowId: 'wf-intake', lastProcessedExecutionId: 'e-intake' }))
-    await saveContractPollWatermark(CLIENT_A, makeWatermark({ n8nWorkflowId: 'wf-escalation', lastProcessedExecutionId: 'e-escalation' }))
+    await saveContractPollWatermark(CLIENT_A, makeWatermark({ targetDeploymentId: 'wf-intake', n8nWorkflowId: 'wf-intake', lastProcessedExecutionId: 'e-intake' }))
+    await saveContractPollWatermark(CLIENT_A, makeWatermark({ targetDeploymentId: 'wf-escalation', n8nWorkflowId: 'wf-escalation', lastProcessedExecutionId: 'e-escalation' }))
 
-    const intake = await loadContractPollWatermark(CLIENT_A, 'empire-homecare-referral-intake', 'wf-intake')
-    const escalation = await loadContractPollWatermark(CLIENT_A, 'empire-homecare-referral-intake', 'wf-escalation')
+    const intake = await loadContractPollWatermark(CLIENT_A, 'empire-homecare-referral-intake', { targetId: 'n8n', targetDeploymentId: 'wf-intake' })
+    const escalation = await loadContractPollWatermark(CLIENT_A, 'empire-homecare-referral-intake', { targetId: 'n8n', targetDeploymentId: 'wf-escalation' })
     expect(intake!.lastProcessedExecutionId).toBe('e-intake')
     expect(escalation!.lastProcessedExecutionId).toBe('e-escalation')
   })
@@ -189,11 +195,22 @@ describe('saveContractPollWatermark / loadContractPollWatermark', () => {
     expect(stats.mode & 0o777).toBe(0o600)
   })
 
+  // Execution Substrate Boundary v0, Phase 1 (docs/plans/execution-substrate-boundary-plan.md
+  // §6.6, correction 12 from the fourth review round -- applied to watermarks the same way as
+  // registrations): the write is temp-file-then-rename; no .tmp file lingers after a save.
+  it('writes via temp-file-then-rename -- no .tmp file is left behind after a normal save', async () => {
+    await saveContractPollWatermark(CLIENT_A, makeWatermark())
+    const dir = join(scratchHome, '.kairos', 'promise-ledger', CLIENT_A, 'empire-homecare-referral-intake')
+    const entries = await readdir(dir)
+    expect(entries).toEqual(['watermarks.json'])
+    expect(entries.some(f => f.endsWith('.tmp'))).toBe(false)
+  })
+
   it('a corrupted watermarks file is treated as empty, not a throw', async () => {
     const dir = join(scratchHome, '.kairos', 'promise-ledger', CLIENT_A, 'c1')
     await mkdir(dir, { recursive: true })
     await writeFile(join(dir, 'watermarks.json'), '{not valid json', 'utf-8')
-    expect(await loadContractPollWatermark(CLIENT_A, 'c1', 'wf-1')).toBeNull()
+    expect(await loadContractPollWatermark(CLIENT_A, 'c1', N8N_REF)).toBeNull()
   })
 
   // Finding 1 fix (supplemental measurement-integrity audit, 2026-07-20): the same contractId
@@ -204,8 +221,8 @@ describe('saveContractPollWatermark / loadContractPollWatermark', () => {
     await saveContractPollWatermark(CLIENT_A, makeWatermark({ contractId: 'shared-contract-id', lastProcessedExecutionId: 'client-a-exec' }))
     await saveContractPollWatermark(CLIENT_B, makeWatermark({ contractId: 'shared-contract-id', lastProcessedExecutionId: 'client-b-exec' }))
 
-    const a = await loadContractPollWatermark(CLIENT_A, 'shared-contract-id', 'wf-1')
-    const b = await loadContractPollWatermark(CLIENT_B, 'shared-contract-id', 'wf-1')
+    const a = await loadContractPollWatermark(CLIENT_A, 'shared-contract-id', N8N_REF)
+    const b = await loadContractPollWatermark(CLIENT_B, 'shared-contract-id', N8N_REF)
     expect(a!.lastProcessedExecutionId).toBe('client-a-exec')
     expect(b!.lastProcessedExecutionId).toBe('client-b-exec')
   })
@@ -214,12 +231,126 @@ describe('saveContractPollWatermark / loadContractPollWatermark', () => {
   // the same contract must not lose either one's watermark update to a race.
   it('concurrent watermark saves for different workflows on the same contract both survive', async () => {
     await Promise.all([
-      saveContractPollWatermark(CLIENT_A, makeWatermark({ n8nWorkflowId: 'wf-a', lastProcessedExecutionId: 'exec-a' })),
-      saveContractPollWatermark(CLIENT_A, makeWatermark({ n8nWorkflowId: 'wf-b', lastProcessedExecutionId: 'exec-b' })),
+      saveContractPollWatermark(CLIENT_A, makeWatermark({ targetDeploymentId: 'wf-a', n8nWorkflowId: 'wf-a', lastProcessedExecutionId: 'exec-a' })),
+      saveContractPollWatermark(CLIENT_A, makeWatermark({ targetDeploymentId: 'wf-b', n8nWorkflowId: 'wf-b', lastProcessedExecutionId: 'exec-b' })),
     ])
-    const a = await loadContractPollWatermark(CLIENT_A, 'empire-homecare-referral-intake', 'wf-a')
-    const b = await loadContractPollWatermark(CLIENT_A, 'empire-homecare-referral-intake', 'wf-b')
+    const a = await loadContractPollWatermark(CLIENT_A, 'empire-homecare-referral-intake', { targetId: 'n8n', targetDeploymentId: 'wf-a' })
+    const b = await loadContractPollWatermark(CLIENT_A, 'empire-homecare-referral-intake', { targetId: 'n8n', targetDeploymentId: 'wf-b' })
     expect(a!.lastProcessedExecutionId).toBe('exec-a')
     expect(b!.lastProcessedExecutionId).toBe('exec-b')
+  })
+})
+
+// Execution Substrate Boundary v0, Phase 1 (docs/plans/execution-substrate-boundary-plan.md
+// §6.7) -- the four compatibility tests the accepted plan names explicitly, plus the collision
+// test carried over from the plan's own §6.6/§6.7 discussion.
+describe('watermark target-aware compatibility (Execution Substrate Boundary v0, Phase 1)', () => {
+  it('1: a fixture legacy watermarks.json (bare keys only) loads correctly via the legacy-key branch', async () => {
+    const dir = join(scratchHome, '.kairos', 'promise-ledger', CLIENT_A, 'legacy-contract')
+    await mkdir(dir, { recursive: true })
+    const legacyRaw = {
+      'wf-legacy': {
+        contractId: 'legacy-contract',
+        n8nWorkflowId: 'wf-legacy',
+        lastProcessedExecutionId: 'exec-9',
+        lastProcessedStartedAt: '2026-06-01T00:00:00.000Z',
+        updatedAt: '2026-06-01T00:05:00.000Z',
+      },
+    }
+    await writeFile(join(dir, 'watermarks.json'), JSON.stringify(legacyRaw, null, 2) + '\n', 'utf-8')
+
+    const loaded = await loadContractPollWatermark(CLIENT_A, 'legacy-contract', { targetId: 'n8n', targetDeploymentId: 'wf-legacy' })
+    expect(loaded).not.toBeNull()
+    expect(loaded!.targetId).toBe('n8n')
+    expect(loaded!.targetDeploymentId).toBe('wf-legacy')
+    expect(loaded!.n8nWorkflowId).toBe('wf-legacy')
+    expect(loaded!.lastProcessedExecutionId).toBe('exec-9')
+  })
+
+  it('2: a fresh save for an n8n target writes both keys; a subsequent load finds it via either path', async () => {
+    await saveContractPollWatermark(CLIENT_A, makeWatermark({ targetDeploymentId: 'wf-dual', n8nWorkflowId: 'wf-dual', lastProcessedExecutionId: 'exec-dual' }))
+
+    const path = join(scratchHome, '.kairos', 'promise-ledger', CLIENT_A, 'empire-homecare-referral-intake', 'watermarks.json')
+    const raw = JSON.parse(await readFile(path, 'utf-8')) as Record<string, unknown>
+    // Both the exact legacy bare key AND the exact composite key are present -- asserted
+    // independently. (A prior draft asserted this via
+    // `Object.keys(raw).some(k => k.startsWith('n8n%3A') || k.includes('wf-dual'))`, an OR-any
+    // check that could pass from the legacy 'wf-dual' key ALONE -- 'wf-dual'.includes('wf-dual')
+    // is trivially true -- even if the composite-key write were completely broken or absent, so
+    // it never actually proved the dual-write.)
+    const compositeKey = targetRefKey({ targetId: 'n8n', targetDeploymentId: 'wf-dual' })
+    expect(Object.keys(raw)).toContain('wf-dual')
+    expect(Object.keys(raw)).toContain(compositeKey)
+
+    const viaComposite = await loadContractPollWatermark(CLIENT_A, 'empire-homecare-referral-intake', { targetId: 'n8n', targetDeploymentId: 'wf-dual' })
+    expect(viaComposite!.lastProcessedExecutionId).toBe('exec-dual')
+  })
+
+  it('3: two synthetic targets whose (targetId, targetDeploymentId) would collide under naive string concatenation produce two independently-loadable, non-colliding entries', async () => {
+    // { targetId: 'foo', targetDeploymentId: 'bar:baz' } vs. { targetId: 'foo:bar', targetDeploymentId: 'baz' }
+    // -- naive `${targetId}:${targetDeploymentId}` concatenation would produce the IDENTICAL
+    // string "foo:bar:baz" for both. targetRefKey()'s encodeURIComponent-based escaping must
+    // keep them distinct.
+    await saveContractPollWatermark(CLIENT_A, {
+      contractId: 'collision-contract',
+      targetId: 'foo',
+      targetDeploymentId: 'bar:baz',
+      lastProcessedExecutionId: 'exec-a',
+      lastProcessedStartedAt: '2026-07-20T09:00:00.000Z',
+      updatedAt: '2026-07-20T09:00:00.000Z',
+    })
+    await saveContractPollWatermark(CLIENT_A, {
+      contractId: 'collision-contract',
+      targetId: 'foo:bar',
+      targetDeploymentId: 'baz',
+      lastProcessedExecutionId: 'exec-b',
+      lastProcessedStartedAt: '2026-07-20T09:00:00.000Z',
+      updatedAt: '2026-07-20T09:00:00.000Z',
+    })
+
+    const a = await loadContractPollWatermark(CLIENT_A, 'collision-contract', { targetId: 'foo', targetDeploymentId: 'bar:baz' })
+    const b = await loadContractPollWatermark(CLIENT_A, 'collision-contract', { targetId: 'foo:bar', targetDeploymentId: 'baz' })
+    expect(a!.lastProcessedExecutionId).toBe('exec-a')
+    expect(b!.lastProcessedExecutionId).toBe('exec-b')
+  })
+
+  it('4: staleness -- when an old binary updates the legacy bare key with a NEWER updatedAt than the composite key, the newer one wins', async () => {
+    const dir = join(scratchHome, '.kairos', 'promise-ledger', CLIENT_A, 'stale-contract')
+    await mkdir(dir, { recursive: true })
+    // Built via targetRefKey() itself, not hand-spelled -- a prior draft hand-spelled this key as
+    // 'n8n%3Awf-stale', which is WRONG: targetRefKey() only percent-encodes the two components
+    // individually, never the literal ':' delimiter between them (confirmed directly against the
+    // real implementation and by the 'escapes a literal ":"' test above, which expects
+    // 'n8n:has%3Acolon', not 'n8n%3Ahas%3Acolon'). Because the wrong key was seeded, the real
+    // composite-key lookup found nothing, `composite` was `undefined`, and the function silently
+    // fell through to the legacy-bare-key-only branch -- meaning this test previously passed for
+    // the WRONG reason: it never actually exercised the "both keys exist, compare updatedAt,
+    // newer wins" branch its own name and comment claim to test at all.
+    const compositeKey = targetRefKey({ targetId: 'n8n', targetDeploymentId: 'wf-stale' })
+    // Simulate: a phase-aware binary already wrote both keys (stale, t1)...
+    const seeded = {
+      [compositeKey]: {
+        contractId: 'stale-contract', targetId: 'n8n', targetDeploymentId: 'wf-stale', n8nWorkflowId: 'wf-stale',
+        lastProcessedExecutionId: 'exec-old', lastProcessedStartedAt: '2026-07-20T09:00:00.000Z', updatedAt: '2026-07-20T09:00:00.000Z',
+      },
+      // ...then an OLD binary (unaware of composite keys) polled again and wrote ONLY the bare
+      // key, with a genuinely newer updatedAt (t2 > t1).
+      'wf-stale': {
+        contractId: 'stale-contract', n8nWorkflowId: 'wf-stale',
+        lastProcessedExecutionId: 'exec-new', lastProcessedStartedAt: '2026-07-20T10:00:00.000Z', updatedAt: '2026-07-20T10:00:00.000Z',
+      },
+    }
+    await writeFile(join(dir, 'watermarks.json'), JSON.stringify(seeded, null, 2) + '\n', 'utf-8')
+
+    // Sanity check that both keys really are present under the file this test actually wrote,
+    // so a future refactor of targetRefKey() can't silently make this fixture wrong again
+    // without a visible failure right here.
+    const rawWritten = JSON.parse(await readFile(join(dir, 'watermarks.json'), 'utf-8')) as Record<string, unknown>
+    expect(Object.keys(rawWritten)).toContain(compositeKey)
+    expect(Object.keys(rawWritten)).toContain('wf-stale')
+
+    const loaded = await loadContractPollWatermark(CLIENT_A, 'stale-contract', { targetId: 'n8n', targetDeploymentId: 'wf-stale' })
+    // Must return the NEWER (bare-keyed) entry, not blindly prefer the composite key.
+    expect(loaded!.lastProcessedExecutionId).toBe('exec-new')
   })
 })

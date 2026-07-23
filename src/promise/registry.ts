@@ -1,7 +1,9 @@
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { acquireFileLock } from '../utils/file-lock.js'
+import { GuardError } from '../errors/guard-error.js'
+import { targetRefKey, type TargetId } from './targets/types.js'
 
 /**
  * Contract -> deployed-workflow registration (Phase 3). Closes a gap the design-verification
@@ -36,69 +38,153 @@ import { acquireFileLock } from '../utils/file-lock.js'
  * `registration.workflows` generically with no per-name assumption -- confirmed directly before
  * this change, not assumed -- so they need no changes beyond filtering to `status === 'active'`,
  * which is a no-op today since nothing is ever retired in this v0.
+ *
+ * **Execution Substrate Boundary v0, Phase 1 (docs/plans/execution-substrate-boundary-plan.md
+ * §6.6):** `n8nWorkflowId` is demoted from the sole identifier to an optional, n8n-only legacy
+ * alias. `targetId`/`targetDeploymentId` are now the canonical identifier pair, keyed on directly
+ * by the merge below (collision-safe across targets, unlike keying by `n8nWorkflowId` alone,
+ * which could not distinguish two different targets that happened to reuse the same
+ * deployment-id string). Every persisted entry -- legacy (n8nWorkflowId only) or already
+ * target-aware -- is normalized to the canonical shape via `normalizeRegisteredWorkflow()`
+ * before any keying, merging, or drop-detection logic ever sees it; nothing downstream of
+ * `loadContractWorkflowRegistration()`/`saveContractWorkflowRegistration()` ever touches the raw,
+ * possibly-legacy shape directly. The write path also gains atomic temp-file-then-rename
+ * (matching `ledger-store.ts`'s own existing watermark-writer pattern) -- a real, pre-existing
+ * gap this file never had before this pass: locking (`acquireFileLock`) protected against
+ * concurrent writers racing each other, but a single writer killed mid-`writeFile()` could still
+ * leave a truncated, invalid JSON file behind. No behavior change for n8n: every write still
+ * dual-writes `n8nWorkflowId` so any pre-boundary binary that only ever knew that field keeps
+ * reading this file exactly as before.
  */
 
 export type RegisteredWorkflowStatus = 'active' | 'retired'
 
-export interface RegisteredWorkflow {
-  n8nWorkflowId: string
+/**
+ * The RAW, on-disk shape a single registered workflow entry may take -- either legacy
+ * (`n8nWorkflowId` only, written by any binary before this phase) or target-aware
+ * (`targetId`/`targetDeploymentId`, optionally with a dual-written `n8nWorkflowId` alias for
+ * old-binary readability). Never consumed directly outside this file's own normalization
+ * boundary (`normalizeRegisteredWorkflow()`, `loadContractWorkflowRegistration()`,
+ * `saveContractWorkflowRegistration()`) -- every other module in the Promise Engine only ever
+ * sees the canonical `RegisteredWorkflow` below.
+ */
+interface PersistedRegisteredWorkflow {
+  n8nWorkflowId?: string
+  targetId?: TargetId
+  targetDeploymentId?: string
   workflowName: string
   sourceElements: string[]
-  /** Which contract version's compile produced this specific workflow id -- informational/audit
-   * only; polling never branches on this, since evidence extraction always uses the CURRENTLY
-   * loaded contract regardless of which version originally registered a given workflow id. */
   contractVersion: number
-  /** Always 'active' in this v0 -- no retire command exists yet. The field exists so polling
-   * call sites can filter on it now (a no-op today) without needing another change once a retire
-   * command is added later. */
+  status: RegisteredWorkflowStatus
+  registeredAt: string
+}
+
+/**
+ * The outer, persisted container `loadRawRegistration()` actually returns -- distinct from the
+ * canonical `ContractWorkflowRegistration` below, whose own `workflows` array is guaranteed
+ * already-normalized. This type's own `workflows` array is explicitly raw, possibly-legacy
+ * records, so the type system itself (not just convention) prevents treating an un-normalized
+ * entry as if it already had `targetId`/`targetDeploymentId` populated.
+ */
+interface PersistedContractWorkflowRegistration {
+  contractId: string
+  contractVersion: number
+  clientId: string
+  workflows: PersistedRegisteredWorkflow[]
+  registeredAt: string
+}
+
+/**
+ * The canonical, in-memory shape every other Promise Engine module consumes. `targetId`/
+ * `targetDeploymentId` are ALWAYS present here -- guaranteed by `normalizeRegisteredWorkflow()`,
+ * never by convention.
+ */
+export interface RegisteredWorkflow {
+  targetId: TargetId
+  targetDeploymentId: string
+  /** LEGACY. Optional, populated (dual-written) only for `targetId === 'n8n'` -- exists purely
+   * so a binary from before this phase, which only ever knew this field, can still read a file
+   * this phase's code wrote. Not read by any code in this codebase after this phase ships --
+   * write-only compatibility. */
+  n8nWorkflowId?: string
+  workflowName: string
+  sourceElements: string[]
+  contractVersion: number
   status: RegisteredWorkflowStatus
   registeredAt: string
 }
 
 export interface ContractWorkflowRegistration {
   contractId: string
-  /** The MOST RECENT contract version this registration has ever been updated for -- NOT a
-   * claim that every entry in `workflows` was produced by this version (see each entry's own
-   * `contractVersion` for that). Kept for quick "when was this last touched" visibility. */
   contractVersion: number
   clientId: string
   workflows: RegisteredWorkflow[]
   registeredAt: string
 }
 
+/**
+ * The single, required normalization point (docs/plans/execution-substrate-boundary-plan.md
+ * §6.6) -- every read of a persisted registration entry goes through this; no other code in the
+ * Promise Engine ever branches on "is this a legacy record or a new one." A record with only
+ * `n8nWorkflowId` (pre-boundary) normalizes to `targetId: 'n8n'`, `targetDeploymentId: <that
+ * value>`; a record already carrying `targetId`/`targetDeploymentId` (post-boundary) passes
+ * through unchanged (its own optional `n8nWorkflowId` alias, if present, is preserved but never
+ * consulted again).
+ */
+export function normalizeRegisteredWorkflow(raw: PersistedRegisteredWorkflow): RegisteredWorkflow {
+  if (raw.targetId && raw.targetDeploymentId) {
+    return { ...raw, targetId: raw.targetId, targetDeploymentId: raw.targetDeploymentId }
+  }
+  if (!raw.n8nWorkflowId) {
+    throw new GuardError(`Registered workflow "${raw.workflowName}" has neither targetId/targetDeploymentId nor a legacy n8nWorkflowId -- corrupt registration record.`)
+  }
+  return { ...raw, targetId: 'n8n', targetDeploymentId: raw.n8nWorkflowId, n8nWorkflowId: raw.n8nWorkflowId }
+}
+
 function registrationPath(clientId: string, contractId: string): string {
   return join(homedir(), '.kairos', 'contracts', clientId, `${contractId}-workflows.json`)
 }
 
-async function loadRawRegistration(clientId: string, contractId: string): Promise<ContractWorkflowRegistration | null> {
+async function loadRawRegistration(clientId: string, contractId: string): Promise<PersistedContractWorkflowRegistration | null> {
   try {
     const raw = await readFile(registrationPath(clientId, contractId), 'utf-8')
-    return JSON.parse(raw) as ContractWorkflowRegistration
+    return JSON.parse(raw) as PersistedContractWorkflowRegistration
   } catch {
     return null
   }
 }
 
-/** Merges `incoming` workflows into whatever's already registered, keyed by `n8nWorkflowId` --
- * an incoming entry with an id that's already registered replaces that entry (e.g. re-running
- * `--build` against the exact same already-deployed id, an edge case today's tests cover);
- * every other existing entry is kept untouched. Locked (same "two writers, same file, expected
- * concurrent usage" reasoning `exception-store.ts`'s own `upsertExceptionDeskItems()` doc
- * comment already established for this exact class of read-modify-write) -- `kairos contract
- * compile --build` and a hypothetical concurrent second compile both write here, and a lost
- * update here would silently un-register a still-live workflow, the exact failure mode this
- * whole change exists to prevent. */
+/** Merges `incoming` workflows into whatever's already registered, keyed by the collision-safe
+ * `(targetId, targetDeploymentId)` pair via `targetRefKey()` -- corrected from the pre-boundary
+ * behavior of keying by `n8nWorkflowId` alone, which could not distinguish two different targets
+ * that happened to reuse the same deployment-id string (e.g. re-running `--build` against the
+ * exact same already-deployed id, an edge case today's tests cover, now generalized to any
+ * target). Every existing entry is normalized BEFORE keying (never after) -- calling
+ * `targetRefKey()` directly on a raw, un-normalized legacy entry would silently produce the
+ * wrong key (`"undefined:undefined"`, since `encodeURIComponent(undefined)` stringifies rather
+ * than throws) instead of a clean error, which would be worse than a crash: silent, cross-entry
+ * key collisions. Locked (same "two writers, same file, expected concurrent usage" reasoning
+ * `exception-store.ts`'s own `upsertExceptionDeskItems()` doc comment already established for
+ * this exact class of read-modify-write) -- `kairos contract compile --build` and a hypothetical
+ * concurrent second compile both write here, and a lost update here would silently un-register a
+ * still-live workflow, the exact failure mode this whole change exists to prevent. Writes via
+ * atomic temp-file-then-rename (docs/plans/execution-substrate-boundary-plan.md §6.6) -- a real,
+ * pre-existing gap closed opportunistically since this function is already being modified for
+ * the collision-safe merge; a process killed mid-write can no longer leave a truncated file. */
 export async function saveContractWorkflowRegistration(reg: ContractWorkflowRegistration): Promise<{ path: string }> {
   const path = registrationPath(reg.clientId, reg.contractId)
   await mkdir(join(homedir(), '.kairos', 'contracts', reg.clientId), { recursive: true })
   const releaseLock = await acquireFileLock(`${path}.lock`)
   try {
-    const existing = await loadRawRegistration(reg.clientId, reg.contractId)
-    const byId = new Map((existing?.workflows ?? []).map(w => [w.n8nWorkflowId, w]))
-    for (const w of reg.workflows) byId.set(w.n8nWorkflowId, w)
-    const merged: ContractWorkflowRegistration = { ...reg, workflows: [...byId.values()] }
-    await writeFile(path, JSON.stringify(merged, null, 2) + '\n', 'utf-8')
-    await chmod(path, 0o600)
+    const existingRaw = await loadRawRegistration(reg.clientId, reg.contractId)
+    const existingNormalized = (existingRaw?.workflows ?? []).map(normalizeRegisteredWorkflow)
+    const byKey = new Map(existingNormalized.map(w => [targetRefKey(w), w]))
+    for (const w of reg.workflows) byKey.set(targetRefKey(w), w)
+    const merged: ContractWorkflowRegistration = { ...reg, workflows: [...byKey.values()] }
+    const tmpPath = `${path}.tmp`
+    await writeFile(tmpPath, JSON.stringify(merged, null, 2) + '\n', 'utf-8')
+    await chmod(tmpPath, 0o600)
+    await rename(tmpPath, path)
     return { path }
   } finally {
     await releaseLock()
@@ -106,14 +192,14 @@ export async function saveContractWorkflowRegistration(reg: ContractWorkflowRegi
 }
 
 /** Returns null, not a throw, when nothing has been registered yet for this contract -- a real,
- * expected state (e.g. a contract only ever compiled with --dry-run, never really deployed). */
+ * expected state (e.g. a contract only ever compiled with --dry-run, never really deployed).
+ * Every entry in the returned `.workflows` is guaranteed already-normalized (canonical
+ * `targetId`/`targetDeploymentId` always present) -- callers never need to call
+ * `normalizeRegisteredWorkflow()` themselves. */
 export async function loadContractWorkflowRegistration(clientId: string, contractId: string): Promise<ContractWorkflowRegistration | null> {
-  try {
-    const raw = await readFile(registrationPath(clientId, contractId), 'utf-8')
-    return JSON.parse(raw) as ContractWorkflowRegistration
-  } catch {
-    return null
-  }
+  const raw = await loadRawRegistration(clientId, contractId)
+  if (!raw) return null
+  return { ...raw, workflows: raw.workflows.map(normalizeRegisteredWorkflow) }
 }
 
 /**
@@ -126,8 +212,16 @@ export async function loadContractWorkflowRegistration(clientId: string, contrac
  * `handleContractCompile` (cli.ts) calls this with only the currently-`active` existing
  * workflows (never retired ones, since a retired workflow is expected to not reappear) against
  * the fresh compile's own workflow names (matches by `workflowName`, the stable, deterministic
- * identity `compile.ts` produces, not `n8nWorkflowId`, which is always new on every rebuild).
+ * identity `compile.ts` produces, not `targetDeploymentId`, which is always new on every
+ * rebuild).
+ *
+ * **Corrected (Execution Substrate Boundary v0, Phase 1, plan §6.6): scoped by `targetId`** -- an
+ * n8n-only rebuild must never report a DIFFERENT target's own workflows as "dropped." Without
+ * this scoping, a future contract with workflows registered against more than one target would
+ * have every non-n8n entry incorrectly flagged as dropped by every ordinary n8n rebuild, since
+ * `newWorkflowNames` (derived from that one rebuild) would never contain another target's own
+ * workflow names.
  */
-export function computeDroppedWorkflows(existingWorkflows: RegisteredWorkflow[], newWorkflowNames: Set<string>): RegisteredWorkflow[] {
-  return existingWorkflows.filter(w => !newWorkflowNames.has(w.workflowName))
+export function computeDroppedWorkflows(existingWorkflows: RegisteredWorkflow[], newWorkflowNames: Set<string>, targetId: TargetId): RegisteredWorkflow[] {
+  return existingWorkflows.filter(w => w.targetId === targetId && !newWorkflowNames.has(w.workflowName))
 }
