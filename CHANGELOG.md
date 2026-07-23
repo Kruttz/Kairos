@@ -2,6 +2,19 @@
 
 All notable changes to `@kairos-sdk/core` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); dates are publish dates from npm.
 
+## [0.13.1] - 2026-07-23
+
+Execution Substrate Boundary v0 — a structural, non-breaking refactor that separates *what* a Promise Engine target must do from *how n8n does it*, so the compiler/deployer/evidence path is no longer implicitly n8n-shaped. Full design and every phase's live-checkpoint findings: `docs/plans/execution-substrate-boundary-plan.md` (Revision 5, accepted).
+
+- **Target-aware registration and watermark compatibility.** Registry and ledger storage now key and gate on `targetId` alongside existing identifiers, so watermark/incremental-fetch state stays correctly scoped per target instead of assuming a single implicit one.
+- **Neutral contract decomposition.** `decomposeContract()`/`prepareContract()` extract the target-agnostic slot/traceability shape a `ProcessContract` compiles into, pulled out of what was previously n8n-specific `compile.ts` logic.
+- **Compiler/deployer/deployment-lookup/verifier boundaries.** New `ContractCompiler`, `ContractDeployer`, `DeploymentLookup`, and `TargetCompilerVerifier` interfaces (`src/promise/targets/`) define the contract every target implements; `src/providers/n8n/` now implements them explicitly rather than being the only path that exists.
+- **Execution-history and evidence-normalization boundaries.** `ExecutionHistorySource` and evidence-extraction/normalization are now target interfaces too, with n8n's own implementation moved behind them.
+- **Target provenance through ProofLedger and Contract Evolution.** `LedgerEntryRef`/`AmendmentEvidenceRef` now carry an optional `targetId` threaded from the originating `ProofLedgerEntry`, so evolution proposals and amendment history stay attributable to the target that produced their evidence.
+- **In-memory reference adapter and cross-target conformance tests.** A new `InMemoryContractTarget` (`src/promise/targets/in-memory/adapter.ts`) implements every interface purely in memory and is exercised by the same per-interface unit rigor n8n's implementations got, plus dedicated cross-target report-parity and deployment-slot-isolation suites — proving the boundary is real, not just declared.
+
+No behavior change for existing users: n8n remains the default and only production target, and no Zapier, Make, or production Node runtime was added. The in-memory adapter exists solely as a reference/test double for proving the interface boundary, not as a second production target.
+
 ## [0.13.0] - 2026-07-22
 
 Roadmap items 4–15, all in the same session block as [0.12.0](#0120---2026-07-21) below. Extends Promise Engine v0 in five directions: a deterministic, no-network authoring/testing layer *before* any workflow exists (intake, scenario generation, the Contract Harness), a real, human-gated way for a contract to change *after* real evidence exists (Contract Evolution, Contract Amendment/Diff), a conservative, assumption-gated way to talk about the value of what's being protected (Automation P&L / Value Report), a read-only diagnostic for finding which process is worth building a contract for in the first place (Operations Scout v0), and a local, human-gated record of what was actually learned from real accept/reject decisions (Self-Tuning Flywheel v0). Full design rationale and every live-checkpoint finding: `docs/plans/intake-scenario-harness-plan.md` (items 4–10) and `docs/plans/contract-evolution-ops-roadmap-plan.md` (items 11–15, plus a full roadmap and build-order recommendation for items 16–18).
